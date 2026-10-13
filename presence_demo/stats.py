@@ -21,12 +21,14 @@ class ConnStats:
 
     def __init__(self, window: int = 60, clock=time.monotonic):
         self.clock = clock
-        self.lat = {k: deque(maxlen=window) for k in ("decode", "detect", "embed", "tracker", "total")}
+        self.lat = {k: deque(maxlen=window) for k in ("decode", "motion", "detect", "embed", "tracker", "total")}
         self.frame_times = deque(maxlen=window)
         self.bytes = deque(maxlen=window)  # (t, nbytes)
         self.received = self.processed = self.dropped = 0
         self.rtt = deque(maxlen=20)
         self.last_size = (0, 0)
+        self.counts: dict = {}
+        self.recommended_fps = 0.0
 
     def on_received(self, nbytes: int):
         self.received += 1
@@ -50,6 +52,20 @@ class ConnStats:
         now = self.clock()
         return sum(b for t, b in self.bytes if now - t <= horizon) / horizon
 
+    def _optim(self) -> dict:
+        c = self.counts or {}
+        frames = c.get("frames", 0)
+        emb = c.get("embed_computed", 0) + c.get("embed_reused", 0)
+        return {
+            "skipped": c.get("skipped", 0),
+            "skipped_pct": round(100 * c.get("skipped", 0) / frames, 1) if frames else 0.0,
+            "detect_calls": c.get("detect_calls", 0),
+            "embed_computed": c.get("embed_computed", 0),
+            "embed_reused": c.get("embed_reused", 0),
+            "embed_reused_pct": round(100 * c.get("embed_reused", 0) / emb, 1) if emb else 0.0,
+            "recommended_fps": self.recommended_fps,
+        }
+
     def snapshot(self) -> dict:
         b = [x for _, x in self.bytes]
         return {
@@ -66,6 +82,7 @@ class ConnStats:
             "frame_bytes_avg": round(sum(b) / len(b)) if b else 0,
             "bandwidth_Bps": round(self.bandwidth()),
             "frame_size": list(self.last_size),
+            "optim": self._optim(),
             "rtt_ms": round(sum(self.rtt) / len(self.rtt), 1) if self.rtt else None,
         }
 

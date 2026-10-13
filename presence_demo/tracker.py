@@ -43,6 +43,19 @@ class Config:
     end_after_away: float = 5.0  # AWAY -> ENDED
     new_group_seconds: float = 3.0  # old group missing + new group confirmed this long
     priority_mode: str = "vision"  # vision | balanced | audio
+    # --- performance / power (see presence_demo/optimizer.py) ---
+    motion_gate: bool = True  # skip detection when the (downscaled) frame barely changed
+    motion_threshold: float = 0.015  # mean abs gray diff (0..1) below which a frame is "static"
+    force_detect_seconds: float = 3.0  # full detection at least this often even if static
+    embed_throttle: bool = True  # reuse a face embedding when the face barely moved
+    embed_interval: float = 3.0  # recompute each face embedding at least this often
+    embed_move_thresh: float = 0.15  # center shift / size change (relative to box) forcing recompute
+    adaptive_fps: bool = True  # server recommends client fps from state
+    fps_low: float = 0.5  # recommended fps when stable
+    fps_high: float = 2.0  # recommended fps when things change / MAYBE_AWAY
+    roi_crop: bool = True  # crop ROI (+margin) and downscale before detection
+    crop_margin: float = 0.1  # margin around ROI, fraction of frame
+    max_width: int = 320  # max width of the image fed to the detector
     present_max_silence: float = 0.0  # vision mode: cap on silence with people present (0 = off)
 
     def update(self, d: dict) -> list[str]:
@@ -58,6 +71,13 @@ class Config:
                     if v not in lo:
                         raise ValueError
                     setattr(self, k, v)
+                    continue
+                if typ is bool:
+                    if isinstance(v, str):
+                        if v.lower() not in ("true", "false", "1", "0", "on", "off"):
+                            raise ValueError
+                        v = v.lower() in ("true", "1", "on")
+                    setattr(self, k, bool(v))
                     continue
                 if k == "roi":
                     vals = [min(hi, max(lo, float(x))) for x in v]
@@ -81,6 +101,9 @@ class Config:
                 warnings.append(f"invalid value for {k}")
                 continue
             setattr(self, k, new)
+        if self.fps_low > self.fps_high:
+            self.fps_low = self.fps_high
+            warnings.append("fps_low lowered to fps_high")
         if self.cos_weak > self.cos_match:
             self.cos_weak = self.cos_match
             warnings.append("cos_weak lowered to cos_match")
@@ -108,6 +131,18 @@ RANGES = {
     "new_group_seconds": (0.0, 60.0, float),
     "present_max_silence": (0.0, 3600.0, float),
     "priority_mode": (("vision", "balanced", "audio"), None, str),
+    "motion_gate": (False, True, bool),
+    "motion_threshold": (0.0, 0.2, float),
+    "force_detect_seconds": (0.5, 30.0, float),
+    "embed_throttle": (False, True, bool),
+    "embed_interval": (0.0, 30.0, float),
+    "embed_move_thresh": (0.0, 1.0, float),
+    "adaptive_fps": (False, True, bool),
+    "fps_low": (0.2, 5.0, float),
+    "fps_high": (0.2, 5.0, float),
+    "roi_crop": (False, True, bool),
+    "crop_margin": (0.0, 0.5, float),
+    "max_width": (96, 1920, int),
 }
 
 
@@ -223,9 +258,7 @@ class PresenceTracker:
         self._evaluate(now)
         return self.snapshot(now)
 
-    def update(
-        self, detections: list[Detection], speaking: bool | None = None, now: float | None = None
-    ) -> dict:
+    def update(self, detections: list[Detection], speaking: bool | None = None, now: float | None = None) -> dict:
         now = self.clock() if now is None else now
         if speaking is not None:
             self.speaking = bool(speaking)
@@ -237,9 +270,7 @@ class PresenceTracker:
         confident = [d for d in dets if d.conf >= self.cfg.min_conf]
         low = [d for d in dets if d.conf < self.cfg.min_conf]
 
-        if self.state == State.ENDED and (
-            confident or (self.speaking and self.cfg.priority_mode != "vision")
-        ):
+        if self.state == State.ENDED and (confident or (self.speaking and self.cfg.priority_mode != "vision")):
             self._start(now, "person in ROI" if confident else "speech detected")
 
         self._match(confident, now)
@@ -354,9 +385,7 @@ class PresenceTracker:
             self._present_streak = 0
             self._low_streak = getattr(self, "_low_streak", 0) + 1
             if self._low_streak >= c.absent_frames and (self.present or self.empty):
-                self._event(
-                    now, "uncertain", "%d low-confidence frames -> audio-only timeout" % self._low_streak
-                )
+                self._event(now, "uncertain", "%d low-confidence frames -> audio-only timeout" % self._low_streak)
                 self.present, self.empty, self.empty_since = False, False, None
         else:
             self._empty_streak += 1
@@ -436,9 +465,7 @@ class PresenceTracker:
             "state": self.state.value,
             "session": self.session,
             "speaking": self.speaking,
-            "silence": 0.0
-            if self.speaking or self.state == State.ENDED
-            else round(now - self.last_speech, 1),
+            "silence": 0.0 if self.speaking or self.state == State.ENDED else round(now - self.last_speech, 1),
             "path": getattr(self, "path", "ended"),
             "priority_mode": self.cfg.priority_mode,
             "present": self.present,

@@ -107,7 +107,7 @@ const $=id=>document.getElementById(id);
 // ---------- settings schema ----------
 const DEF={roi:[0.2,0.05,0.8,0.95],min_conf:0.6,cos_match:0.4,cos_weak:0.2,iou_match:0.3,embed_ema:0.15,join_seconds:2,grace_seconds:15,
  present_frames:2,absent_frames:3,idle_after:3,present_timeout:15,empty_timeout:5,base_timeout:20,maybe_away_frac:0.5,end_after_away:5,new_group_seconds:3,
- priority_mode:'vision',present_max_silence:0,fps:1,vad_k:2.5,vad_min:0.005,vad_hang:400};
+ priority_mode:'vision',present_max_silence:0,motion_gate:true,motion_threshold:0.015,force_detect_seconds:3,embed_throttle:true,embed_interval:3,embed_move_thresh:0.15,adaptive_fps:true,fps_low:0.5,fps_high:2,roi_crop:true,crop_margin:0.1,max_width:320,fps:1,vad_k:2.5,vad_min:0.005,vad_hang:400};
 const CLIENT=['fps','vad_k','vad_min','vad_hang'];
 const S=(l,h,min,max,step,u='')=>({l,h,min,max,step,u});
 const GROUPS=[
@@ -130,11 +130,24 @@ const GROUPS=[
    base_timeout:S('影像不確定時的逾時','影像信心太低時，只看聲音的逾時。',1,300,1,'s'),
    maybe_away_frac:S('MAYBE_AWAY 比例','逾時進行到這個比例時進入 MAYBE_AWAY。',0.05,0.95,0.05),
    end_after_away:S('AWAY 轉 ENDED','AWAY 持續多久後結束對話並清除 embedding。',0,120,1,'s'),
-   new_group_seconds:S('換組確認時間','舊參與者都不見、新的一群人出現多久後觸發 NEW_GROUP。',0,60,0.5,'s')}],
- ['畫面與聲音（瀏覽器端）',{fps:S('每秒送出張數','每秒送幾張畫面到伺服器。越高越即時，但越耗頻寬和 CPU。',0.5,5,0.5,'fps'),
+   new_group_seconds:S('換組確認時間','舊參與者都不見、新的一群人出現多久後觸發 NEW_GROUP。',0,60,0.5,'s')}]];
+const B=(l,h)=>({l,h,bool:true});
+GROUPS.push(['效能',{motion_gate:B('移動偵測閘門','畫面幾乎沒變化、狀態也穩定時，跳過人臉偵測，沿用上一次的結果。'),
+   motion_threshold:S('變化門檻','縮小灰階畫面的平均差異（0–1）低於這個值就視為沒變化。有雜訊的鏡頭要調高。',0,0.2,0.001),
+   force_detect_seconds:S('強制偵測間隔','即使畫面沒變化，最久每隔幾秒也要完整偵測一次。',0.5,30,0.5,'s'),
+   embed_throttle:B('Embedding 節流','人臉沒移動時沿用上次的 embedding；新的人臉、移動或縮放超過門檻、相似度偏低，或超過間隔時間時才重新計算。'),
+   embed_interval:S('Embedding 重算間隔','每張臉最久每隔幾秒重算一次 embedding。',0,30,0.5,'s'),
+   embed_move_thresh:S('移動門檻','中心位移或大小變化超過臉框的這個比例就重算。',0,1,0.01),
+   adaptive_fps:B('自適應 fps','由伺服器依狀態建議送幀速率：穩定時用低 fps，有變化或 MAYBE_AWAY 時用高 fps。開啟時會取代下方的「每秒送出張數」。'),
+   fps_low:S('穩定時 fps','狀態穩定（ACTIVE/IDLE/ENDED、沒有新人臉）時的建議 fps。',0.2,5,0.1,'fps'),
+   fps_high:S('變化時 fps','有新人臉、參與者消失、MAYBE_AWAY 時的建議 fps。',0.2,5,0.1,'fps'),
+   roi_crop:B('ROI 裁切＋縮小','只把 ROI（加邊界）裁下來並縮小後再偵測，偵測框會換算回原畫面座標。'),
+   crop_margin:S('裁切邊界','ROI 四周多保留的範圍（畫面比例）。',0,0.5,0.01),
+   max_width:S('偵測最大寬度','送進偵測器的影像最大寬度。越小越快，但遠處的小臉可能偵測不到。',96,1920,16,'px')}]);
+GROUPS.push(['畫面與聲音（瀏覽器端）',{fps:S('每秒送出張數','每秒送幾張畫面到伺服器。越高越即時，但越耗頻寬和 CPU。',0.5,5,0.5,'fps'),
    vad_k:S('VAD 靈敏度（門檻倍數）','音量超過「噪音底 × 這個倍數」才算說話。越小越靈敏。',1.2,8,0.1,'×'),
    vad_min:S('最低說話音量','絕對音量門檻（RMS），環境吵時調高。',0.001,0.05,0.001),
-   vad_hang:S('說話尾音保留','音量變小後還要維持「說話中」多久，避免句子中間斷掉。',100,1500,50,'ms')}]];
+   vad_hang:S('說話尾音保留','音量變小後還要維持「說話中」多久，避免句子中間斷掉。',100,1500,50,'ms')}]);
 const META=Object.assign({},...GROUPS.map(g=>g[1]));
 const PRESETS={
  single:{roi:[0.25,0.05,0.75,0.95],join_seconds:1.5,grace_seconds:10,present_timeout:45,empty_timeout:5,new_group_seconds:3,absent_frames:3},
@@ -144,17 +157,18 @@ const KEY='presence-cfg-v1';
 let cfg=Object.assign(structuredClone(DEF),JSON.parse(localStorage.getItem(KEY)||'{}'));
 const save=()=>localStorage.setItem(KEY,JSON.stringify(cfg));
 const toast=t=>{const e=$('toast');e.textContent=t;e.classList.add('show');clearTimeout(e._t);e._t=setTimeout(()=>e.classList.remove('show'),2200)};
-const clamp=(k,v)=>{const m=META[k];if(m.opts)return m.opts[v]?v:DEF[k];return Math.min(m.max,Math.max(m.min,Number(v)))};
+const clamp=(k,v)=>{const m=META[k];if(m.bool)return v===true||v==='true'||v===1;if(m.opts)return m.opts[v]?v:DEF[k];return Math.min(m.max,Math.max(m.min,Number(v)))};
 // ---------- build settings UI ----------
 function buildUI(){
  $('groups').innerHTML=GROUPS.map(([g,items],i)=>`<details ${i<1?'open':''}><summary>${g}</summary>`+Object.entries(items).map(([k,m])=>{
   const d=Array.isArray(DEF[k])?DEF[k].join(', '):DEF[k];
-  const ctl=m.opts?`<select data-k="${k}" style="width:100%;margin-top:6px;background:var(--bg);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:7px">${Object.entries(m.opts).map(([o,t])=>`<option value="${o}">${t}</option>`).join('')}</select>`:k==='roi'?`<div class="roi4">${['x0','y0','x1','y1'].map((n,j)=>`<input type="number" data-k="roi" data-i="${j}" min="0" max="1" step="0.01" title="${n}">`).join('')}</div>`
+  const ctl=m.bool?'':m.opts?`<select data-k="${k}" style="width:100%;margin-top:6px;background:var(--bg);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:7px">${Object.entries(m.opts).map(([o,t])=>`<option value="${o}">${t}</option>`).join('')}</select>`:k==='roi'?`<div class="roi4">${['x0','y0','x1','y1'].map((n,j)=>`<input type="number" data-k="roi" data-i="${j}" min="0" max="1" step="0.01" title="${n}">`).join('')}</div>`
    :`<input type="range" data-k="${k}" min="${m.min}" max="${m.max}" step="${m.step}">`;
-  return `<div class="row" id="row_${k}"><div class="top"><label title="${m.h}">${m.l}</label>${k==='roi'||m.opts?'':`<input type="number" data-k="${k}" min="${m.min}" max="${m.max}" step="${m.step}"><span class="def">${m.u}</span>`}</div>
-   ${ctl}<div class="tip">${m.h}　<span class="def">預設 ${m.opts?m.opts[d]:d}${m.u?' '+m.u:''}</span></div></div>`}).join('')+'</details>').join('');
+  return `<div class="row" id="row_${k}"><div class="top"><label title="${m.h}">${m.l}</label>${m.bool?`<input type="checkbox" data-k="${k}" style="width:20px;height:20px;accent-color:var(--acc)">`:k==='roi'||m.opts?'':`<input type="number" data-k="${k}" min="${m.min}" max="${m.max}" step="${m.step}"><span class="def">${m.u}</span>`}</div>
+   ${ctl}<div class="tip">${m.h}　<span class="def">預設 ${m.bool?(d?'開':'關'):m.opts?m.opts[d]:d}${m.u?' '+m.u:''}</span></div></div>`}).join('')+'</details>').join('');
  $('groups').querySelectorAll('input,select').forEach(inp=>{
   const ev=inp.type==='range'?'input':'change';
+  if(inp.type==='checkbox'){inp.addEventListener('change',()=>setCfg({[inp.dataset.k]:inp.checked}));return}
   if(inp.tagName==='SELECT'){inp.addEventListener('change',()=>setCfg({[inp.dataset.k]:inp.value}));return}
   inp.addEventListener(ev,()=>{const k=inp.dataset.k;
    if(k==='roi'){const r=[...cfg.roi];r[+inp.dataset.i]=clamp('roi',inp.value);setCfg({roi:r})}
@@ -165,6 +179,7 @@ function buildUI(){
 }
 function syncUI(skip){
  document.querySelectorAll('#groups input,#groups select').forEach(inp=>{if(inp===skip)return;const k=inp.dataset.k;
+  if(inp.type==='checkbox'){inp.checked=!!cfg[k];return}
   inp.value=k==='roi'?(+cfg.roi[+inp.dataset.i]).toFixed(2):cfg[k]});
  for(const k in DEF){const r=$('row_'+k);if(r)r.classList.toggle('changed',JSON.stringify(cfg[k])!==JSON.stringify(DEF[k]))}
 }
@@ -191,6 +206,7 @@ function connect(){ws=new WebSocket((location.protocol==='https:'?'wss://':'ws:/
  ws.onmessage=e=>{const s=JSON.parse(e.data);
   if(s.type==='stats')return renderStats(s);
   if(s.type==='pong'){lastRtt=performance.now()-s.t;return}
+  if(s.type==='state'&&(s.recommended_fps||0)!==recFps){recFps=s.recommended_fps||0;if(cfg.adaptive_fps)restartFrames()}
   if(s.config_ack&&s.config){let ch=false;for(const k in s.config){const v=k==='roi'?s.config.roi.map(x=>+(+x).toFixed(4)):s.config[k];
     if(JSON.stringify(v)!==JSON.stringify(cfg[k])){cfg[k]=v;ch=true}}if(ch){save();syncUI()}
    if(s.warnings&&s.warnings.length)toast('伺服器調整：'+s.warnings.join('；'))}
@@ -254,7 +270,8 @@ let speech=false,frameTimer,vadTimer,pingTimer,stream=null,ac=null,running=false
 const wsSend=o=>{if(ws&&ws.readyState===1)ws.send(JSON.stringify(o))};
 function restartFrames(){clearInterval(frameTimer);if(!running)return;
  frameTimer=setInterval(()=>{if(!ws||ws.readyState!==1||!v.videoWidth)return;const s=480/v.videoHeight;off.width=Math.round(v.videoWidth*s);off.height=480;
-  og.drawImage(v,0,0,off.width,off.height);wsSend({type:'frame',speech,data:off.toDataURL('image/jpeg',0.7)})},1000/cfg.fps)}
+  og.drawImage(v,0,0,off.width,off.height);wsSend({type:'frame',speech,data:off.toDataURL('image/jpeg',0.7)})},1000/curFps())}
+const curFps=()=>cfg.adaptive_fps&&recFps>0?recFps:cfg.fps;let recFps=0;
 function setUI(){$('start').textContent=running?'■ 停止':'▶ 開始';$('start').className=running?'stop':'pri';
  $('cam').textContent=running?'鏡頭/麥克風 開':autoPaused?'已自動暫停':'鏡頭/麥克風 關';$('cam').classList.toggle('live',running);
  $('placeholder').style.display=running?'none':'grid';$('monHint').textContent=running?'':'（開始後每秒更新）'}
@@ -302,11 +319,14 @@ function renderStats(s){const y=s.system,c=s.conn,L=c.latency_ms,i=s.info;
  $('mFps').textContent=`${c.fps} / ${fmtB(c.bandwidth_Bps)}/s`;
  spark('spCpu',[H.cpu,H.sys],['#58a6ff','#8b949e'],100);spark('spLat',[H.lat,H.p95],['#3fb950','#d29922'],10);
  $('mCores').innerHTML=(y.per_core||[]).map(p=>`<i style="height:${Math.max(4,p)}%" title="${p}%"></i>`).join('');
- const nm={decode:'JPEG 解碼',detect:'偵測',embed:'Embedding',tracker:'Tracker',total:'總計'};
+ const nm={motion:'移動偵測',decode:'JPEG 解碼',detect:'偵測',embed:'Embedding',tracker:'Tracker',total:'總計'};
  $('mLatT').innerHTML=Object.entries(L).map(([k,v])=>`<tr><td>${nm[k]||k}</td><td>${v.last}</td><td>${v.avg}</td><td>${v.p95}</td></tr>`).join('');
  const kv={'Load avg':y.load?y.load.join(' / '):'—','畫面張數':`收 ${c.frames.received} · 處理 ${c.frames.processed} · 丟棄 ${c.frames.dropped}`,
   '畫面大小':`${c.frame_size.join('×')} · 平均 ${fmtB(c.frame_bytes_avg)}`,'WS 往返':c.rtt_ms!=null?c.rtt_ms+' ms':(lastRtt?lastRtt.toFixed(0)+' ms':'—'),
-  '模型':i.pipeline,'OpenCV':`${i.opencv} · ${i.dnn_backend} / ${i.dnn_target} · ${i.cv_threads} threads`,'程序':`${y.proc_threads} threads · ${i.cpu_count} cores`};
+  '模型':i.pipeline,'OpenCV':`${i.opencv} · ${i.dnn_backend} / ${i.dnn_target} · ${i.cv_threads} threads`,'程序':`${y.proc_threads} threads · ${i.cpu_count} cores`,
+  '效能':c.optim?`跳過 ${c.optim.skipped_pct}%（${c.optim.skipped} 張）· embedding 計算 ${c.optim.embed_computed} / 重用 ${c.optim.embed_reused}（${c.optim.embed_reused_pct}%）`:'—',
+  '送幀 fps':`${curFps()}${cfg.adaptive_fps?`（自適應，伺服器建議 ${c.optim?c.optim.recommended_fps:'—'}）`:'（固定）'}`};
+
  $('mKv').innerHTML=Object.entries(kv).map(([k,v])=>`<span>${k}</span><span>${v}</span>`).join('');
 }
 buildUI();new ResizeObserver(fit).observe(cv);connect();

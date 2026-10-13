@@ -94,7 +94,8 @@ def test_stats_pushed_only_while_running_and_stop_resets():
         assert {"proc_cpu", "proc_rss", "sys_cpu", "mem_total", "load", "per_core"} <= set(st["system"])
         c = st["conn"]
         assert c["frames"]["received"] == 1 and c["frames"]["processed"] == 1
-        assert {"decode", "detect", "embed", "tracker", "total"} == set(c["latency_ms"])
+        assert {"decode", "motion", "detect", "embed", "tracker", "total"} == set(c["latency_ms"])
+        assert {"skipped_pct", "embed_computed", "embed_reused", "recommended_fps"} <= set(c["optim"])
         assert c["latency_ms"]["detect"]["p95"] >= 0 and c["frame_size"] == [640, 480]
         assert st["info"]["opencv"] and st["info"]["pipeline"]
         ws.send_json({"type": "ping", "t": 1, "rtt": 12.5})

@@ -17,6 +17,7 @@
 - 防閃爍遲滯、低信心降權、可注入時鐘。
 - 模型：OpenCV **YuNet**（偵測）+ **SFace**（embedding），CPU 即可。下載失敗會自動改用 Haar + 色彩直方圖備援。
 - Embedding 只存在記憶體，對話結束（ENDED）時清除；影像不存檔。
+- **效能／省電**：移動偵測閘門、embedding 節流、自適應 fps、ROI 裁切＋縮小，每項都能個別開關。實測 CPU 約減少 60–70%，見 [docs/PERFORMANCE.md](docs/PERFORMANCE.md)。
 - 網頁：開始／停止（真正關閉鏡頭與麥克風，切換分頁自動暫停）、設定抽屜（預設組合、localStorage 自動保存、JSON 匯出入）、資源監控（CPU、記憶體、各階段延遲 avg/p95、fps、頻寬、RTT）。
 
 ## 快速開始（uv）
@@ -65,6 +66,7 @@ tailscale serve status
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)：架構、資料流、狀態機（mermaid）
 - [docs/CONFIGURATION.md](docs/CONFIGURATION.md)：所有參數、範圍、預設值、預設組合、判斷優先模式
 - [docs/TUNING.md](docs/TUNING.md)：如何用實際資料調整門檻
+- [docs/PERFORMANCE.md](docs/PERFORMANCE.md)：效能最佳化、基準測試、Android 下一步
 - [CONTRIBUTING.md](CONTRIBUTING.md)：開發流程（uv、ruff、pytest）
 - [CHANGELOG.md](CHANGELOG.md)
 

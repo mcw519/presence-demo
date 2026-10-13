@@ -19,9 +19,7 @@ def test_conn_stats_fps_latency_bandwidth():
     for i in range(10):
         c.t += 0.5
         s.on_received(1000)
-        s.on_processed(
-            {"decode": 1, "detect": 10 + i, "embed": 5, "tracker": 0.1, "total": 20, "w": 640, "h": 480}
-        )
+        s.on_processed({"decode": 1, "detect": 10 + i, "embed": 5, "tracker": 0.1, "total": 20, "w": 640, "h": 480})
     s.dropped = 2
     snap = s.snapshot()
     assert snap["fps"] == 2.0 and snap["bandwidth_Bps"] == 2000

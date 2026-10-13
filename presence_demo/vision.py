@@ -109,10 +109,15 @@ class HistEmbedder:
         return hist - hist.mean()
 
 
+def decode_jpeg(data: bytes) -> tuple[np.ndarray | None, float]:
+    """Decode JPEG bytes in memory (PRIVACY: never written to disk). Returns (image, ms)."""
+    t0 = time.perf_counter()
+    img = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+    return img, (time.perf_counter() - t0) * 1000
+
+
 class VisionPipeline:
-    def __init__(
-        self, detector: Detector | None = None, embedder: Embedder | None = None, allow_download: bool = True
-    ):
+    def __init__(self, detector: Detector | None = None, embedder: Embedder | None = None, allow_download: bool = True):
         if detector is None:
             p = ensure_model(*YUNET) if allow_download else None
             detector = YuNetDetector(p) if p else HaarDetector()

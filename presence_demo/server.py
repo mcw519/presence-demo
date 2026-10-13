@@ -14,9 +14,10 @@ from pathlib import Path
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, PlainTextResponse
 
+from .optimizer import FrameProcessor, recommend_fps
 from .stats import ConnStats, build_stats
 from .tracker import RANGES, Config, PresenceTracker
-from .vision import VisionPipeline
+from .vision import VisionPipeline, decode_jpeg
 
 logging.basicConfig(level=logging.INFO)
 STATIC = Path(__file__).parent / "static"
@@ -63,14 +64,15 @@ async def ws(sock: WebSocket):
     info = pipe.info()
     st = {"tr": PresenceTracker(Config()), "running": False}
     stats = ConnStats()
+    proc = FrameProcessor(pipe)
+    stats.counts = proc.counts
+    fpsstate = {"sig": (), "changed_at": 0.0, "rec": 0.0}
     lock = asyncio.Lock()
     slot: dict = {"frame": None}
     wake = asyncio.Event()
 
     async def send(snap, extra=None):
-        snap.update(
-            {"type": "state", "running": st["running"], "pipeline": pipe.name, "config": asdict(st["tr"].cfg)}
-        )
+        snap.update({"type": "state", "running": st["running"], "pipeline": pipe.name, "config": asdict(st["tr"].cfg)})
         if extra:
             snap.update(extra)
         await sock.send_json(snap)
@@ -96,16 +98,36 @@ async def ws(sock: WebSocket):
                 continue
             t0 = time.perf_counter()
             data = base64.b64decode(msg["data"].split(",")[-1])
-            dets, tm = await asyncio.to_thread(pipe.process_jpeg_timed, data)
+            stable = st["tr"].state.value not in ("MAYBE_AWAY", "AWAY")
+            img, dec_ms = decode_jpeg(data)  # in memory only
+            del data
+            if img is None:
+                continue
+            dets, tm = await asyncio.to_thread(proc.process, img, st["tr"].cfg, stable)
+            tm.update(decode=dec_ms, w=img.shape[1], h=img.shape[0])
+            del img
             async with lock:
                 if not st["running"]:
                     continue
                 t1 = time.perf_counter()
-                snap = st["tr"].update(dets, speaking=msg.get("speech"))
+                tr = st["tr"]
+                snap = tr.update(dets, speaking=msg.get("speech"))
                 tm["tracker"] = (time.perf_counter() - t1) * 1000
                 tm["total"] = (time.perf_counter() - t0) * 1000
+                sig = tuple(sorted((t["id"], t["participant"], t["visible"]) for t in snap["tracks"]))
+                now = time.monotonic()
+                if sig != fpsstate["sig"]:
+                    fpsstate["sig"], fpsstate["changed_at"] = sig, now
+                fpsstate["rec"] = recommend_fps(snap, tr.cfg, now - fpsstate["changed_at"] < 3.0)
                 stats.on_processed(tm)
-                await send(snap, {"detections": [{"bbox": d.bbox, "conf": d.conf} for d in dets]})
+                stats.recommended_fps = fpsstate["rec"]
+                await send(
+                    snap,
+                    {
+                        "detections": [{"bbox": d.bbox, "conf": d.conf} for d in dets],
+                        "skipped": tm.get("skipped", False),
+                    },
+                )
 
     tasks = [asyncio.create_task(ticker()), asyncio.create_task(worker())]
     try:
@@ -133,13 +155,13 @@ async def ws(sock: WebSocket):
                         await send(tr.set_speech(bool(msg.get("speech"))))
                 elif kind == "config":
                     warns = tr.cfg.update(msg.get("config", {}))
-                    await send(
-                        tr.tick() if st["running"] else tr.snapshot(), {"config_ack": True, "warnings": warns}
-                    )
+                    await send(tr.tick() if st["running"] else tr.snapshot(), {"config_ack": True, "warnings": warns})
                 elif kind == "start":
                     st["running"] = True
                     await send(tr.snapshot())
                 elif kind in ("stop", "reset"):
+                    proc.reset()
+                    stats.counts = proc.counts
                     st["running"] = kind == "reset" and st["running"]
                     st["tr"] = PresenceTracker(tr.cfg)  # clears tracks + embeddings
                     slot["frame"] = None
@@ -162,9 +184,7 @@ def main():
     a = ap.parse_args()
     # access_log=False: request lines would contain the ?token= query string. Frames travel over the
     # WebSocket and are never logged; only startup/model messages are written to the log.
-    uvicorn.run(
-        app, host=a.host, port=a.port, access_log=False, log_level="info", ws_max_size=8 * 1024 * 1024
-    )
+    uvicorn.run(app, host=a.host, port=a.port, access_log=False, log_level="info", ws_max_size=8 * 1024 * 1024)
 
 
 if __name__ == "__main__":

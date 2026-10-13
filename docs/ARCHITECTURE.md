@@ -6,6 +6,7 @@
 |---|---|
 | `presence_demo/tracker.py` | `Config`、`PresenceTracker`：群組追蹤、遲滯、聲音／影像融合、狀態機。只依賴 numpy，時鐘可注入，完全可單元測試。 |
 | `presence_demo/vision.py` | `Detector`／`Embedder` 介面；`YuNetDetector` + `SFaceEmbedder`（預設），`HaarDetector` + `HistEmbedder`（備援）；`VisionPipeline` 負責解碼、偵測、embedding 並計時。 |
+| `presence_demo/optimizer.py` | `FrameProcessor`：移動偵測閘門、ROI 裁切＋縮小、embedding 節流；`recommend_fps()` 自適應 fps。全部在記憶體中處理。 |
 | `presence_demo/stats.py` | `ConnStats`（每個連線的延遲 avg/p95、fps、丟棄張數、頻寬、RTT）和 `system_stats()`（psutil）。 |
 | `presence_demo/server.py` | FastAPI：靜態頁、`/api/config`、`/ws`；權杖中介層；每個 WebSocket 一個 tracker。 |
 | `presence_demo/static/index.html` | 單一檔案網頁（vanilla JS/CSS，不需建置）。 |
@@ -22,7 +23,8 @@ flowchart LR
   JPG -->|WS frame| Q[最新一張槽位<br/>舊的計為 dropped]
   VAD -->|WS vad 狀態改變時| TR
   Q --> W[worker thread]
-  W --> DEC[解碼] --> DET[YuNet 偵測] --> EMB[SFace embedding]
+  W --> DEC[記憶體內解碼] --> GATE{移動閘門} -->|有變化或強制| CROP[ROI 裁切＋縮小] --> DET[YuNet 偵測] --> EMB[SFace embedding<br/>節流]
+  GATE -->|靜止| REUSE[沿用上次結果] --> TR
   EMB --> TR[PresenceTracker.update]
   TK[ticker 0.5s] --> TR
   TR -->|WS state| UI

@@ -66,8 +66,7 @@ def test_ws_frames_write_no_files_and_log_no_image_data(monkeypatch, caplog):
     new_or_changed = {
         p
         for p in after
-        if before.get(p) != after[p]
-        and (p.startswith(cwd) or (p.startswith(tmp) and p.lower().endswith(img_ext)))
+        if before.get(p) != after[p] and (p.startswith(cwd) or (p.startswith(tmp) and p.lower().endswith(img_ext)))
     }
     assert not new_or_changed, f"files written during frame processing: {sorted(new_or_changed)[:10]}"
     payload = data.split(",")[1]

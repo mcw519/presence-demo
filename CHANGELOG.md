@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.0 — 2026-10-13
+
+- 新增效能／省電最佳化（`presence_demo/optimizer.py`），每項都可在設定的「效能」分組個別開關：
+  - 移動偵測閘門（`motion_gate`、`motion_threshold`、`force_detect_seconds`）
+  - Embedding 節流（`embed_throttle`、`embed_interval`、`embed_move_thresh`）
+  - 自適應 fps（`adaptive_fps`、`fps_low`、`fps_high`），伺服器在 state 訊息中回傳 `recommended_fps`
+  - ROI 裁切＋縮小（`roi_crop`、`crop_margin`、`max_width`）
+- 資源監控新增：跳過比例、embedding 計算／重用次數、建議 fps、移動偵測耗時。
+- 新增 `scripts/benchmark.py`（記憶體中合成畫面，不寫入影像）和 `docs/PERFORMANCE.md`。全部開啟時 CPU 約減少 63–69%。
+- 設定驗證支援布林值；`fps_low` 不會大於 `fps_high`。
+- 隱私：解碼改用 `decode_jpeg()`，在記憶體中完成，處理後立即釋放。
+
 ## 0.1.0 — 2026-10-13
 
 首個版本。

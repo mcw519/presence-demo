@@ -50,11 +50,32 @@
 | `end_after_away` | 5 | 0–120 s | AWAY 持續多久後 ENDED |
 | `new_group_seconds` | 3 | 0–60 s | 換組確認時間 |
 
+## 效能
+
+細節和基準測試結果見 [PERFORMANCE.md](PERFORMANCE.md)。
+
+| 參數 | 預設 | 範圍 | 說明 |
+|---|---|---|---|
+| `motion_gate` | 開 | 開/關 | 移動偵測閘門：畫面幾乎沒變而且狀態穩定時跳過偵測 |
+| `motion_threshold` | 0.015 | 0–0.2 | 64×48 灰階縮圖的平均差異門檻（0–1） |
+| `force_detect_seconds` | 3 | 0.5–30 s | 至少每隔這麼久完整偵測一次 |
+| `embed_throttle` | 開 | 開/關 | Embedding 節流 |
+| `embed_interval` | 3 | 0–30 s | 每張臉至少每隔這麼久重算一次 |
+| `embed_move_thresh` | 0.15 | 0–1 | 中心位移或大小變化（相對臉框）超過這個值就重算 |
+| `adaptive_fps` | 開 | 開/關 | 由伺服器建議 fps，開啟時取代瀏覽器的 `fps` |
+| `fps_low` | 0.5 | 0.2–5（≤ `fps_high`） | 穩定時的 fps |
+| `fps_high` | 2.0 | 0.2–5 | 有變化或 MAYBE_AWAY 時的 fps |
+| `roi_crop` | 開 | 開/關 | 偵測前先裁切 ROI 並縮小 |
+| `crop_margin` | 0.1 | 0–0.5 | 裁切時 ROI 四周多保留的範圍 |
+| `max_width` | 320 | 96–1920 px（整數） | 送進偵測器的最大寬度 |
+
+布林值接受 `true`/`false`、`1`/`0`、`on`/`off`。
+
 ## 瀏覽器端（不送到伺服器）
 
 | 參數 | 預設 | 範圍 | 說明 |
 |---|---|---|---|
-| `fps` | 1 | 0.5–5 | 每秒送出幾張畫面 |
+| `fps` | 1 | 0.5–5 | 每秒送出幾張畫面（開啟 `adaptive_fps` 時不使用） |
 | `vad_k` | 2.5 | 1.2–8 | 說話門檻＝噪音底 × 這個倍數 |
 | `vad_min` | 0.005 | 0.001–0.05 | 最低 RMS 音量門檻 |
 | `vad_hang` | 400 | 100–1500 ms | 音量變小後維持「說話中」多久 |
