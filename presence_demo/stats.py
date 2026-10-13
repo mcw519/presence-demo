@@ -21,7 +21,9 @@ class ConnStats:
 
     def __init__(self, window: int = 60, clock=time.monotonic):
         self.clock = clock
-        self.lat = {k: deque(maxlen=window) for k in ("decode", "motion", "detect", "embed", "tracker", "total")}
+        self.lat = {
+            k: deque(maxlen=window) for k in ("decode", "motion", "detect", "embed", "pose", "tracker", "total")
+        }
         self.frame_times = deque(maxlen=window)
         self.bytes = deque(maxlen=window)  # (t, nbytes)
         self.received = self.processed = self.dropped = 0
@@ -64,6 +66,7 @@ class ConnStats:
             "embed_reused": c.get("embed_reused", 0),
             "embed_reused_pct": round(100 * c.get("embed_reused", 0) / emb, 1) if emb else 0.0,
             "recommended_fps": self.recommended_fps,
+            "pose_calls": c.get("pose_calls", 0),
         }
 
     def snapshot(self) -> dict:

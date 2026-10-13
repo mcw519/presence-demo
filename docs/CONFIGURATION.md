@@ -17,7 +17,7 @@
 
 | 參數 | 預設 | 範圍 | 說明 |
 |---|---|---|---|
-| `roi` | (0.2, 0.05, 0.8, 0.95) | 各值 0–1；寬、高至少 0.05 | 正規化座標 x0,y0,x1,y1；臉的中心點要在框內才算。會自動排序 |
+| `face_roi` | (0.2, 0.05, 0.8, 0.95) | 各值 0–1；寬、高至少 0.05 | 臉部 ROI（藍色），正規化座標 x0,y0,x1,y1；臉的中心點要在框內才算。會自動排序。**舊的 `roi` 會自動轉成 `face_roi`**（伺服器 API、localStorage、匯入 JSON 都相容） |
 | `min_conf` | 0.6 | 0–1 | 低於這個值的偵測視為低信心 |
 
 ## 身分比對
@@ -49,6 +49,41 @@
 | `maybe_away_frac` | 0.5 | 0.05–0.95 | 計時到逾時的這個比例就進入 MAYBE_AWAY |
 | `end_after_away` | 5 | 0–120 s | AWAY 持續多久後 ENDED |
 | `new_group_seconds` | 3 | 0–60 s | 換組確認時間 |
+
+## 姿勢（選用，預設關閉）
+
+| 參數 | 預設 | 範圍 | 說明 |
+|---|---|---|---|
+| `pose_enabled` | 關 | 開/關 | 啟用 YOLOv8n-pose 身體與關鍵點偵測 |
+| `pose_conf` | 0.4 | 0.05–1 | 身體偵測信心門檻 |
+| `pose_roi` | (0, 0, 1, 1) | 同 ROI | 身體 ROI（紫色）；身體框中心點要在框內 |
+| `roi_rule` | `either` | `either`／`face`／`body` | 參與者判定規則：臉在臉部 ROI **或**身體在身體 ROI／只看臉／只看身體。姿勢關閉時一律只看臉 |
+| `turned_away_early` | 開 | 開/關 | 所有參與者轉身（側面或背對）**且**正在遠離時，提早進入 MAYBE_AWAY |
+| `turned_away_seconds` | 2 | 0–30 s | 上述狀態要持續多久 |
+| `recede_ratio` | 0.1 | 0.01–0.9 | 約 2 秒內身形（沒有身體時用臉寬）縮小超過這個比例就視為遠離（靠近則是放大超過這個比例） |
+
+身體朝向依據：鼻子和雙眼是否可見、左右肩在影像中的左右關係（正面時人的左肩在影像右側），以及肩寬和軀幹高度的比例。結果分成 `facing`（正面）、`side`（側身）、`away`（背對）。
+
+網頁上的「顯示臉部 ROI」和「顯示身體 ROI」只影響畫面顯示，不會送到伺服器。
+
+## 距離（選用，預設關閉）
+
+| 參數 | 預設 | 範圍 | 說明 |
+|---|---|---|---|
+| `distance_enabled` | 關 | 開/關 | 啟用距離估計、對話區和離開距離 |
+| `camera_hfov` | 60 | 20–170° | 鏡頭水平視角 |
+| `face_width_m` | 0.15 | 0.08–0.3 m | 平均臉寬 |
+| `shoulder_width_m` | 0.38 | 0.2–0.6 m | 平均肩寬（只在正面時使用） |
+| `distance_calib` | 1.0 | 0.2–5 | 校正係數 |
+| `distance_ema` | 0.3 | 0.01–1 | 平滑時新估計值的權重 |
+| `zone_min` / `zone_max` | 0.4 / 2.0 | 0–10 / 0.1–20 m | 對話區（`zone_min` 不會大於 `zone_max`） |
+| `leave_distance` | 2.5 | 0.2–30 m | 超過這個距離，即使還在畫面裡也視為已離開（不算「有人」，也不會加入參與者） |
+
+公式（針孔模型）：`距離 = 實際寬度 / (正規化寬度 × 2 × tan(HFOV/2)) × 校正係數`。同時有臉寬和肩寬時取平均。
+
+**校正**：站在已知距離（例如 1.0 m），在設定的「距離」分組輸入距離，按「我站在這個距離」。伺服器會用目前最近那個人的未校正估計值計算 `distance_calib = 已知距離 / 估計值`（WebSocket 訊息 `{"type":"calibrate","meters":1.0}`）。
+
+每個人的對話區標記：`in`（對話區內）、`near`（太近）、`far`（偏遠）、`left`（超過離開距離）。趨勢：`approaching`、`receding`、`steady`。
 
 ## 效能
 
@@ -86,8 +121,8 @@
 
 | 組合 | 內容 |
 |---|---|
-| 單人 | roi (0.25,0.05,0.75,0.95)、join 1.5 s、grace 10 s、present_timeout 45、empty_timeout 5 |
-| 多人圍觀 | roi (0.08,0.02,0.92,0.98)、join 3 s、grace 20 s、absent_frames 4、present_timeout 90、empty_timeout 8、new_group 5 s、cos_match 0.42、fps 2 |
+| 單人 | face_roi (0.25,0.05,0.75,0.95)、join 1.5 s、grace 10 s、present_timeout 45、empty_timeout 5 |
+| 多人圍觀 | face_roi (0.08,0.02,0.92,0.98)、join 3 s、grace 20 s、absent_frames 4、present_timeout 90、empty_timeout 8、new_group 5 s、cos_match 0.42、fps 2 |
 | 吵雜環境 | priority_mode vision、vad_k 3.5、vad_min 0.02、vad_hang 300 ms、min_conf 0.7、base_timeout 15、present_timeout 45 |
 | 重設預設值 | 回到上表預設值 |
 

@@ -176,3 +176,37 @@ def test_bool_config_validation():
     assert c.motion_gate is False and c.roi_crop is False and c.adaptive_fps is True
     w = c.update({"embed_throttle": "maybe", "fps_low": 4, "fps_high": 1})
     assert c.embed_throttle is True and w and c.fps_low == 1
+
+
+class FakePose:
+    name = "fake-pose"
+
+    def __init__(self):
+        self.shapes = []
+
+    def detect(self, img):
+        self.shapes.append(img.shape[:2])
+        h, w = img.shape[:2]
+        kp = {
+            "nose": (w / 2, h * 0.2, 0.9),
+            "l_shoulder": (w * 0.6, h * 0.4, 0.9),
+            "r_shoulder": (w * 0.4, h * 0.4, 0.9),
+        }
+        return [((w * 0.25, h * 0.1, w * 0.75, h * 0.9), 0.8, kp)]
+
+
+def test_pose_runs_on_pose_roi_and_maps_back():
+    clk = Clock()
+    fake = FakePose()
+    proc = FrameProcessor(Pipe(), clock=clk, pose_loader=lambda: fake)
+    cfg = Config(motion_gate=False, pose_enabled=True, pose_roi=(0.5, 0.0, 1.0, 1.0), crop_margin=0.0)
+    dets, tm = proc.process(frame(w=0), cfg)  # no face, one body
+    assert fake.shapes[-1] == (480, 320) and proc.counts["pose_calls"] == 1 and "pose" in tm
+    (d,) = dets
+    assert d.face_bbox is None and d.body is not None and d.embedding is None
+    x0, y0, x1, y1 = d.body.bbox
+    assert abs(x0 - (0.5 + 0.25 * 0.5)) < 1e-3 and abs(x1 - (0.5 + 0.75 * 0.5)) < 1e-3
+    assert abs(d.body.keypoints["nose"][0] - 0.75) < 1e-3
+    cfg.pose_enabled = False
+    proc.process(frame(), cfg)
+    assert proc.counts["pose_calls"] == 1

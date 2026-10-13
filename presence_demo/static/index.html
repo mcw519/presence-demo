@@ -105,16 +105,20 @@ button.stop{background:var(--bad);border-color:var(--bad);color:#fff}
 <script>
 const $=id=>document.getElementById(id);
 // ---------- settings schema ----------
-const DEF={roi:[0.2,0.05,0.8,0.95],min_conf:0.6,cos_match:0.4,cos_weak:0.2,iou_match:0.3,embed_ema:0.15,join_seconds:2,grace_seconds:15,
+const DEF={face_roi:[0.2,0.05,0.8,0.95],show_face_roi:true,pose_enabled:false,pose_conf:0.4,pose_roi:[0,0,1,1],show_pose_roi:true,roi_rule:'either',
+ turned_away_early:true,turned_away_seconds:2,recede_ratio:0.1,distance_enabled:false,camera_hfov:60,face_width_m:0.15,shoulder_width_m:0.38,
+ distance_calib:1,distance_ema:0.3,zone_min:0.4,zone_max:2,leave_distance:2.5,min_conf:0.6,cos_match:0.4,cos_weak:0.2,iou_match:0.3,embed_ema:0.15,join_seconds:2,grace_seconds:15,
  present_frames:2,absent_frames:3,idle_after:3,present_timeout:15,empty_timeout:5,base_timeout:20,maybe_away_frac:0.5,end_after_away:5,new_group_seconds:3,
  priority_mode:'vision',present_max_silence:0,motion_gate:true,motion_threshold:0.015,force_detect_seconds:3,embed_throttle:true,embed_interval:3,embed_move_thresh:0.15,adaptive_fps:true,fps_low:0.5,fps_high:2,roi_crop:true,crop_margin:0.1,max_width:320,fps:1,vad_k:2.5,vad_min:0.005,vad_hang:400};
-const CLIENT=['fps','vad_k','vad_min','vad_hang'];
+const CLIENT=['fps','vad_k','vad_min','vad_hang','show_face_roi','show_pose_roi'];
+const BOXES=['face_roi','pose_roi'];
 const S=(l,h,min,max,step,u='')=>({l,h,min,max,step,u});
 const GROUPS=[
  ['判斷優先',{priority_mode:{l:'判斷優先',h:'影像優先：畫面有人就不會因為靜默離開，ROI 確定沒人就照 ROI 空的逾時離開（不管聲音），聲音只在影像不確定時使用，適合吵雜環境。平衡：聲音和影像一起決定。聲音優先：主要看靜默，影像只微調逾時。',
    opts:{vision:'影像優先',balanced:'平衡',audio:'聲音優先'}},
    present_max_silence:S('有人時最長靜默（影像優先）','影像優先模式下，人在畫面裡但一直不說話，最多等多久就判定離開。0＝不限制。',0,3600,10,'s')}],
- ['偵測範圍',{roi:S('偵測範圍 ROI (x0,y0,x1,y1)','只有臉的中心點落在這個框裡才算數。可以直接在影像上拖曳。',0,1,0.01),
+ ['偵測範圍',{face_roi:{...S('臉部 ROI (x0,y0,x1,y1)','臉的中心點要落在這個框（藍色）裡才算數。可以直接在影像上拖曳或拉角調整。',0,1,0.01),box:true},
+   show_face_roi:{l:'顯示臉部 ROI',h:'在影像上顯示藍色的臉部 ROI 框（只影響顯示）。',bool:true},
    min_conf:S('最低偵測信心','低於這個值的偵測不算有人也不算沒人，會退回只看聲音。',0,1,0.01)}],
  ['身分比對',{cos_match:S('同一人相似度門檻','臉部 embedding 的 cosine 相似度達到這個值就算同一人（SFace 約 0.36）。',0,1,0.01),
    cos_weak:S('弱相似度（位置重疊時）','框的位置大致重疊時，相似度只要達到這個較低的值也算同一人。',0,1,0.01),
@@ -132,6 +136,23 @@ const GROUPS=[
    end_after_away:S('AWAY 轉 ENDED','AWAY 持續多久後結束對話並清除 embedding。',0,120,1,'s'),
    new_group_seconds:S('換組確認時間','舊參與者都不見、新的一群人出現多久後觸發 NEW_GROUP。',0,60,0.5,'s')}]];
 const B=(l,h)=>({l,h,bool:true});
+GROUPS.push(['姿勢',{pose_enabled:B('啟用姿勢偵測','用 YOLOv8n-pose 偵測身體與關鍵點（肩、髖、鼻、眼）。側身或背對時沒有臉也能判斷有人。CPU 成本較高，預設關閉。'),
+   pose_conf:S('身體偵測信心','低於這個值的身體偵測會被忽略。',0.05,1,0.05),
+   pose_roi:{...S('身體 ROI (x0,y0,x1,y1)','身體框的中心點落在這個框（紫色）裡才算數，通常比臉部 ROI 大。',0,1,0.01),box:true},
+   show_pose_roi:{l:'顯示身體 ROI',h:'在影像上顯示紫色的身體 ROI 框（只影響顯示）。',bool:true},
+   roi_rule:{l:'參與者判定規則',h:'臉或身體：臉在臉部 ROI，或身體在身體 ROI，任一成立就算。只看臉：只用臉部 ROI。只看身體：只用身體 ROI（需要開啟姿勢偵測）。',opts:{either:'臉或身體',face:'只看臉',body:'只看身體'}},
+   turned_away_early:B('轉身離開提早預警','所有參與者都轉身（側面或背對），而且身形變小（往遠處走）時，提早進入 MAYBE_AWAY。'),
+   turned_away_seconds:S('轉身持續時間','轉身＋遠離的狀態要持續多久才觸發。',0,30,0.5,'s'),
+   recede_ratio:S('遠離判定比例','約 2 秒內身形（或臉寬）縮小超過這個比例，就視為正在遠離。',0.01,0.9,0.01)}]);
+GROUPS.push(['距離',{distance_enabled:B('啟用距離估計','用臉寬（約 0.15 m）和肩寬（約 0.38 m，只在正面時使用）加上鏡頭視角估計距離。'),
+   camera_hfov:S('鏡頭水平視角','鏡頭的水平 FOV。不知道的話用預設值，再用下方的校正。',20,170,1,'°'),
+   face_width_m:S('平均臉寬','用於估計距離的平均臉寬。',0.08,0.3,0.005,'m'),
+   shoulder_width_m:S('平均肩寬','用於估計距離的平均肩寬。',0.2,0.6,0.01,'m'),
+   distance_calib:S('校正係數','估計距離乘上這個係數。可以用下方「我站在 X 公尺」自動計算。',0.2,5,0.01),
+   distance_ema:S('平滑係數','每次新估計值的權重（EMA）。越小越平滑，但反應越慢。',0.01,1,0.01),
+   zone_min:S('對話區最近','比這更近的標示為「太近」。',0,10,0.1,'m'),
+   zone_max:S('對話區最遠','對話區的外緣。超過但還沒到離開距離時標示為「偏遠」。',0.1,20,0.1,'m'),
+   leave_distance:S('離開距離','超過這個距離，就算還在畫面裡也視為已離開。',0.2,30,0.1,'m')}]);
 GROUPS.push(['效能',{motion_gate:B('移動偵測閘門','畫面幾乎沒變化、狀態也穩定時，跳過人臉偵測，沿用上一次的結果。'),
    motion_threshold:S('變化門檻','縮小灰階畫面的平均差異（0–1）低於這個值就視為沒變化。有雜訊的鏡頭要調高。',0,0.2,0.001),
    force_detect_seconds:S('強制偵測間隔','即使畫面沒變化，最久每隔幾秒也要完整偵測一次。',0.5,30,0.5,'s'),
@@ -150,11 +171,12 @@ GROUPS.push(['畫面與聲音（瀏覽器端）',{fps:S('每秒送出張數','�
    vad_hang:S('說話尾音保留','音量變小後還要維持「說話中」多久，避免句子中間斷掉。',100,1500,50,'ms')}]);
 const META=Object.assign({},...GROUPS.map(g=>g[1]));
 const PRESETS={
- single:{roi:[0.25,0.05,0.75,0.95],join_seconds:1.5,grace_seconds:10,present_timeout:45,empty_timeout:5,new_group_seconds:3,absent_frames:3},
- group:{roi:[0.08,0.02,0.92,0.98],join_seconds:3,grace_seconds:20,present_frames:2,absent_frames:4,present_timeout:90,empty_timeout:8,new_group_seconds:5,cos_match:0.42,fps:2},
+ single:{face_roi:[0.25,0.05,0.75,0.95],join_seconds:1.5,grace_seconds:10,present_timeout:45,empty_timeout:5,new_group_seconds:3,absent_frames:3},
+ group:{face_roi:[0.08,0.02,0.92,0.98],join_seconds:3,grace_seconds:20,present_frames:2,absent_frames:4,present_timeout:90,empty_timeout:8,new_group_seconds:5,cos_match:0.42,fps:2},
  noisy:{priority_mode:'vision',vad_k:3.5,vad_min:0.02,vad_hang:300,min_conf:0.7,base_timeout:15,present_timeout:45,empty_timeout:5}};
 const KEY='presence-cfg-v1';
-let cfg=Object.assign(structuredClone(DEF),JSON.parse(localStorage.getItem(KEY)||'{}'));
+const migrate=o=>{o={...o};if(o.roi&&!o.face_roi)o.face_roi=o.roi;delete o.roi;return o};
+let cfg=Object.assign(structuredClone(DEF),migrate(JSON.parse(localStorage.getItem(KEY)||'{}')));
 const save=()=>localStorage.setItem(KEY,JSON.stringify(cfg));
 const toast=t=>{const e=$('toast');e.textContent=t;e.classList.add('show');clearTimeout(e._t);e._t=setTimeout(()=>e.classList.remove('show'),2200)};
 const clamp=(k,v)=>{const m=META[k];if(m.bool)return v===true||v==='true'||v===1;if(m.opts)return m.opts[v]?v:DEF[k];return Math.min(m.max,Math.max(m.min,Number(v)))};
@@ -162,16 +184,16 @@ const clamp=(k,v)=>{const m=META[k];if(m.bool)return v===true||v==='true'||v===1
 function buildUI(){
  $('groups').innerHTML=GROUPS.map(([g,items],i)=>`<details ${i<1?'open':''}><summary>${g}</summary>`+Object.entries(items).map(([k,m])=>{
   const d=Array.isArray(DEF[k])?DEF[k].join(', '):DEF[k];
-  const ctl=m.bool?'':m.opts?`<select data-k="${k}" style="width:100%;margin-top:6px;background:var(--bg);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:7px">${Object.entries(m.opts).map(([o,t])=>`<option value="${o}">${t}</option>`).join('')}</select>`:k==='roi'?`<div class="roi4">${['x0','y0','x1','y1'].map((n,j)=>`<input type="number" data-k="roi" data-i="${j}" min="0" max="1" step="0.01" title="${n}">`).join('')}</div>`
+  const ctl=m.box?`<div class="roi4">${['x0','y0','x1','y1'].map((n,j)=>`<input type="number" data-k="${k}" data-i="${j}" min="0" max="1" step="0.01" title="${n}">`).join('')}</div>`:m.bool?'':m.opts?`<select data-k="${k}" style="width:100%;margin-top:6px;background:var(--bg);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:7px">${Object.entries(m.opts).map(([o,t])=>`<option value="${o}">${t}</option>`).join('')}</select>`:k==='roi'?`<div class="roi4">${['x0','y0','x1','y1'].map((n,j)=>`<input type="number" data-k="roi" data-i="${j}" min="0" max="1" step="0.01" title="${n}">`).join('')}</div>`
    :`<input type="range" data-k="${k}" min="${m.min}" max="${m.max}" step="${m.step}">`;
-  return `<div class="row" id="row_${k}"><div class="top"><label title="${m.h}">${m.l}</label>${m.bool?`<input type="checkbox" data-k="${k}" style="width:20px;height:20px;accent-color:var(--acc)">`:k==='roi'||m.opts?'':`<input type="number" data-k="${k}" min="${m.min}" max="${m.max}" step="${m.step}"><span class="def">${m.u}</span>`}</div>
+  return `<div class="row" id="row_${k}"><div class="top"><label title="${m.h}">${m.l}</label>${m.bool?`<input type="checkbox" data-k="${k}" style="width:20px;height:20px;accent-color:var(--acc)">`:m.box||m.opts?'':`<input type="number" data-k="${k}" min="${m.min}" max="${m.max}" step="${m.step}"><span class="def">${m.u}</span>`}</div>
    ${ctl}<div class="tip">${m.h}　<span class="def">預設 ${m.bool?(d?'開':'關'):m.opts?m.opts[d]:d}${m.u?' '+m.u:''}</span></div></div>`}).join('')+'</details>').join('');
  $('groups').querySelectorAll('input,select').forEach(inp=>{
   const ev=inp.type==='range'?'input':'change';
   if(inp.type==='checkbox'){inp.addEventListener('change',()=>setCfg({[inp.dataset.k]:inp.checked}));return}
   if(inp.tagName==='SELECT'){inp.addEventListener('change',()=>setCfg({[inp.dataset.k]:inp.value}));return}
   inp.addEventListener(ev,()=>{const k=inp.dataset.k;
-   if(k==='roi'){const r=[...cfg.roi];r[+inp.dataset.i]=clamp('roi',inp.value);setCfg({roi:r})}
+   if(BOXES.includes(k)){const r=[...cfg[k]];r[+inp.dataset.i]=Math.min(1,Math.max(0,+inp.value));setCfg({[k]:r})}
    else setCfg({[k]:clamp(k,inp.value)},inp)});
   if(inp.type==='range')inp.addEventListener('change',()=>sendCfg());
  });
@@ -180,7 +202,7 @@ function buildUI(){
 function syncUI(skip){
  document.querySelectorAll('#groups input,#groups select').forEach(inp=>{if(inp===skip)return;const k=inp.dataset.k;
   if(inp.type==='checkbox'){inp.checked=!!cfg[k];return}
-  inp.value=k==='roi'?(+cfg.roi[+inp.dataset.i]).toFixed(2):cfg[k]});
+  inp.value=BOXES.includes(k)?(+cfg[k][+inp.dataset.i]).toFixed(2):cfg[k]});
  for(const k in DEF){const r=$('row_'+k);if(r)r.classList.toggle('changed',JSON.stringify(cfg[k])!==JSON.stringify(DEF[k]))}
 }
 let sendTimer;
@@ -194,7 +216,7 @@ document.querySelectorAll('[data-p]').forEach(b=>b.onclick=()=>{const p=b.datase
 $('exp').onclick=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(cfg,null,2)],{type:'application/json'}));a.download='presence-config.json';a.click()};
 $('impB').onclick=()=>$('imp').click();
 $('imp').onchange=async e=>{try{const j=JSON.parse(await e.target.files[0].text());const n=structuredClone(DEF);
- for(const k in DEF)if(k in j)n[k]=k==='roi'?j.roi.slice(0,4).map(x=>clamp('roi',x)):clamp(k,j[k]);cfg=n;save();syncUI();sendCfg();restartFrames();draw();toast('已匯入設定')}
+ const jm=migrate(j);for(const k in DEF)if(k in jm)n[k]=BOXES.includes(k)?jm[k].slice(0,4).map(x=>Math.min(1,Math.max(0,+x))):clamp(k,jm[k]);cfg=n;save();syncUI();sendCfg();restartFrames();draw();toast('已匯入設定')}
  catch(err){toast('匯入失敗：'+err.message)}e.target.value=''};
 const drawer=(o)=>{$('drawer').classList.toggle('open',o);$('scrim').classList.toggle('open',o)};
 $('openSet').onclick=()=>drawer(true);$('closeSet').onclick=$('scrim').onclick=()=>drawer(false);
@@ -207,7 +229,7 @@ function connect(){ws=new WebSocket((location.protocol==='https:'?'wss://':'ws:/
   if(s.type==='stats')return renderStats(s);
   if(s.type==='pong'){lastRtt=performance.now()-s.t;return}
   if(s.type==='state'&&(s.recommended_fps||0)!==recFps){recFps=s.recommended_fps||0;if(cfg.adaptive_fps)restartFrames()}
-  if(s.config_ack&&s.config){let ch=false;for(const k in s.config){const v=k==='roi'?s.config.roi.map(x=>+(+x).toFixed(4)):s.config[k];
+  if(s.config_ack&&s.config){let ch=false;for(const k in s.config){if(!(k in DEF))continue;const v=BOXES.includes(k)?s.config[k].map(x=>+(+x).toFixed(4)):s.config[k];
     if(JSON.stringify(v)!==JSON.stringify(cfg[k])){cfg[k]=v;ch=true}}if(ch){save();syncUI()}
    if(s.warnings&&s.warnings.length)toast('伺服器調整：'+s.warnings.join('；'))}
   if(!('detections' in s)&&last)s.detections=last.detections;last=s;render(s)}}
@@ -231,39 +253,57 @@ function render(s){
  $('b2m').style.left=cfg.maybe_away_frac*100+'%';
  const a=s.state==='AWAY'?s.in_state:0;$('b3').style.width=pct(a,cfg.end_after_away);$('b3t').textContent=s.state==='AWAY'?`${a.toFixed(1)} / ${cfg.end_after_away}s`:'—';
  $('people').innerHTML=s.tracks.length?s.tracks.map(t=>`<div class="person"><b style="color:${col(t)}">#${t.id}</b>
-  <span class="badge">${t.participant?'★ 參與者':'候選'}</span><span class="sp">${t.visible?'可見':`消失 ${t.missing}s`}</span>
+  <span class="badge">${t.participant?'★ 參與者':'候選'}</span><span class="sp">${t.visible?'可見':`消失 ${t.missing}s`}${t.has_face===false?' · 無臉(身體)':''}${t.facing?' · '+({facing:'正面',side:'側身',away:'背對'}[t.facing]):''}${t.distance!=null?` · ${t.distance} m ${TR[t.trend]||''}`:''}</span>
   <small>相似 ${t.similarity.toFixed(2)} · conf ${t.conf.toFixed(2)}</small></div>`).join(''):'<div class="empty">目前沒有追蹤對象</div>';
  $('log').innerHTML=[...s.log].reverse().map(e=>`<div><span style="color:var(--mut)">${e.t.toFixed(1)}</span> <span class="ev ${e.event}">${e.event}</span> ${e.frm?e.frm+'→'+e.to:''} ${e.track?'#'+e.track:''} <span style="color:var(--mut)">${e.reason}</span></div>`).join('');
  draw();
 }
 const col=t=>!t.visible?'#6e7681':t.participant?'#3fb950':'#d29922';
 // ---------- overlay & ROI drag ----------
+const ROICOL={face_roi:'#58a6ff',pose_roi:'#bc8cff'};
+const TR={approaching:'↘ 靠近',receding:'↗ 遠離',steady:''};
+const ZC={in:'#3fb950',near:'#d29922',far:'#d29922',left:'#f85149'};
+const SK=[['l_shoulder','r_shoulder'],['l_shoulder','l_hip'],['r_shoulder','r_hip'],['l_hip','r_hip'],['nose','l_eye'],['nose','r_eye'],['l_eye','l_ear'],['r_eye','r_ear']];
+const visBoxes=()=>BOXES.filter(k=>k==='face_roi'?cfg.show_face_roi:(cfg.pose_enabled&&cfg.show_pose_roi));
 const cv=$('c'),g=cv.getContext('2d');let drag=null;
 function fit(){const r=cv.getBoundingClientRect(),d=devicePixelRatio||1;cv.width=r.width*d;cv.height=r.height*d;draw()}
 addEventListener('resize',fit);
 function draw(){const W=cv.width,H=cv.height,d=devicePixelRatio||1;g.clearRect(0,0,W,H);
  (last?.detections||[]).forEach(x=>{g.strokeStyle='#ffffff40';g.lineWidth=1*d;g.strokeRect(x.bbox[0]*W,x.bbox[1]*H,(x.bbox[2]-x.bbox[0])*W,(x.bbox[3]-x.bbox[1])*H)});
- (last?.tracks||[]).forEach(t=>{const b=t.bbox,c=col(t);g.strokeStyle=g.fillStyle=c;g.lineWidth=3*d;
+ (last?.tracks||[]).forEach(t=>{const c=col(t);
+  if(t.body){const bb=t.body;g.strokeStyle=c+'99';g.lineWidth=1.5*d;g.setLineDash([4*d,4*d]);g.strokeRect(bb[0]*W,bb[1]*H,(bb[2]-bb[0])*W,(bb[3]-bb[1])*H);g.setLineDash([])}
+  if(t.keypoints){const K=t.keypoints;g.strokeStyle='#ffffffcc';g.lineWidth=2*d;
+   SK.forEach(([a,b])=>{const p=K[a],q=K[b];if(p&&q&&p[2]>0.4&&q[2]>0.4){g.beginPath();g.moveTo(p[0]*W,p[1]*H);g.lineTo(q[0]*W,q[1]*H);g.stroke()}});
+   g.fillStyle=c;Object.values(K).forEach(p=>{if(p[2]>0.4){g.beginPath();g.arc(p[0]*W,p[1]*H,3*d,0,7);g.fill()}})}
+  const b=t.bbox;g.strokeStyle=g.fillStyle=c;g.lineWidth=(t.has_face===false?1.5:3)*d;
   g.strokeRect(b[0]*W,b[1]*H,(b[2]-b[0])*W,(b[3]-b[1])*H);g.font=`${13*d}px sans-serif`;
-  const lab=`#${t.id}${t.participant?' ★':''} ${t.similarity.toFixed(2)}`,tw=g.measureText(lab).width;
+  let lab=`#${t.id}${t.participant?' ★':''} ${t.has_face===false?'身體':t.similarity.toFixed(2)}`;
+  if(t.distance!=null)lab+=` · ${t.distance}m${t.trend==='receding'?'↗':t.trend==='approaching'?'↘':''}`;
+  const tw=g.measureText(lab).width;g.fillStyle=t.zone?ZC[t.zone]:c;
   g.fillRect(b[0]*W,b[1]*H-18*d,tw+8*d,18*d);g.fillStyle='#000';g.fillText(lab,b[0]*W+4*d,b[1]*H-5*d)});
- const r=cfg.roi,x=r[0]*W,y=r[1]*H,w=(r[2]-r[0])*W,h=(r[3]-r[1])*H;
- g.fillStyle='#0008';g.fillRect(0,0,W,y);g.fillRect(0,y+h,W,H-y-h);g.fillRect(0,y,x,h);g.fillRect(x+w,y,W-x-w,h);
- g.strokeStyle='#58a6ff';g.lineWidth=2*d;g.setLineDash([8*d,6*d]);g.strokeRect(x,y,w,h);g.setLineDash([]);
- g.fillStyle='#58a6ff';[[x,y],[x+w,y],[x,y+h],[x+w,y+h]].forEach(([a,b])=>g.fillRect(a-6*d,b-6*d,12*d,12*d));
+ const vb=visBoxes();
+ if(vb.includes('face_roi')){const r=cfg.face_roi,x=r[0]*W,y=r[1]*H,w=(r[2]-r[0])*W,h=(r[3]-r[1])*H;
+  g.fillStyle='#0006';g.fillRect(0,0,W,y);g.fillRect(0,y+h,W,H-y-h);g.fillRect(0,y,x,h);g.fillRect(x+w,y,W-x-w,h)}
+ vb.forEach(k=>{const r=cfg[k],x=r[0]*W+(k==='pose_roi'?2*d:0),y=r[1]*H+(k==='pose_roi'?2*d:0),w=(r[2]-r[0])*W-(k==='pose_roi'?4*d:0),h=(r[3]-r[1])*H-(k==='pose_roi'?4*d:0);
+  g.strokeStyle=ROICOL[k];g.lineWidth=2*d;g.setLineDash(k==='pose_roi'?[3*d,5*d]:[8*d,6*d]);g.strokeRect(x,y,w,h);g.setLineDash([]);
+  g.fillStyle=ROICOL[k];[[x,y],[x+w,y],[x,y+h],[x+w,y+h]].forEach(([a,b])=>g.fillRect(a-6*d,b-6*d,12*d,12*d));
+  g.font=`${11*d}px sans-serif`;g.fillText(k==='face_roi'?'臉部 ROI':'身體 ROI',x+8*d,y+(k==='face_roi'?16:30)*d)});
+ if(cfg.distance_enabled){g.font=`${12*d}px sans-serif`;const txt=`對話區 ${cfg.zone_min}–${cfg.zone_max} m · 離開 > ${cfg.leave_distance} m`;
+  const tw=g.measureText(txt).width;g.fillStyle='#000a';g.fillRect(W-tw-16*d,H-24*d,tw+12*d,20*d);g.fillStyle='#e6edf3';g.fillText(txt,W-tw-10*d,H-10*d)}
 }
 function pos(e){const r=cv.getBoundingClientRect();return[(e.clientX-r.left)/r.width,(e.clientY-r.top)/r.height,r]}
-function hit(e){const[px,py,rc]=pos(e),r=cfg.roi,tx=18/rc.width,ty=18/rc.height;
- const corners=[[0,1],[2,1],[0,3],[2,3]];for(const[i,j]of corners)if(Math.abs(px-r[i])<tx&&Math.abs(py-r[j])<ty)return{mode:'corner',i,j};
- if(px>r[0]&&px<r[2]&&py>r[1]&&py<r[3])return{mode:'move'};return null}
+function hit(e){const[px,py,rc]=pos(e),tx=18/rc.width,ty=18/rc.height,vb=visBoxes();
+ const corners=[[0,1],[2,1],[0,3],[2,3]];
+ for(const k of vb){const r=cfg[k];for(const[i,j]of corners)if(Math.abs(px-r[i])<tx&&Math.abs(py-r[j])<ty)return{mode:'corner',i,j,k}}
+ for(const k of vb){const r=cfg[k];if(px>r[0]&&px<r[2]&&py>r[1]&&py<r[3])return{mode:'move',k}}return null}
 cv.addEventListener('pointermove',e=>{if(!drag){const h=hit(e);cv.style.cursor=h?(h.mode==='move'?'move':'nwse-resize'):'default';return}
  const[px,py]=pos(e),r=[...drag.r],C=v=>Math.min(1,Math.max(0,v));
  if(drag.mode==='move'){const dx=px-drag.p[0],dy=py-drag.p[1],w=r[2]-r[0],h=r[3]-r[1];
-  const x0=Math.min(1-w,Math.max(0,r[0]+dx)),y0=Math.min(1-h,Math.max(0,r[1]+dy));cfg.roi=[x0,y0,x0+w,y0+h]}
+  const x0=Math.min(1-w,Math.max(0,r[0]+dx)),y0=Math.min(1-h,Math.max(0,r[1]+dy));cfg[drag.k]=[x0,y0,x0+w,y0+h]}
  else{r[drag.i]=C(px);r[drag.j]=C(py);
-  if(r[2]-r[0]<0.05){if(drag.i===0)r[0]=r[2]-0.05;else r[2]=r[0]+0.05}if(r[3]-r[1]<0.05){if(drag.j===1)r[1]=r[3]-0.05;else r[3]=r[1]+0.05}cfg.roi=r}
- cfg.roi=cfg.roi.map(v=>+v.toFixed(3));syncUI();draw()});
-cv.addEventListener('pointerdown',e=>{const h=hit(e);if(!h)return;drag={...h,p:pos(e),r:[...cfg.roi]};cv.setPointerCapture(e.pointerId);e.preventDefault()});
+  if(r[2]-r[0]<0.05){if(drag.i===0)r[0]=r[2]-0.05;else r[2]=r[0]+0.05}if(r[3]-r[1]<0.05){if(drag.j===1)r[1]=r[3]-0.05;else r[3]=r[1]+0.05}cfg[drag.k]=r}
+ cfg[drag.k]=cfg[drag.k].map(v=>+v.toFixed(3));syncUI();draw()});
+cv.addEventListener('pointerdown',e=>{const h=hit(e);if(!h)return;drag={...h,p:pos(e),r:[...cfg[h.k]]};cv.setPointerCapture(e.pointerId);e.preventDefault()});
 const endDrag=()=>{if(drag){drag=null;save();sendCfg()}};cv.addEventListener('pointerup',endDrag);cv.addEventListener('pointercancel',endDrag);
 // ---------- media: VAD + frames, start/stop ----------
 let speech=false,frameTimer,vadTimer,pingTimer,stream=null,ac=null,running=false,autoPaused=false,lastRtt=null,v=$('v'),off=document.createElement('canvas'),og=off.getContext('2d');
@@ -319,15 +359,20 @@ function renderStats(s){const y=s.system,c=s.conn,L=c.latency_ms,i=s.info;
  $('mFps').textContent=`${c.fps} / ${fmtB(c.bandwidth_Bps)}/s`;
  spark('spCpu',[H.cpu,H.sys],['#58a6ff','#8b949e'],100);spark('spLat',[H.lat,H.p95],['#3fb950','#d29922'],10);
  $('mCores').innerHTML=(y.per_core||[]).map(p=>`<i style="height:${Math.max(4,p)}%" title="${p}%"></i>`).join('');
- const nm={motion:'移動偵測',decode:'JPEG 解碼',detect:'偵測',embed:'Embedding',tracker:'Tracker',total:'總計'};
+ const nm={pose:'姿勢',motion:'移動偵測',decode:'JPEG 解碼',detect:'偵測',embed:'Embedding',tracker:'Tracker',total:'總計'};
  $('mLatT').innerHTML=Object.entries(L).map(([k,v])=>`<tr><td>${nm[k]||k}</td><td>${v.last}</td><td>${v.avg}</td><td>${v.p95}</td></tr>`).join('');
  const kv={'Load avg':y.load?y.load.join(' / '):'—','畫面張數':`收 ${c.frames.received} · 處理 ${c.frames.processed} · 丟棄 ${c.frames.dropped}`,
   '畫面大小':`${c.frame_size.join('×')} · 平均 ${fmtB(c.frame_bytes_avg)}`,'WS 往返':c.rtt_ms!=null?c.rtt_ms+' ms':(lastRtt?lastRtt.toFixed(0)+' ms':'—'),
   '模型':i.pipeline,'OpenCV':`${i.opencv} · ${i.dnn_backend} / ${i.dnn_target} · ${i.cv_threads} threads`,'程序':`${y.proc_threads} threads · ${i.cpu_count} cores`,
   '效能':c.optim?`跳過 ${c.optim.skipped_pct}%（${c.optim.skipped} 張）· embedding 計算 ${c.optim.embed_computed} / 重用 ${c.optim.embed_reused}（${c.optim.embed_reused_pct}%）`:'—',
+  '姿勢':`${i.pose_model||'—'} · 呼叫 ${c.optim?c.optim.pose_calls:0} 次 · avg ${L.pose?L.pose.avg:0} ms`,
   '送幀 fps':`${curFps()}${cfg.adaptive_fps?`（自適應，伺服器建議 ${c.optim?c.optim.recommended_fps:'—'}）`:'（固定）'}`};
 
  $('mKv').innerHTML=Object.entries(kv).map(([k,v])=>`<span>${k}</span><span>${v}</span>`).join('');
 }
-buildUI();new ResizeObserver(fit).observe(cv);connect();
+function addCalib(){const det=[...document.querySelectorAll('#groups details')].find(x=>x.querySelector('summary').textContent==='距離');if(!det)return;
+ det.insertAdjacentHTML('beforeend',`<div class="row"><div class="top"><label>距離校正</label><input type="number" id="calM" min="0.2" max="10" step="0.1" value="1.0"><span class="def">m</span><button id="calB" style="padding:5px 10px">我站在這個距離</button></div>
+  <div class="tip">站在鏡頭前已知的距離（例如用捲尺量 1.0 m），然後按按鈕。系統會用目前最近那個人的估計值算出校正係數。需要先啟用距離估計並開始偵測。</div></div>`);
+ $('calB').onclick=()=>{if(!running){toast('請先按「開始」');return}wsSend({type:'calibrate',meters:+$('calM').value})}}
+buildUI();addCalib();new ResizeObserver(fit).observe(cv);connect();
 </script></body></html>

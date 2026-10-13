@@ -20,7 +20,7 @@ import numpy as np
 
 from presence_demo.optimizer import FrameProcessor, recommend_fps
 from presence_demo.tracker import Config, PresenceTracker
-from presence_demo.vision import VisionPipeline, decode_jpeg
+from presence_demo.vision import VisionPipeline, decode_jpeg, load_pose_detector
 
 FACE = Path(__file__).resolve().parent.parent / "tests" / "data" / "face.jpg"
 DURATION = 60.0
@@ -48,7 +48,7 @@ def make_frame(t: float, face: np.ndarray, bg: np.ndarray, rng: np.random.Genera
 
 def run(pipe: VisionPipeline, cfg: Config, fixed_fps: float, label: str) -> dict:
     clk = SimClock()
-    proc = FrameProcessor(pipe, clock=clk)
+    proc = FrameProcessor(pipe, clock=clk, pose_loader=load_pose_detector)
     tr = PresenceTracker(cfg, clock=clk)
     face = cv2.resize(cv2.imread(str(FACE)), (240, 360))
     bg = np.full((480, 640, 3), 90, np.uint8)
@@ -84,6 +84,7 @@ def run(pipe: VisionPipeline, cfg: Config, fixed_fps: float, label: str) -> dict
         "embed": proc.counts["embed_computed"],
         "reused": proc.counts["embed_reused"],
         "skipped": proc.counts["skipped"],
+        "pose": proc.counts["pose_calls"],
         "away_seen": "AWAY" in states,
     }
 
@@ -105,6 +106,10 @@ def main() -> None:
         ("只開 embedding 節流", Config(**{**OFF, "embed_throttle": True})),
         ("全部開啟（固定 fps）", Config(adaptive_fps=False)),
         ("全部開啟 + 自適應 fps", Config()),
+        ("姿勢（其他最佳化關閉）", Config(**{**OFF, "pose_enabled": True})),
+        ("全部開啟 + 姿勢", Config(pose_enabled=True)),
+        ("全部開啟 + 姿勢 + 距離", Config(pose_enabled=True, distance_enabled=True)),
+        ("全部開啟 + 距離（無姿勢）", Config(distance_enabled=True)),
     ]
     run(pipe, Config(**OFF), a.fps, "warmup")
     rows = []
@@ -114,13 +119,16 @@ def main() -> None:
         rows.append(best)
     print(f"Pipeline: {pipe.name} · OpenCV {cv2.__version__} · {a.repeat} 次取 CPU 最低 · 模擬 {DURATION:.0f} s")
     print(
-        "| 設定 | 處理張數 | 每張 avg (ms) | 每張 p95 (ms) | 總 CPU (s) | detect 次數 | embed 計算/重用 | 跳過 | AWAY |"
+        "| 設定 | 處理張數 | 每張 avg (ms) | 每張 p95 (ms) | 總 CPU (s) | Δ CPU | detect 次數 "
+        "| embed 計算/重用 | 姿勢次數 | 跳過 | AWAY |"
     )
-    print("|---|---|---|---|---|---|---|---|---|")
+    print("|---|---|---|---|---|---|---|---|---|---|---|")
+    base = rows[0]["cpu_s"]
     for r in rows:
         print(
-            f"| {r['label']} | {r['frames']} | {r['avg']:.1f} | {r['p95']:.1f} | {r['cpu_s']:.2f} | {r['detect']} | "
-            f"{r['embed']} / {r['reused']} | {r['skipped']} | {'是' if r['away_seen'] else '否'} |"
+            f"| {r['label']} | {r['frames']} | {r['avg']:.1f} | {r['p95']:.1f} | {r['cpu_s']:.2f} | "
+            f"{(r['cpu_s'] / base - 1) * 100:+.0f}% | {r['detect']} | "
+            f"{r['embed']} / {r['reused']} | {r['pose']} | {r['skipped']} | {'是' if r['away_seen'] else '否'} |"
         )
 
 

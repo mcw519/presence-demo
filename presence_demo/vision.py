@@ -25,6 +25,69 @@ SFACE = (
 )
 
 
+YOLO_POSE = (
+    "yolov8n-pose.onnx",
+    "https://huggingface.co/Xenova/yolov8n-pose/resolve/main/onnx/model.onnx",
+)
+COCO_KP = ["nose", "l_eye", "r_eye", "l_ear", "r_ear", "l_shoulder", "r_shoulder"]
+COCO_KP_IDX = {**{n: i for i, n in enumerate(COCO_KP)}, "l_hip": 11, "r_hip": 12}
+
+
+class PoseDetector(Protocol):
+    """Returns bodies in pixel coordinates of the given image: (bbox_xyxy, conf, {name: (x, y, c)})."""
+
+    name: str
+
+    def detect(self, img: np.ndarray) -> list[tuple[tuple, float, dict]]: ...
+
+
+class YoloPoseDetector:
+    """YOLOv8n-pose (ONNX, COCO-17 keypoints) via OpenCV DNN on CPU. Fixed 640x640 letterboxed input."""
+
+    name = "YOLOv8n-pose"
+    SIZE = 640
+
+    def __init__(self, path, conf: float = 0.4):
+        self.net = cv2.dnn.readNetFromONNX(str(path))
+        self.conf = conf
+
+    def detect(self, img):
+        h, w = img.shape[:2]
+        s = self.SIZE / max(h, w)
+        nw, nh = int(round(w * s)), int(round(h * s))
+        canvas = np.full((self.SIZE, self.SIZE, 3), 114, np.uint8)
+        canvas[:nh, :nw] = cv2.resize(img, (nw, nh))
+        self.net.setInput(cv2.dnn.blobFromImage(canvas, 1 / 255.0, (self.SIZE, self.SIZE), swapRB=True))
+        out = self.net.forward()[0].T  # (8400, 56)
+        keep = out[:, 4] >= self.conf
+        out = out[keep]
+        if not len(out):
+            return []
+        boxes = [[float(c[0] - c[2] / 2), float(c[1] - c[3] / 2), float(c[2]), float(c[3])] for c in out]
+        idx = cv2.dnn.NMSBoxes(boxes, out[:, 4].tolist(), self.conf, 0.45)
+        res = []
+        for i in np.array(idx).ravel():
+            r = out[i]
+            x, y, bw, bh = boxes[i]
+            bbox = (x / s, y / s, (x + bw) / s, (y + bh) / s)
+            kps = r[5:].reshape(17, 3)
+            kp = {n: (float(kps[j, 0] / s), float(kps[j, 1] / s), float(kps[j, 2])) for n, j in COCO_KP_IDX.items()}
+            res.append((bbox, float(r[4]), kp))
+        return res
+
+
+def load_pose_detector(allow_download: bool = True) -> PoseDetector | None:
+    """Load the default pose detector, downloading the model on first use. None if unavailable."""
+    p = ensure_model(*YOLO_POSE) if allow_download else (MODEL_DIR / YOLO_POSE[0])
+    if not p or not Path(p).exists():
+        return None
+    try:
+        return YoloPoseDetector(p)
+    except Exception as e:  # noqa: BLE001
+        log.warning("pose model failed to load: %s", e)
+        return None
+
+
 class Detector(Protocol):
     name: str
 

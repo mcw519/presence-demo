@@ -14,13 +14,15 @@ All work happens on in-memory numpy arrays. PRIVACY: never write frames to disk 
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 
 import cv2
 import numpy as np
 
+from .body import Body, associate, head_box
 from .tracker import Config, Detection, iou
-from .vision import VisionPipeline
+from .vision import PoseDetector, VisionPipeline
 
 THUMB = (64, 48)
 
@@ -78,20 +80,79 @@ def recommend_fps(snapshot: dict, cfg: Config, tracks_changed: bool) -> float:
     return cfg.fps_low
 
 
+def fuse(faces: list[Detection], bodies: list[Body]) -> list[Detection]:
+    """Attach bodies to faces (face center in the body's head region); body-only people get a head box."""
+    out = []
+    for fi, bi in associate([f.bbox for f in faces], bodies):
+        if fi is not None:
+            f = faces[fi]
+            out.append(
+                Detection(f.bbox, f.conf, f.embedding, face_bbox=f.bbox, body=bodies[bi] if bi is not None else None)
+            )
+        else:
+            b = bodies[bi]
+            out.append(Detection(head_box(b), b.conf, None, face_bbox=None, body=b))
+    return out
+
+
 class FrameProcessor:
     """Per-connection wrapper around :class:`VisionPipeline` applying the optimizations."""
 
-    def __init__(self, pipe: VisionPipeline, clock=time.monotonic):
+    def __init__(
+        self,
+        pipe: VisionPipeline,
+        clock=time.monotonic,
+        pose_loader: Callable[[], PoseDetector | None] | None = None,
+    ):
         self.pipe = pipe
         self.clock = clock
+        self.pose_loader = pose_loader
+        self._pose: PoseDetector | None = None
+        self.pose_available: bool | None = None  # None = not tried yet
         self.reset()
+
+    def _get_pose(self) -> PoseDetector | None:
+        if self._pose is None and self.pose_available is None and self.pose_loader is not None:
+            self._pose = self.pose_loader()
+            self.pose_available = self._pose is not None
+        return self._pose
+
+    def _detect_bodies(self, img: np.ndarray, cfg: Config) -> list[Body]:
+        """Run the pose detector on the pose ROI (+margin); returns bodies in normalized frame coordinates."""
+        pose = self._get_pose()
+        if pose is None:
+            return []
+        h, w = img.shape[:2]
+        x0, y0, x1, y1 = crop_box(cfg.pose_roi, cfg.crop_margin if cfg.roi_crop else 0.0, w, h)
+        sub = img[y0:y1, x0:x1]
+        self.counts["pose_calls"] += 1
+        bodies = []
+        for (bx0, by0, bx1, by1), conf, kp in pose.detect(sub):
+            if conf < cfg.pose_conf:
+                continue
+            bbox = (
+                max(0.0, (bx0 + x0) / w),
+                max(0.0, (by0 + y0) / h),
+                min(1.0, (bx1 + x0) / w),
+                min(1.0, (by1 + y0) / h),
+            )
+            kps = {n: ((p[0] + x0) / w, (p[1] + y0) / h, p[2]) for n, p in kp.items()}
+            bodies.append(Body(bbox, conf, kps))
+        return bodies
 
     def reset(self) -> None:
         self.last_thumb: np.ndarray | None = None
         self.last_dets: list[Detection] | None = None
         self.last_full = -1e9
         self.cache: list[_Cached] = []
-        self.counts = {"frames": 0, "skipped": 0, "detect_calls": 0, "embed_computed": 0, "embed_reused": 0}
+        self.counts = {
+            "frames": 0,
+            "skipped": 0,
+            "detect_calls": 0,
+            "embed_computed": 0,
+            "embed_reused": 0,
+            "pose_calls": 0,
+        }
 
     def process(self, img: np.ndarray, cfg: Config, stable: bool = True) -> tuple[list[Detection], dict]:
         now = self.clock()
@@ -112,11 +173,12 @@ class FrameProcessor:
         ):
             self.counts["skipped"] += 1
             tm.update(skipped=True, embed_computed=0, embed_reused=0)
-            return [Detection(d.bbox, d.conf, d.embedding) for d in self.last_dets], tm
+            tm["pose"] = 0.0
+            return [replace(d) for d in self.last_dets], tm
 
         # --- detection (optionally on cropped + downscaled ROI) ---
         if cfg.roi_crop:
-            x0, y0, x1, y1 = crop_box(cfg.roi, cfg.crop_margin, w, h)
+            x0, y0, x1, y1 = crop_box(cfg.face_roi, cfg.crop_margin, w, h)
         else:
             x0, y0, x1, y1 = 0, 0, w, h
         sub = img[y0:y1, x0:x1]
@@ -166,10 +228,16 @@ class FrameProcessor:
             new_cache.append(_Cached(cb, emb, t_emb, ss))
             out.append(Detection(bbox, conf, emb))
         self.cache = new_cache
-        self.last_dets = [Detection(d.bbox, d.conf, d.embedding) for d in out]
+        tm["embed"] = (time.perf_counter() - t2) * 1000
+        tm["pose"] = 0.0
+        if cfg.pose_enabled:
+            t3 = time.perf_counter()
+            bodies = self._detect_bodies(img, cfg)
+            tm["pose"] = (time.perf_counter() - t3) * 1000
+            out = fuse(out, bodies)
+        self.last_dets = [replace(d) for d in out]
         self.counts["embed_computed"] += computed
         self.counts["embed_reused"] += reused
-        tm["embed"] = (time.perf_counter() - t2) * 1000
         tm.update(
             skipped=False,
             embed_computed=computed,

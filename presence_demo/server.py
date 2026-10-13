@@ -14,10 +14,11 @@ from pathlib import Path
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, PlainTextResponse
 
+from .body import calibration_factor
 from .optimizer import FrameProcessor, recommend_fps
 from .stats import ConnStats, build_stats
 from .tracker import RANGES, Config, PresenceTracker
-from .vision import VisionPipeline, decode_jpeg
+from .vision import VisionPipeline, decode_jpeg, load_pose_detector
 
 logging.basicConfig(level=logging.INFO)
 STATIC = Path(__file__).parent / "static"
@@ -31,6 +32,33 @@ async def require_token(request: Request, call_next):
     if TOKEN and not secrets.compare_digest(request.query_params.get("token", ""), TOKEN):
         return PlainTextResponse("forbidden", status_code=403)
     return await call_next(request)
+
+
+_pose_cache: dict = {}
+
+
+def pose_detector():
+    """Load the pose detector once per process (downloads YOLOv8n-pose on first use)."""
+    if "det" not in _pose_cache:
+        _pose_cache["det"] = load_pose_detector()
+        logging.info("pose detector: %s", _pose_cache["det"].name if _pose_cache["det"] else "unavailable")
+    return _pose_cache["det"]
+
+
+def calibrate(tr: PresenceTracker, meters) -> list[str]:
+    """Set distance_calib so the closest visible person's raw distance maps to ``meters``."""
+    try:
+        known = float(meters)
+    except (TypeError, ValueError):
+        return ["calibration: invalid distance"]
+    cands = [t for t in tr.tracks.values() if t.visible and t.dist_raw]
+    if not cands or known <= 0:
+        return ["calibration: no visible person with a distance estimate"]
+    t = min(cands, key=lambda x: x.dist_raw)
+    warns = tr.cfg.update({"distance_calib": calibration_factor(t.dist_raw, known)})
+    for x in tr.tracks.values():
+        x.distance = None  # restart EMA with the new factor
+    return warns + [f"calibrated: factor {tr.cfg.distance_calib:.3f} (track #{t.id})"]
 
 
 def pipeline() -> VisionPipeline:
@@ -64,7 +92,7 @@ async def ws(sock: WebSocket):
     info = pipe.info()
     st = {"tr": PresenceTracker(Config()), "running": False}
     stats = ConnStats()
-    proc = FrameProcessor(pipe)
+    proc = FrameProcessor(pipe, pose_loader=pose_detector)
     stats.counts = proc.counts
     fpsstate = {"sig": (), "changed_at": 0.0, "rec": 0.0}
     lock = asyncio.Lock()
@@ -86,7 +114,19 @@ async def ws(sock: WebSocket):
                 tr = st["tr"]
                 await send(tr.tick() if st["running"] else tr.snapshot())
                 if st["running"] and n % 2 == 0:
-                    await sock.send_json(build_stats(stats, info))
+                    await sock.send_json(
+                        build_stats(
+                            stats,
+                            {
+                                **info,
+                                "pose_model": (
+                                    _pose_cache.get("det").name
+                                    if _pose_cache.get("det")
+                                    else ("unavailable" if "det" in _pose_cache else "not loaded")
+                                ),
+                            },
+                        )
+                    )
 
     async def worker():  # processes only the latest frame; older queued frames are dropped
         while True:
@@ -155,6 +195,9 @@ async def ws(sock: WebSocket):
                         await send(tr.set_speech(bool(msg.get("speech"))))
                 elif kind == "config":
                     warns = tr.cfg.update(msg.get("config", {}))
+                    await send(tr.tick() if st["running"] else tr.snapshot(), {"config_ack": True, "warnings": warns})
+                elif kind == "calibrate":
+                    warns = calibrate(tr, msg.get("meters"))
                     await send(tr.tick() if st["running"] else tr.snapshot(), {"config_ack": True, "warnings": warns})
                 elif kind == "start":
                     st["running"] = True

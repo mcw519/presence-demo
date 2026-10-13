@@ -6,11 +6,14 @@ Coordinates are normalized [0,1] (x0, y0, x1, y1).
 from __future__ import annotations
 
 import time
+from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 import numpy as np
+
+from .body import Body, estimate_distance, orientation, shoulder_width
 
 
 class State(str, Enum):
@@ -25,7 +28,7 @@ class State(str, Enum):
 class Config:
     """Tracker parameters. All coordinates are normalized; times in seconds. See docs/CONFIGURATION.md."""
 
-    roi: tuple = (0.2, 0.05, 0.8, 0.95)  # central box, normalized
+    face_roi: tuple = (0.2, 0.05, 0.8, 0.95)  # face ROI (formerly `roi`), normalized
     min_conf: float = 0.6  # detections below are "low confidence"
     iou_match: float = 0.3
     cos_match: float = 0.40  # cosine >= this => same person (SFace ~0.363)
@@ -56,18 +59,49 @@ class Config:
     roi_crop: bool = True  # crop ROI (+margin) and downscale before detection
     crop_margin: float = 0.1  # margin around ROI, fraction of frame
     max_width: int = 320  # max width of the image fed to the detector
+    # --- pose / body (optional) ---
+    pose_enabled: bool = False  # run the pose detector (YOLOv8n-pose)
+    pose_conf: float = 0.4  # min pose/person confidence
+    pose_roi: tuple = (0.0, 0.0, 1.0, 1.0)  # body ROI (center of body box), normalized
+    roi_rule: str = "either"  # either | face | body : which ROI makes a person count
+    turned_away_early: bool = True  # turned away + moving away -> early MAYBE_AWAY
+    turned_away_seconds: float = 2.0  # how long the cue must persist
+    recede_ratio: float = 0.1  # relative size shrink over ~2 s that counts as "moving away"
+    # --- distance (optional) ---
+    distance_enabled: bool = False
+    camera_hfov: float = 60.0  # horizontal field of view, degrees
+    face_width_m: float = 0.15  # average face width
+    shoulder_width_m: float = 0.38  # average shoulder width
+    distance_calib: float = 1.0  # calibration factor (see calibrate)
+    distance_ema: float = 0.3  # weight of the newest estimate
+    zone_min: float = 0.4  # conversation zone, meters
+    zone_max: float = 2.0
+    leave_distance: float = 2.5  # beyond this a visible person counts as left
     present_max_silence: float = 0.0  # vision mode: cap on silence with people present (0 = off)
+
+    @property
+    def roi(self) -> tuple:
+        """Backward-compatible alias for :attr:`face_roi`."""
+        return self.face_roi
+
+    @roi.setter
+    def roi(self, v: tuple) -> None:
+        self.face_roi = tuple(v)
 
     def update(self, d: dict) -> list[str]:
         """Validate + clamp; unknown keys / bad values are skipped. Returns warnings."""
         warnings = []
-        for k, v in (d or {}).items():
+        d = dict(d or {})
+        if "roi" in d:  # migrate legacy key
+            v = d.pop("roi")
+            d.setdefault("face_roi", v)
+        for k, v in d.items():
             if k not in RANGES:
                 warnings.append(f"unknown key {k}")
                 continue
             lo, hi, typ = RANGES[k]
             try:
-                if k == "priority_mode":
+                if typ is str:
                     if v not in lo:
                         raise ValueError
                     setattr(self, k, v)
@@ -79,7 +113,7 @@ class Config:
                         v = v.lower() in ("true", "1", "on")
                     setattr(self, k, bool(v))
                     continue
-                if k == "roi":
+                if typ is tuple:
                     vals = [min(hi, max(lo, float(x))) for x in v]
                     if len(vals) != 4:
                         raise ValueError
@@ -87,7 +121,7 @@ class Config:
                     x0, x1 = sorted((x0, x1))
                     y0, y1 = sorted((y0, y1))
                     if x1 - x0 < 0.05 or y1 - y0 < 0.05:
-                        warnings.append("roi too small; ignored")
+                        warnings.append(f"{k} too small; ignored")
                         continue
                     new = (x0, y0, x1, y1)
                 else:
@@ -101,6 +135,9 @@ class Config:
                 warnings.append(f"invalid value for {k}")
                 continue
             setattr(self, k, new)
+        if self.zone_min > self.zone_max:
+            self.zone_min = self.zone_max
+            warnings.append("zone_min lowered to zone_max")
         if self.fps_low > self.fps_high:
             self.fps_low = self.fps_high
             warnings.append("fps_low lowered to fps_high")
@@ -112,7 +149,8 @@ class Config:
 
 # (min, max, type) for every Config field
 RANGES = {
-    "roi": (0.0, 1.0, tuple),
+    "face_roi": (0.0, 1.0, tuple),
+    "pose_roi": (0.0, 1.0, tuple),
     "min_conf": (0.0, 1.0, float),
     "iou_match": (0.0, 1.0, float),
     "cos_match": (0.0, 1.0, float),
@@ -131,6 +169,21 @@ RANGES = {
     "new_group_seconds": (0.0, 60.0, float),
     "present_max_silence": (0.0, 3600.0, float),
     "priority_mode": (("vision", "balanced", "audio"), None, str),
+    "roi_rule": (("either", "face", "body"), None, str),
+    "pose_enabled": (False, True, bool),
+    "pose_conf": (0.05, 1.0, float),
+    "turned_away_early": (False, True, bool),
+    "turned_away_seconds": (0.0, 30.0, float),
+    "recede_ratio": (0.01, 0.9, float),
+    "distance_enabled": (False, True, bool),
+    "camera_hfov": (20.0, 170.0, float),
+    "face_width_m": (0.08, 0.3, float),
+    "shoulder_width_m": (0.2, 0.6, float),
+    "distance_calib": (0.2, 5.0, float),
+    "distance_ema": (0.01, 1.0, float),
+    "zone_min": (0.0, 10.0, float),
+    "zone_max": (0.1, 20.0, float),
+    "leave_distance": (0.2, 30.0, float),
     "motion_gate": (False, True, bool),
     "motion_threshold": (0.0, 0.2, float),
     "force_detect_seconds": (0.5, 30.0, float),
@@ -148,9 +201,17 @@ RANGES = {
 
 @dataclass
 class Detection:
+    """One person in a frame. ``bbox`` is the track box (face box, or head box estimated from the body)."""
+
     bbox: tuple  # normalized x0,y0,x1,y1
     conf: float
     embedding: np.ndarray | None = None
+    face_bbox: tuple | None = None
+    body: Body | None = None
+
+    def __post_init__(self):
+        if self.face_bbox is None and self.body is None:
+            self.face_bbox = self.bbox  # plain face detection (legacy constructor)
 
 
 @dataclass
@@ -165,6 +226,15 @@ class Track:
     participant: bool = False
     visible: bool = True
     similarity: float = 0.0  # similarity of last match
+    has_face: bool = True
+    body: Body | None = None
+    facing: str | None = None  # facing | side | away (pose only)
+    facing_score: float = 0.0
+    distance: float | None = None  # meters (EMA, calibrated)
+    dist_raw: float | None = None  # meters with calib = 1 (for calibration)
+    trend: str = "steady"  # approaching | receding | steady
+    far: bool = False  # beyond leave_distance
+    size_hist: deque = field(default_factory=lambda: deque(maxlen=12))
 
 
 def _norm(v):
@@ -216,6 +286,8 @@ class PresenceTracker:
         self._present_streak = 0
         self.empty_since: float | None = now
         self._newgroup_since: float | None = None
+        self._away_cue_since: float | None = None
+        self._far_logged = False
         self.timeout = self.cfg.base_timeout
         self.session = getattr(self, "session", 0) + (0 if initial else 1)
 
@@ -243,10 +315,25 @@ class PresenceTracker:
         self._set_state(now, State.ACTIVE, reason)
 
     # ------------------------------------------------------------------ inputs
-    def in_roi(self, bbox) -> bool:
+    @staticmethod
+    def _center_in(bbox, r) -> bool:
         cx, cy = (bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2
-        r = self.cfg.roi
         return r[0] <= cx <= r[2] and r[1] <= cy <= r[3]
+
+    def in_roi(self, bbox) -> bool:
+        """Face-ROI test for a bare bbox (legacy helper)."""
+        return self._center_in(bbox, self.cfg.face_roi)
+
+    def det_in_roi(self, d: Detection) -> bool:
+        """Apply ``roi_rule``: face center in face_roi and/or body center in pose_roi."""
+        c = self.cfg
+        face_ok = d.face_bbox is not None and self._center_in(d.face_bbox, c.face_roi)
+        body_ok = d.body is not None and self._center_in(d.body.bbox, c.pose_roi)
+        if c.roi_rule == "face" or not c.pose_enabled:
+            return face_ok
+        if c.roi_rule == "body":
+            return body_ok
+        return face_ok or body_ok
 
     def set_speech(self, speaking: bool, now: float | None = None) -> dict:
         now = self.clock() if now is None else now
@@ -264,7 +351,7 @@ class PresenceTracker:
             self.speaking = bool(speaking)
             if speaking:
                 self.last_speech = now
-        dets = [d for d in detections if self.in_roi(d.bbox)]
+        dets = [d for d in detections if self.det_in_roi(d)]
         for d in dets:
             d.embedding = _norm(d.embedding)
         confident = [d for d in dets if d.conf >= self.cfg.min_conf]
@@ -274,7 +361,12 @@ class PresenceTracker:
             self._start(now, "person in ROI" if confident else "speech detected")
 
         self._match(confident, now)
-        self._update_presence(now, bool(confident), bool(low))
+        near = any(t.visible and not t.far for t in self.tracks.values())
+        if confident and not near and not self._far_logged:
+            self._event(now, "far", f"visible people beyond leave_distance {self.cfg.leave_distance:.1f} m")
+        self._far_logged = bool(confident) and not near
+        self._update_presence(now, near, bool(low))
+        self._update_away_cue(now)
         if self.state != State.ENDED:
             self._check_new_group(now)
         self._evaluate(now)
@@ -290,6 +382,8 @@ class PresenceTracker:
             for t in self.tracks.values():
                 cs = cosine(d.embedding, t.embedding)
                 ov = iou(d.bbox, t.bbox)
+                if d.body is not None and t.body is not None and (d.embedding is None or t.embedding is None):
+                    ov = max(ov, iou(d.body.bbox, t.body.bbox))  # identity continuity via body when no face
                 if (
                     cs >= c.cos_match
                     or (ov >= c.iou_match and cs >= c.cos_weak)
@@ -307,6 +401,7 @@ class PresenceTracker:
             if not t.participant and now - t.last_seen > 2.5:  # gap -> restart join timer
                 t.in_roi_since = now
             t.bbox, t.conf, t.last_seen, t.visible, t.similarity = d.bbox, d.conf, now, True, cs
+            self._update_body(t, d, now)
             if d.embedding is not None:
                 t.embedding = (
                     d.embedding
@@ -317,6 +412,7 @@ class PresenceTracker:
             if di in used_d:
                 continue
             t = Track(self._next_id, d.bbox, d.embedding, d.conf, now, now, now)
+            self._update_body(t, d, now)
             self._next_id += 1
             self.tracks[t.id] = t
             self._event(now, "track_new", "new face in ROI", track=t.id)
@@ -324,6 +420,7 @@ class PresenceTracker:
             if (
                 t.visible
                 and not t.participant
+                and not t.far
                 and (now - t.in_roi_since >= c.join_seconds or self.speaking)
                 and self._newgroup_since is None
             ) and (not self._old_group_missing() or not self._participants()):
@@ -344,12 +441,69 @@ class PresenceTracker:
                     participant=t.participant,
                 )
 
+    def _update_body(self, t: Track, d: Detection, now: float) -> None:
+        """Pose, orientation, size trend and distance for a matched/new track."""
+        c = self.cfg
+        t.has_face = d.face_bbox is not None
+        t.body = d.body
+        if d.body is not None:
+            t.facing_score, t.facing = orientation(d.body)
+        else:
+            t.facing_score, t.facing = (1.0, "facing") if t.has_face else (0.0, None)
+        sw = shoulder_width(d.body) if d.body is not None else None
+        fw = (d.face_bbox[2] - d.face_bbox[0]) if d.face_bbox is not None else None
+        # size for the trend: body height if available, else face width
+        size = (d.body.bbox[3] - d.body.bbox[1]) if d.body is not None else fw
+        if size:
+            t.size_hist.append((now, size))
+            old = [sz for ts, sz in t.size_hist if now - ts >= 1.5]
+            if old:
+                ratio = size / old[-1]
+                t.trend = (
+                    "receding"
+                    if ratio < 1 - c.recede_ratio
+                    else "approaching"
+                    if ratio > 1 + c.recede_ratio
+                    else "steady"
+                )
+        raw = estimate_distance(fw, sw, t.facing, c.camera_hfov, c.face_width_m, c.shoulder_width_m, 1.0)
+        if raw is not None:
+            t.dist_raw = raw
+            dist = raw * c.distance_calib
+            t.distance = dist if t.distance is None else (1 - c.distance_ema) * t.distance + c.distance_ema * dist
+        t.far = bool(c.distance_enabled and t.distance is not None and t.distance > c.leave_distance)
+
+    def _update_away_cue(self, now: float) -> None:
+        """All visible participants turned away (side/away) and moving away -> start the early cue timer."""
+        vis = [t for t in self._participants() if t.visible and not t.far]
+        cue = (
+            self.cfg.turned_away_early
+            and bool(vis)
+            and all(t.facing in ("side", "away") and t.trend == "receding" for t in vis)
+        )
+        if cue and self._away_cue_since is None:
+            self._away_cue_since = now
+            self._event(now, "turned_away", "participants turned away and moving away")
+        elif not cue:
+            self._away_cue_since = None
+
+    def zone(self, t: Track) -> str | None:
+        """Conversation-zone label for a track (distance mode only)."""
+        c = self.cfg
+        if not c.distance_enabled or t.distance is None:
+            return None
+        if t.distance > c.leave_distance:
+            return "left"
+        if t.distance < c.zone_min:
+            return "near"
+        return "in" if t.distance <= c.zone_max else "far"
+
     def _participants(self):
         return [t for t in self.tracks.values() if t.participant]
 
     def _old_group_missing(self):
         p = self._participants()
-        return bool(p) and not any(t.visible for t in p)
+        return bool(p) and not any(t.visible and not t.far for t in p)
 
     def _check_new_group(self, now):
         c = self.cfg
@@ -441,8 +595,15 @@ class PresenceTracker:
             elif now - self.state_since >= c.end_after_away:
                 self._end(now, f"away for {c.end_after_away:.0f}s")
             return
+        early = (
+            self._away_cue_since is not None
+            and not self.speaking
+            and now - self._away_cue_since >= c.turned_away_seconds
+        )
         if self.timeout > 0 and elapsed >= self.timeout:
             self._set_state(now, State.AWAY, why % elapsed)
+        elif early:
+            self._set_state(now, State.MAYBE_AWAY, "turned away + moving away %.1fs" % (now - self._away_cue_since))
         elif (
             self.timeout > 0
             and elapsed >= c.maybe_away_frac * self.timeout
@@ -483,9 +644,23 @@ class PresenceTracker:
                     "similarity": round(t.similarity, 3),
                     "conf": round(t.conf, 2),
                     "missing": round(now - t.last_seen, 1),
+                    "has_face": t.has_face,
+                    "body": [round(x, 4) for x in t.body.bbox] if t.body is not None else None,
+                    "keypoints": {
+                        k: [round(v[0], 4), round(v[1], 4), round(v[2], 2)] for k, v in t.body.keypoints.items()
+                    }
+                    if t.body is not None
+                    else None,
+                    "facing": t.facing,
+                    "facing_score": t.facing_score,
+                    "distance": round(t.distance, 2) if t.distance is not None and self.cfg.distance_enabled else None,
+                    "trend": t.trend,
+                    "far": t.far,
+                    "zone": self.zone(t),
                 }
                 for t in self.tracks.values()
             ],
+            "away_cue": self._away_cue_since is not None,
             "log": self.log[-30:],
         }
 
