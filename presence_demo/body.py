@@ -8,7 +8,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
-# COCO-17 keypoint indices used by YOLOv8-pose
+# COCO-17 keypoint indices (shared by MoveNet and other COCO-17 pose models)
 KP = {
     "nose": 0,
     "l_eye": 1,

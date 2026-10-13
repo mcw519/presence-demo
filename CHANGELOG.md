@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0 — 2026-10-13
+
+- **授權稽核**：新增 [`docs/LICENSES.md`](docs/LICENSES.md)，列出每個模型、套件和測試資料的授權、來源和商用風險。
+- **姿勢模型改成 MoveNet MultiPose Lightning**（Google，Apache-2.0，TFLite float16，用 `ai-edge-litert` 執行），最多 6 人；移除 YOLOv8n-pose（AGPL-3.0）和相關下載程式。姿勢成本約為原來的 1/5。
+- **測試圖片**：`tests/data/face.jpg` 從 lena.jpg（授權不明）換成 Cleveland Museum of Art 釋出的 CC0 圖片（Julia Margaret Cameron，1867）。
+- 新增環境變數 `PRESENCE_FACE_EMBEDDER=hist`：不載入 SFace，改用 HSV 直方圖（SFace 訓練資料的商用風險見 LICENSES.md）。
+- 新增 `tests/test_movenet.py`；重新量測基準測試。
+
 ## 0.3.0 — 2026-10-13
 
 - **姿勢偵測（選用，`pose_enabled`，預設關閉）**：可替換的 `PoseDetector` 介面；預設是 YOLOv8n-pose（ONNX，OpenCV DNN CPU，第一次使用時自動下載）。輸出身體框、關鍵點（鼻、眼、耳、肩、髖）、朝向（正面／側身／背對）和信心值。

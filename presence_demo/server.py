@@ -38,7 +38,7 @@ _pose_cache: dict = {}
 
 
 def pose_detector():
-    """Load the pose detector once per process (downloads YOLOv8n-pose on first use)."""
+    """Load the pose detector once per process (downloads MoveNet MultiPose Lightning on first use)."""
     if "det" not in _pose_cache:
         _pose_cache["det"] = load_pose_detector()
         logging.info("pose detector: %s", _pose_cache["det"].name if _pose_cache["det"] else "unavailable")

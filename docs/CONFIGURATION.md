@@ -54,7 +54,7 @@
 
 | 參數 | 預設 | 範圍 | 說明 |
 |---|---|---|---|
-| `pose_enabled` | 關 | 開/關 | 啟用 YOLOv8n-pose 身體與關鍵點偵測 |
+| `pose_enabled` | 關 | 開/關 | 啟用 MoveNet MultiPose Lightning 身體與關鍵點偵測 |
 | `pose_conf` | 0.4 | 0.05–1 | 身體偵測信心門檻 |
 | `pose_roi` | (0, 0, 1, 1) | 同 ROI | 身體 ROI（紫色）；身體框中心點要在框內 |
 | `roi_rule` | `either` | `either`／`face`／`body` | 參與者判定規則：臉在臉部 ROI **或**身體在身體 ROI／只看臉／只看身體。姿勢關閉時一律只看臉 |

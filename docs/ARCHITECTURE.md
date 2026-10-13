@@ -25,7 +25,7 @@ flowchart LR
   VAD -->|WS vad 狀態改變時| TR
   Q --> W[worker thread]
   W --> DEC[記憶體內解碼] --> GATE{移動閘門} -->|有變化或強制| CROP[ROI 裁切＋縮小] --> DET[YuNet 偵測] --> EMB[SFace embedding<br/>節流]
-  GATE -->|有變化或強制，pose_enabled| POSE[YOLOv8n-pose<br/>身體 ROI]
+  GATE -->|有變化或強制，pose_enabled| POSE[MoveNet MultiPose<br/>身體 ROI]
   EMB --> FUSE[臉↔身體配對<br/>fuse/associate]
   POSE --> FUSE --> TR
   GATE -->|靜止| REUSE[沿用上次結果] --> TR

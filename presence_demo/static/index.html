@@ -136,7 +136,7 @@ const GROUPS=[
    end_after_away:S('AWAY 轉 ENDED','AWAY 持續多久後結束對話並清除 embedding。',0,120,1,'s'),
    new_group_seconds:S('換組確認時間','舊參與者都不見、新的一群人出現多久後觸發 NEW_GROUP。',0,60,0.5,'s')}]];
 const B=(l,h)=>({l,h,bool:true});
-GROUPS.push(['姿勢',{pose_enabled:B('啟用姿勢偵測','用 YOLOv8n-pose 偵測身體與關鍵點（肩、髖、鼻、眼）。側身或背對時沒有臉也能判斷有人。CPU 成本較高，預設關閉。'),
+GROUPS.push(['姿勢',{pose_enabled:B('啟用姿勢偵測','用 MoveNet MultiPose Lightning（Apache-2.0，最多 6 人）偵測身體與關鍵點（肩、髖、鼻、眼）。側身或背對時沒有臉也能判斷有人。CPU 成本較高，預設關閉。'),
    pose_conf:S('身體偵測信心','低於這個值的身體偵測會被忽略。',0.05,1,0.05),
    pose_roi:{...S('身體 ROI (x0,y0,x1,y1)','身體框的中心點落在這個框（紫色）裡才算數，通常比臉部 ROI 大。',0,1,0.01),box:true},
    show_pose_roi:{l:'顯示身體 ROI',h:'在影像上顯示紫色的身體 ROI 框（只影響顯示）。',bool:true},

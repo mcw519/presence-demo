@@ -25,9 +25,11 @@ SFACE = (
 )
 
 
-YOLO_POSE = (
-    "yolov8n-pose.onnx",
-    "https://huggingface.co/Xenova/yolov8n-pose/resolve/main/onnx/model.onnx",
+# MoveNet.MultiPose Lightning (Google, Apache-2.0), TFLite float16, run with ai-edge-litert (LiteRT).
+# Source / license: https://www.kaggle.com/models/google/movenet  (variation tfLite/multipose-lightning-tflite-float16)
+MOVENET = (
+    "movenet_multipose_lightning_fp16.tflite",
+    "https://www.kaggle.com/api/v1/models/google/movenet/tfLite/multipose-lightning-tflite-float16/1/download",
 )
 COCO_KP = ["nose", "l_eye", "r_eye", "l_ear", "r_ear", "l_shoulder", "r_shoulder"]
 COCO_KP_IDX = {**{n: i for i, n in enumerate(COCO_KP)}, "l_hip": 11, "r_hip": 12}
@@ -41,48 +43,79 @@ class PoseDetector(Protocol):
     def detect(self, img: np.ndarray) -> list[tuple[tuple, float, dict]]: ...
 
 
-class YoloPoseDetector:
-    """YOLOv8n-pose (ONNX, COCO-17 keypoints) via OpenCV DNN on CPU. Fixed 640x640 letterboxed input."""
+class MoveNetMultiPoseDetector:
+    """MoveNet.MultiPose Lightning (up to 6 people, COCO-17 keypoints) on CPU via LiteRT.
 
-    name = "YOLOv8n-pose"
-    SIZE = 640
+    Input: RGB uint8, letterboxed so the long side is `size` (multiple of 32). Output [1, 6, 56]:
+    17 x (y, x, score) normalized to the padded input, then (ymin, xmin, ymax, xmax, score)."""
 
-    def __init__(self, path, conf: float = 0.4):
-        self.net = cv2.dnn.readNetFromONNX(str(path))
-        self.conf = conf
+    name = "MoveNet MultiPose Lightning"
+
+    def __init__(self, path, conf: float = 0.3, size: int = 256, threads: int = 4):
+        from ai_edge_litert.interpreter import Interpreter
+
+        self.it = Interpreter(str(path), num_threads=threads)
+        self.inp = self.it.get_input_details()[0]["index"]
+        self.out = self.it.get_output_details()[0]["index"]
+        self.conf, self.size, self._shape = conf, size, None
 
     def detect(self, img):
         h, w = img.shape[:2]
-        s = self.SIZE / max(h, w)
-        nw, nh = int(round(w * s)), int(round(h * s))
-        canvas = np.full((self.SIZE, self.SIZE, 3), 114, np.uint8)
-        canvas[:nh, :nw] = cv2.resize(img, (nw, nh))
-        self.net.setInput(cv2.dnn.blobFromImage(canvas, 1 / 255.0, (self.SIZE, self.SIZE), swapRB=True))
-        out = self.net.forward()[0].T  # (8400, 56)
-        keep = out[:, 4] >= self.conf
-        out = out[keep]
-        if not len(out):
-            return []
-        boxes = [[float(c[0] - c[2] / 2), float(c[1] - c[3] / 2), float(c[2]), float(c[3])] for c in out]
-        idx = cv2.dnn.NMSBoxes(boxes, out[:, 4].tolist(), self.conf, 0.45)
+        s = self.size / max(h, w)
+        nw, nh = max(1, int(round(w * s))), max(1, int(round(h * s)))
+        pw, ph = -(-nw // 32) * 32, -(-nh // 32) * 32
+        if self._shape != (ph, pw):
+            self.it.resize_tensor_input(self.inp, [1, ph, pw, 3])
+            self.it.allocate_tensors()
+            self._shape = (ph, pw)
+        canvas = np.zeros((ph, pw, 3), np.uint8)
+        canvas[:nh, :nw] = cv2.cvtColor(cv2.resize(img, (nw, nh)), cv2.COLOR_BGR2RGB)
+        self.it.set_tensor(self.inp, canvas[None])
+        self.it.invoke()
+        out = self.it.get_tensor(self.out)[0]
+        fx, fy = pw / s, ph / s  # normalized padded coords -> original pixels
         res = []
-        for i in np.array(idx).ravel():
-            r = out[i]
-            x, y, bw, bh = boxes[i]
-            bbox = (x / s, y / s, (x + bw) / s, (y + bh) / s)
-            kps = r[5:].reshape(17, 3)
-            kp = {n: (float(kps[j, 0] / s), float(kps[j, 1] / s), float(kps[j, 2])) for n, j in COCO_KP_IDX.items()}
-            res.append((bbox, float(r[4]), kp))
+        for r in out:
+            if r[55] < self.conf:
+                continue
+            ymin, xmin, ymax, xmax = r[51:55]
+            bbox = (float(xmin * fx), float(ymin * fy), float(min(xmax * fx, w)), float(min(ymax * fy, h)))
+            kps = r[:51].reshape(17, 3)
+            kp = {n: (float(kps[j, 1] * fx), float(kps[j, 0] * fy), float(kps[j, 2])) for n, j in COCO_KP_IDX.items()}
+            res.append((bbox, float(r[55]), kp))
         return res
+
+
+def ensure_movenet() -> Path | None:
+    """Download the Kaggle tarball (contains a single .tflite) once, extracting in memory."""
+    import io
+    import tarfile
+
+    fname, url = MOVENET
+    p = MODEL_DIR / fname
+    if p.exists() and p.stat().st_size > 1000:
+        return p
+    try:
+        MODEL_DIR.mkdir(parents=True, exist_ok=True)
+        log.info("downloading %s", url)
+        with urllib.request.urlopen(url, timeout=60) as r:
+            data = r.read()
+        with tarfile.open(fileobj=io.BytesIO(data)) as tf:
+            m = next(m for m in tf.getmembers() if m.name.endswith(".tflite"))
+            p.write_bytes(tf.extractfile(m).read())
+        return p
+    except Exception as e:  # noqa: BLE001
+        log.warning("pose model download failed: %s", e)
+        return None
 
 
 def load_pose_detector(allow_download: bool = True) -> PoseDetector | None:
     """Load the default pose detector, downloading the model on first use. None if unavailable."""
-    p = ensure_model(*YOLO_POSE) if allow_download else (MODEL_DIR / YOLO_POSE[0])
+    p = ensure_movenet() if allow_download else (MODEL_DIR / MOVENET[0])
     if not p or not Path(p).exists():
         return None
     try:
-        return YoloPoseDetector(p)
+        return MoveNetMultiPoseDetector(p)
     except Exception as e:  # noqa: BLE001
         log.warning("pose model failed to load: %s", e)
         return None
@@ -185,7 +218,9 @@ class VisionPipeline:
             p = ensure_model(*YUNET) if allow_download else None
             detector = YuNetDetector(p) if p else HaarDetector()
         if embedder is None:
-            p = ensure_model(*SFACE) if allow_download else None
+            # PRESENCE_FACE_EMBEDDER=hist disables SFace (see docs/LICENSES.md for the training-data caveat).
+            want_sface = os.environ.get("PRESENCE_FACE_EMBEDDER", "sface").lower() != "hist"
+            p = ensure_model(*SFACE) if allow_download and want_sface else None
             embedder = SFaceEmbedder(p) if p and isinstance(detector, YuNetDetector) else HistEmbedder()
         self.detector, self.embedder = detector, embedder
 

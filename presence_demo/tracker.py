@@ -60,7 +60,7 @@ class Config:
     crop_margin: float = 0.1  # margin around ROI, fraction of frame
     max_width: int = 320  # max width of the image fed to the detector
     # --- pose / body (optional) ---
-    pose_enabled: bool = False  # run the pose detector (YOLOv8n-pose)
+    pose_enabled: bool = False  # run the pose detector (MoveNet MultiPose Lightning)
     pose_conf: float = 0.4  # min pose/person confidence
     pose_roi: tuple = (0.0, 0.0, 1.0, 1.0)  # body ROI (center of body box), normalized
     roi_rule: str = "either"  # either | face | body : which ROI makes a person count

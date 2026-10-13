@@ -11,7 +11,7 @@
 ## 功能
 
 - **臉部 ROI** 和 **身體 ROI** 分開設定，兩者都可以在畫面上拖曳、縮放（藍色／紫色），並可設定判定規則（臉或身體／只看臉／只看身體）。
-- **姿勢偵測（選用）**：YOLOv8n-pose 偵測身體框、骨架關鍵點和朝向（正面／側身／背對）。側身或背對看不到臉時，仍然可以用身體判斷有人並延續身分。轉身而且正在遠離時，可以提早進入 MAYBE_AWAY。
+- **姿勢偵測（選用）**：MoveNet MultiPose Lightning（Google，Apache-2.0，最多 6 人）偵測身體框、骨架關鍵點和朝向（正面／側身／背對）。側身或背對看不到臉時，仍然可以用身體判斷有人並延續身分。轉身而且正在遠離時，可以提早進入 MAYBE_AWAY。
 - **距離估計（選用）**：用臉寬或肩寬估計距離，提供對話區、離開距離、靠近／遠離趨勢，並可在網頁上一鍵校正。
 - **群組模式**：多人圍觀時追蹤每個人（IoU + cosine 比對），任何一位參與者還在就不算離開；被擋住有寬限期；換了一群陌生人時觸發 **NEW_GROUP**，開新對話。
 - 狀態機 `ACTIVE → IDLE → MAYBE_AWAY → AWAY → ENDED`，每次轉換都記錄原因。
@@ -35,7 +35,7 @@ uv run presence-demo --host 0.0.0.0 --port 8000
 用瀏覽器打開 http://localhost:8000 ，按「▶ 開始」並允許鏡頭與麥克風。
 
 - 瀏覽器只有在 **localhost 或 HTTPS** 下才允許使用鏡頭和麥克風。
-- 第一次執行會把模型下載到 `models/`（YuNet 約 230 KB、SFace 約 37 MB；開啟姿勢偵測時再下載 YOLOv8n-pose 約 13 MB）。可以用 `PRESENCE_MODEL_DIR` 指定位置。
+- 第一次執行會把模型下載到 `models/`（YuNet 約 230 KB、SFace 約 37 MB；開啟姿勢偵測時再從 Kaggle 下載 MoveNet MultiPose Lightning 約 9 MB）。可以用 `PRESENCE_MODEL_DIR` 指定位置。
 
 ### 存取權杖（token）
 
@@ -69,6 +69,7 @@ tailscale serve status
 - [docs/CONFIGURATION.md](docs/CONFIGURATION.md)：所有參數、範圍、預設值、預設組合、判斷優先模式
 - [docs/TUNING.md](docs/TUNING.md)：如何用實際資料調整門檻
 - [docs/PERFORMANCE.md](docs/PERFORMANCE.md)：效能最佳化、基準測試、Android 下一步
+- [docs/LICENSES.md](docs/LICENSES.md)：模型、套件、測試資料的授權與商用風險（不是法律意見）
 - [CONTRIBUTING.md](CONTRIBUTING.md)：開發流程（uv、ruff、pytest）
 - [CHANGELOG.md](CHANGELOG.md)
 
@@ -77,12 +78,16 @@ tailscale serve status
 - 預設門檻和時間都只是起點，**一定要用實際場景資料調整**。
 - 只偵測人臉：側身、背對、戴口罩時效果會變差。可以實作 `Detector`／`Embedder` 換成 YOLO person + re-ID。
 - 瀏覽器端是簡單的能量 VAD，分不出人聲和電視；正式產品建議改用 webrtcvad 或 Silero VAD。也因此預設是影像優先。
-- 姿勢模型使用 Hugging Face 上 Xenova 匯出的 **YOLOv8n-pose** ONNX（Ultralytics 模型，授權為 **AGPL-3.0**；商用前請確認授權）。MediaPipe Pose Landmarker 在這個環境（Python 3.13／Linux headless）需要系統的 `libEGL`，無法只用 pip 安裝，所以沒有採用。
+- 姿勢模型是 Google 的 **MoveNet MultiPose Lightning**（Apache-2.0，TFLite，用 `ai-edge-litert` 執行），最多 6 人。v0.3.0 用的 YOLOv8n-pose（AGPL-3.0）已移除。
+- **SFace 人臉 embedding 的訓練資料可能有非商業限制**，商用前請先看 [授權稽核](docs/LICENSES.md)。設定 `PRESENCE_FACE_EMBEDDER=hist` 可以不載入 SFace。
 - 距離是用平均臉寬和肩寬估計的，不同人、不同鏡頭會有 ±20–30% 的誤差，請校正。
 - EmbeddingGemma 是**文字**向量模型，不能處理影像，所以這裡用人臉辨識 embedding（SFace）。
 - 需要 OpenCV 4.x（5.x 移除了 Haar，備援會失效），相依套件已鎖定 `<5`。
-- 測試圖片 `tests/data/face.jpg` 取自 OpenCV samples（lena.jpg）。
+- 測試圖片 `tests/data/face.jpg` 是 CC0 圖片（Julia Margaret Cameron，1867，Cleveland Museum of Art），詳見 [docs/LICENSES.md](docs/LICENSES.md)。
 
 ## 授權
 
+第三方模型、套件和測試資料的授權與商用風險整理在 **[docs/LICENSES.md](docs/LICENSES.md)**（不是法律意見）。
+
+本專案：
 私人專案，All rights reserved。未經作者書面同意，不得使用、複製、修改或散布。
