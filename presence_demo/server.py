@@ -113,6 +113,7 @@ async def ws(sock: WebSocket):
             msg = await sock.receive_json()
             kind = msg.get("type")
             if kind == "frame":
+                # PRIVACY: the frame (base64 JPEG) is kept in memory only, never logged or written to disk.
                 if not st["running"]:
                     continue
                 stats.on_received(len(msg.get("data", "")))
@@ -159,7 +160,11 @@ def main():
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8000)
     a = ap.parse_args()
-    uvicorn.run(app, host=a.host, port=a.port)
+    # access_log=False: request lines would contain the ?token= query string. Frames travel over the
+    # WebSocket and are never logged; only startup/model messages are written to the log.
+    uvicorn.run(
+        app, host=a.host, port=a.port, access_log=False, log_level="info", ws_max_size=8 * 1024 * 1024
+    )
 
 
 if __name__ == "__main__":

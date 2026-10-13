@@ -150,6 +150,12 @@ class VisionPipeline:
         return self.process_jpeg_timed(data)[0]
 
     def process_jpeg_timed(self, data: bytes) -> tuple[list[Detection], dict]:
+        """Decode + process a JPEG entirely in memory.
+
+        PRIVACY GUARD: frames must never touch the disk. Do not add cv2.imwrite, debug dumps,
+        temp files or logging of `data` here; the image buffer is dropped when this returns.
+        tests/test_privacy.py enforces this.
+        """
         t0 = time.perf_counter()
         img = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
         dec = (time.perf_counter() - t0) * 1000
