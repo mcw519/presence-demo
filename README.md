@@ -2,92 +2,78 @@
 
 > 私人專案 · All rights reserved（未授權任何使用、複製或散布）
 
-用**影像（人臉偵測 + 人臉 embedding 群組追蹤）**加上**聲音（VAD 靜默）**，判斷原本正在跟機器人對話的人（或一群人）是不是已經離開。內含 Python 核心模組（純邏輯、可單元測試）和瀏覽器網頁 demo：開鏡頭與麥克風，即時看到偵測框、狀態機、倒數、資源監控，並可在線調整參數。
+結合**影像**（人臉偵測、人臉 embedding、群組追蹤，可選的姿勢與距離）和**聲音**（瀏覽器端 VAD），判斷正在跟機器人對話的人（或一群人）是不是已經離開。包含 Python 核心模組（純邏輯、可單元測試）和 FastAPI + WebSocket 網頁 demo。
 
 ![demo](docs/screenshot.png)
 
-<sub>截圖使用 Chrome 的假鏡頭畫面，所以沒有人臉。</sub>
-
 ## 功能
 
-- **臉部 ROI** 和 **身體 ROI** 分開設定，兩者都可以在畫面上拖曳、縮放（藍色／紫色），並可設定判定規則（臉或身體／只看臉／只看身體）。
-- **姿勢偵測（選用）**：MoveNet MultiPose Lightning（Google，Apache-2.0，最多 6 人）偵測身體框、骨架關鍵點和朝向（正面／側身／背對）。側身或背對看不到臉時，仍然可以用身體判斷有人並延續身分。轉身而且正在遠離時，可以提早進入 MAYBE_AWAY。
-- **距離估計（選用）**：用臉寬或肩寬估計距離，提供對話區、離開距離、靠近／遠離趨勢，並可在網頁上一鍵校正。
-- **群組模式**：多人圍觀時追蹤每個人（IoU + cosine 比對），任何一位參與者還在就不算離開；被擋住有寬限期；換了一群陌生人時觸發 **NEW_GROUP**，開新對話。
-- 狀態機 `ACTIVE → IDLE → MAYBE_AWAY → AWAY → ENDED`，每次轉換都記錄原因。
-- **判斷優先**：`vision`（預設，影像優先，適合吵雜環境）／`balanced`／`audio`。
-- 防閃爍遲滯、低信心降權、可注入時鐘。
-- 模型：OpenCV **YuNet**（偵測）+ **SFace**（embedding），CPU 即可。下載失敗會自動改用 Haar + 色彩直方圖備援。
-- Embedding 只存在記憶體，對話結束（ENDED）時清除；影像不存檔。
-- **效能／省電**：移動偵測閘門、embedding 節流、自適應 fps、ROI 裁切＋縮小，每項都能個別開關。實測 CPU 約減少 60–70%，見 [docs/PERFORMANCE.md](docs/PERFORMANCE.md)。
-- 網頁：開始／停止（真正關閉鏡頭與麥克風，切換分頁自動暫停）、設定抽屜（預設組合、localStorage 自動保存、JSON 匯出入）、資源監控（CPU、記憶體、各階段延遲 avg/p95、fps、頻寬、RTT）。
+- **群組追蹤**：每個人一個 track（IoU + cosine 比對、EMA 更新 embedding），任何一位參與者還在就不算離開；被擋住有寬限期；換成一群陌生人時觸發 **NEW_GROUP**。
+- **狀態機**：`ACTIVE → IDLE → MAYBE_AWAY → AWAY → ENDED`，含防閃爍遲滯，每次轉換都記錄原因。
+- **判斷優先模式**：`vision`（預設）／`balanced`／`audio`，可另設 `present_max_silence`。
+- **VAD 融合**：瀏覽器端能量 VAD，把說話狀態送給伺服器一起判斷。
+- **人臉模型**：OpenCV YuNet（偵測）+ SFace（embedding），CPU 執行；模型無法下載時改用 Haar + HSV 直方圖備援。
+- **姿勢（選用）**：MoveNet MultiPose Lightning（最多 6 人），提供身體框、關鍵點和朝向；看不到臉時用身體判斷有人；轉身且遠離時可提早進入 MAYBE_AWAY。
+- **距離（選用）**：用臉寬／肩寬估計距離，含對話區、離開距離、靠近／遠離趨勢和網頁一鍵校正。
+- **分開的 ROI**：臉部 ROI（藍）和身體 ROI（紫）可在畫面上拖曳，並設定判定規則。
+- **設定介面**：分組設定抽屜、預設組合、伺服器端範圍檢查、localStorage 自動保存、JSON 匯出入。
+- **資源監控**：CPU、記憶體、各階段延遲 avg/p95、fps、頻寬、RTT、跳過比例、姿勢耗時。
+- **開始／停止**：停止時真正關閉鏡頭與麥克風；切換分頁自動暫停。
+- **效能最佳化**：移動偵測閘門、embedding 節流、自適應 fps、ROI 裁切＋縮小，可個別開關（見 [PERFORMANCE](docs/PERFORMANCE.md)）。
+- **隱私**：影像只在記憶體中解碼處理，**不寫入磁碟**（`tests/test_privacy.py` 檢查）；embedding 只存在記憶體，ENDED 時清除。
+- **存取權杖**：設定 `PRESENCE_TOKEN` 後，頁面、API、WebSocket 都需要 `?token=`。
 
-## 快速開始（uv）
+## 快速開始
 
 需要 [uv](https://docs.astral.sh/uv/) 和 Python ≥ 3.10。
 
 ```bash
-uv sync                       # 建立 .venv 並安裝相依套件（依 uv.lock）
-uv run presence-demo          # 預設 http://127.0.0.1:8000
+uv sync
+export PRESENCE_TOKEN="$(python -c 'import secrets;print(secrets.token_urlsafe(16))')"  # 選用，對外開放時必設
+uv run presence-demo                      # http://127.0.0.1:8000/?token=<PRESENCE_TOKEN>
 uv run presence-demo --host 0.0.0.0 --port 8000
 ```
 
-用瀏覽器打開 http://localhost:8000 ，按「▶ 開始」並允許鏡頭與麥克風。
+- 瀏覽器只有在 localhost 或 HTTPS 下才允許使用鏡頭和麥克風。
+- 模型在第一次使用時下載到 `models/`（可用 `PRESENCE_MODEL_DIR` 指定）：YuNet、SFace；開啟姿勢時再下載 MoveNet。
+- 權杖只從環境變數讀取，請勿寫進檔案或提交。
+- `PRESENCE_FACE_EMBEDDER=hist`：不載入 SFace，改用 HSV 直方圖。
 
-- 瀏覽器只有在 **localhost 或 HTTPS** 下才允許使用鏡頭和麥克風。
-- 第一次執行會把模型下載到 `models/`（YuNet 約 230 KB、SFace 約 37 MB；開啟姿勢偵測時再從 Kaggle 下載 MoveNet MultiPose Lightning 約 9 MB）。可以用 `PRESENCE_MODEL_DIR` 指定位置。
-
-### 存取權杖（token）
-
-伺服器本身沒有帳號系統。對外開放時**一定要**設定權杖：
+## 開發與測試
 
 ```bash
-export PRESENCE_TOKEN="$(python -c 'import secrets;print(secrets.token_urlsafe(16))')"
-uv run presence-demo
-# 開啟 http://localhost:8000/?token=<PRESENCE_TOKEN>
+uv run ruff check . && uv run ruff format --check .
+uv run pytest -q
+uv run python scripts/benchmark.py        # 60 秒模擬情境，比較各最佳化、姿勢、距離的 CPU 成本
 ```
 
-設定後，頁面、API 和 WebSocket 都必須帶 `?token=`，否則回 403。權杖只從環境變數讀取，請勿寫進任何檔案或提交到 repo。
+## 專案結構
 
-### 用 Tailscale 在其他裝置（例如 iPhone）使用
-
-```bash
-tailscale up --hostname=presence-demo
-tailscale serve --bg 8000          # tailnet 內 HTTPS → 127.0.0.1:8000
-tailscale serve status
 ```
-
-需要在 Tailscale 管理後台啟用 MagicDNS 和 HTTPS 憑證。之後在 tailnet 裡的裝置打開 `https://presence-demo.<tailnet>.ts.net/?token=<PRESENCE_TOKEN>` 即可（只有 tailnet 內可存取）。如果機器沒有 systemd，可以用 userspace 模式啟動 `tailscaled --tun=userspace-networking --state=... --socket=...`，`tailscale` 指令再加上 `--socket=...`。
-
-## 設定
-
-所有參數都能在網頁的「⚙ 設定」即時調整（只套用到目前連線，伺服器會檢查並限制範圍）。完整說明見 [docs/CONFIGURATION.md](docs/CONFIGURATION.md)，調參方法見 [docs/TUNING.md](docs/TUNING.md)。
+presence_demo/
+  tracker.py     Config、群組追蹤、狀態機（純邏輯）
+  vision.py      YuNet / SFace / Haar 備援、MoveNet 姿勢偵測、記憶體內解碼
+  body.py        身體朝向、臉與身體配對、距離估計與校正
+  optimizer.py   移動閘門、embedding 節流、ROI 裁切、自適應 fps
+  stats.py       資源與延遲統計
+  server.py      FastAPI + WebSocket、權杖中介層
+  static/index.html  網頁 demo（設定、監控、ROI、骨架疊圖）
+scripts/benchmark.py
+tests/           單元、WebSocket、隱私、姿勢／距離測試
+docs/            文件
+```
 
 ## 文件
 
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)：架構、資料流、狀態機（mermaid）
-- [docs/CONFIGURATION.md](docs/CONFIGURATION.md)：所有參數、範圍、預設值、預設組合、判斷優先模式
-- [docs/TUNING.md](docs/TUNING.md)：如何用實際資料調整門檻
-- [docs/PERFORMANCE.md](docs/PERFORMANCE.md)：效能最佳化、基準測試、Android 下一步
-- [docs/LICENSES.md](docs/LICENSES.md)：模型、套件、測試資料的授權與商用風險（不是法律意見）
-- [CONTRIBUTING.md](CONTRIBUTING.md)：開發流程（uv、ruff、pytest）
-- [CHANGELOG.md](CHANGELOG.md)
-
-## 注意事項
-
-- 預設門檻和時間都只是起點，**一定要用實際場景資料調整**。
-- 只偵測人臉：側身、背對、戴口罩時效果會變差。可以實作 `Detector`／`Embedder` 換成 YOLO person + re-ID。
-- 瀏覽器端是簡單的能量 VAD，分不出人聲和電視；正式產品建議改用 webrtcvad 或 Silero VAD。也因此預設是影像優先。
-- 姿勢模型是 Google 的 **MoveNet MultiPose Lightning**（Apache-2.0，TFLite，用 `ai-edge-litert` 執行），最多 6 人。v0.3.0 用的 YOLOv8n-pose（AGPL-3.0）已移除。
-- **SFace 人臉 embedding 的訓練資料可能有非商業限制**，商用前請先看 [授權稽核](docs/LICENSES.md)。設定 `PRESENCE_FACE_EMBEDDER=hist` 可以不載入 SFace。
-- 距離是用平均臉寬和肩寬估計的，不同人、不同鏡頭會有 ±20–30% 的誤差，請校正。
-- EmbeddingGemma 是**文字**向量模型，不能處理影像，所以這裡用人臉辨識 embedding（SFace）。
-- 需要 OpenCV 4.x（5.x 移除了 Haar，備援會失效），相依套件已鎖定 `<5`。
-- 測試圖片 `tests/data/face.jpg` 是 CC0 圖片（Julia Margaret Cameron，1867，Cleveland Museum of Art），詳見 [docs/LICENSES.md](docs/LICENSES.md)。
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)：架構、資料流、狀態機
+- [docs/CONFIGURATION.md](docs/CONFIGURATION.md)：所有參數、範圍、預設值、預設組合
+- [docs/TUNING.md](docs/TUNING.md)：調參方法
+- [docs/PERFORMANCE.md](docs/PERFORMANCE.md)：效能最佳化與基準測試
+- [docs/LICENSES.md](docs/LICENSES.md)：模型、套件、測試資料的授權
+- [CONTRIBUTING.md](CONTRIBUTING.md)、[CHANGELOG.md](CHANGELOG.md)
 
 ## 授權
 
-第三方模型、套件和測試資料的授權與商用風險整理在 **[docs/LICENSES.md](docs/LICENSES.md)**（不是法律意見）。
-
-本專案：
-私人專案，All rights reserved。未經作者書面同意，不得使用、複製、修改或散布。
+- 第三方元件的授權與商用風險見 [docs/LICENSES.md](docs/LICENSES.md)（不是法律意見）。
+- **SFace 的權重標示 Apache-2.0，但訓練資料可能有非商業限制**，商用前請先確認，或用 `PRESENCE_FACE_EMBEDDER=hist` 停用。
+- 本專案：私人專案，All rights reserved。未經作者書面同意，不得使用、複製、修改或散布。
