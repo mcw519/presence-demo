@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="zh-TW"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Presence Demo</title>
+<style>
+:root{--bg:#0d1117;--card:#161b22;--card2:#1c2330;--line:#2a3340;--txt:#e6edf3;--mut:#8b949e;--acc:#58a6ff;
+--ok:#3fb950;--idle:#8b9bb4;--warn:#d29922;--bad:#f85149;--end:#6e7681;--r:14px}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang TC","Noto Sans TC",sans-serif}
+header{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:10px;padding:10px 16px calc(10px) 16px;
+ padding-top:max(10px,env(safe-area-inset-top));background:rgba(13,17,23,.85);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+header h1{font-size:16px;margin:0;font-weight:650;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--bad);display:inline-block;margin-right:6px}.dot.on{background:var(--ok)}
+button{background:var(--card2);color:var(--txt);border:1px solid var(--line);border-radius:10px;padding:8px 12px;font:inherit;cursor:pointer}
+button:hover{border-color:var(--acc)}button.pri{background:var(--acc);color:#04142b;border-color:var(--acc);font-weight:600}
+main{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(320px,1fr);gap:16px;padding:16px;max-width:1500px;margin:auto}
+@media(max-width:900px){main{grid-template-columns:1fr;padding:10px;gap:10px}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:14px}
+.card h3{margin:0 0 10px;font-size:13px;color:var(--mut);font-weight:600;letter-spacing:.04em}
+#view{position:relative;aspect-ratio:4/3;background:#000;border-radius:var(--r);overflow:hidden;border:1px solid var(--line)}
+#view video,#view canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:fill}#view canvas{touch-action:none;cursor:default}
+#placeholder{position:absolute;inset:0;pointer-events:none;display:grid;place-items:center;color:var(--mut);text-align:center;padding:20px}
+.hint{font-size:12px;color:var(--mut);margin-top:8px}
+.right{display:flex;flex-direction:column;gap:12px;min-width:0}
+.sm{display:flex;gap:4px;flex-wrap:wrap}.sm span{flex:1;min-width:60px;text-align:center;padding:8px 4px;border-radius:9px;background:var(--card2);color:var(--mut);font-size:12px;font-weight:600;transition:.2s}
+.sm span.cur{color:#000}.cur.ACTIVE{background:var(--ok)}.cur.IDLE{background:var(--idle)}.cur.MAYBE_AWAY{background:var(--warn)}.cur.AWAY{background:var(--bad);color:#fff}.cur.ENDED{background:var(--end);color:#fff}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}@media(max-width:420px){.stats{grid-template-columns:repeat(2,1fr)}}
+.stat{background:var(--card2);border-radius:10px;padding:8px 10px}.stat b{display:block;font-size:18px}.stat small{color:var(--mut);font-size:11px}
+.bar{margin:8px 0}.bar .lab{display:flex;justify-content:space-between;font-size:12px;color:var(--mut)}
+.track{position:relative;height:8px;background:var(--card2);border-radius:6px;overflow:hidden;margin-top:4px}
+.fill{height:100%;width:0;border-radius:6px;transition:width .3s}.mark{position:absolute;top:0;bottom:0;width:2px;background:#fff8}
+.people{display:flex;flex-direction:column;gap:6px;max-height:190px;overflow:auto}
+.person{display:flex;align-items:center;gap:8px;background:var(--card2);border-radius:9px;padding:6px 10px;font-size:13px}
+.person .badge{font-size:11px;padding:1px 7px;border-radius:20px;background:#0003}.person .sp{flex:1}
+.empty{color:var(--mut);font-size:13px}
+#log{font:12px/1.5 ui-monospace,Menlo,monospace;max-height:230px;overflow:auto;background:#0a0d12;border-radius:9px;padding:8px}
+#log div{border-bottom:1px solid #ffffff08;padding:2px 0}#log .ev{color:var(--acc)}#log .NEW_GROUP{color:var(--warn);font-weight:bold}
+/* drawer */
+#scrim{position:fixed;inset:0;background:#0008;opacity:0;pointer-events:none;transition:.2s;z-index:9}#scrim.open{opacity:1;pointer-events:auto}
+#drawer{position:fixed;top:0;right:0;bottom:0;width:min(440px,100vw);background:var(--card);border-left:1px solid var(--line);z-index:10;
+ transform:translateX(100%);transition:transform .25s;display:flex;flex-direction:column}#drawer.open{transform:none}
+#drawer .head{display:flex;align-items:center;gap:8px;padding:14px;padding-top:max(14px,env(safe-area-inset-top));border-bottom:1px solid var(--line)}
+#drawer .head h2{flex:1;margin:0;font-size:16px}#drawer .body{overflow:auto;padding:12px 14px 40px;flex:1}
+.presets{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}
+details{border:1px solid var(--line);border-radius:12px;margin:10px 0;background:var(--card2)}summary{padding:10px 12px;cursor:pointer;font-weight:600}
+.row{padding:8px 12px;border-top:1px solid var(--line)}.row .top{display:flex;align-items:center;gap:6px}
+.row label{flex:1;font-size:13px}.row .tip{color:var(--mut);font-size:11.5px;margin-top:2px}
+.row .def{color:var(--mut);font-size:11px}.row input[type=range]{width:100%;accent-color:var(--acc)}
+.row input[type=number]{width:78px;background:var(--bg);color:var(--txt);border:1px solid var(--line);border-radius:7px;padding:4px 6px;font:inherit}
+.row.changed label{color:var(--acc)}.roi4{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:6px}.roi4 input{width:100%!important}
+.io{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px}#toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--card2);border:1px solid var(--line);padding:8px 14px;border-radius:10px;opacity:0;transition:.3s;z-index:20;font-size:13px}#toast.show{opacity:1}
+.meter{height:10px;background:var(--card2);border-radius:6px;position:relative;overflow:hidden;margin-top:6px}.meter .lvl{height:100%;background:var(--ok);width:0}
+.meter .thr{position:absolute;top:0;bottom:0;width:2px;background:var(--warn)}.meter .flo{position:absolute;top:0;bottom:0;width:2px;background:var(--mut)}
+.pill{font-size:12px;padding:4px 10px;border-radius:20px;background:var(--card2);color:var(--mut);border:1px solid var(--line);white-space:nowrap}
+.pill.live{color:#fff;background:#b62324;border-color:#f85149}.pill.live::before{content:"● ";animation:bl 1.2s infinite}@keyframes bl{50%{opacity:.3}}
+button.stop{background:var(--bad);border-color:var(--bad);color:#fff}
+.mon{display:grid;grid-template-columns:1fr 1fr;gap:8px}.mon .stat b{font-size:15px}.spark{width:100%;height:44px;display:block;margin-top:4px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;font-size:12px;margin-top:8px}.kv span:nth-child(odd){color:var(--mut)}
+.cores{display:flex;gap:2px;height:22px;align-items:flex-end;margin-top:6px}.cores i{flex:1;background:var(--acc);border-radius:2px;min-height:1px;opacity:.8}
+.lat{width:100%;font-size:12px;border-collapse:collapse;margin-top:8px}.lat td,.lat th{padding:3px 4px;text-align:right;border-bottom:1px solid var(--line)}.lat th{color:var(--mut);font-weight:500}.lat td:first-child,.lat th:first-child{text-align:left}
+</style></head><body>
+<header><span class="dot" id="conn"></span><h1>Presence Demo · 離開偵測</h1>
+<span class="pill" id="cam">鏡頭/麥克風 關</span><button class="pri" id="start">▶ 開始</button><button id="openSet">⚙ 設定</button></header>
+<main>
+ <section>
+  <div id="view"><video id="v" autoplay muted playsinline></video><canvas id="c"></canvas>
+   <div id="placeholder">按「開始」開啟鏡頭與麥克風<br><small>需 HTTPS 或 localhost</small></div></div>
+  <div class="hint">藍色虛線框是偵測範圍（ROI）：可拖曳移動，拉四個角調整大小。綠框＝參與者，黃框＝候選，灰框＝暫時看不到。 <span id="pipe"></span></div>
+ </section>
+ <section class="right">
+  <div class="card"><h3>狀態機</h3><div class="sm" id="sm"></div>
+   <div class="hint" id="reason">—</div></div>
+  <div class="card"><div class="stats">
+   <div class="stat"><small>說話</small><b id="spk">—</b></div><div class="stat"><small>靜默</small><b id="sil">0s</b></div>
+   <div class="stat"><small>ROI</small><b id="roiSt">—</b></div><div class="stat"><small>Session</small><b id="sess">—</b></div></div>
+   <div class="meter" title="麥克風音量（黃線＝說話門檻、灰線＝噪音底）"><div class="lvl" id="lvl"></div><div class="flo" id="flo"></div><div class="thr" id="thr"></div></div>
+  </div>
+  <div class="card"><h3>倒數</h3>
+   <div class="bar"><div class="lab"><span>靜默 → IDLE</span><span id="b1t"></span></div><div class="track"><div class="fill" id="b1" style="background:var(--idle)"></div></div></div>
+   <div class="bar"><div class="lab"><span id="b2l">逾時 → AWAY</span><span id="b2t"></span></div><div class="track"><div class="fill" id="b2"></div><div class="mark" id="b2m"></div></div></div>
+   <div class="bar"><div class="lab"><span>AWAY → ENDED</span><span id="b3t"></span></div><div class="track"><div class="fill" id="b3" style="background:var(--bad)"></div></div></div>
+  </div>
+  <details class="card" id="monCard" open style="padding:0;margin:0;background:var(--card)"><summary style="padding:14px;color:var(--mut);font-size:13px">資源監控 <span id="monHint" style="font-weight:400">（開始後每秒更新）</span></summary><div style="padding:0 14px 14px">
+   <div class="mon">
+    <div class="stat"><small>CPU 伺服器程序 / 系統</small><b id="mCpu">—</b><canvas class="spark" id="spCpu"></canvas></div>
+    <div class="stat"><small>每張延遲 total（avg / p95）</small><b id="mLat">—</b><canvas class="spark" id="spLat"></canvas></div>
+    <div class="stat"><small>記憶體 RSS / 系統</small><b id="mMem">—</b></div>
+    <div class="stat"><small>處理 fps / 頻寬</small><b id="mFps">—</b></div>
+   </div>
+   <div class="cores" id="mCores" title="每核 CPU"></div>
+   <table class="lat"><thead><tr><th>階段 (ms)</th><th>last</th><th>avg</th><th>p95</th></tr></thead><tbody id="mLatT"></tbody></table>
+   <div class="kv" id="mKv"></div></div></details>
+  <div class="card"><h3>參與者 / 追蹤</h3><div class="people" id="people"></div></div>
+  <div class="card"><h3>轉換紀錄</h3><div id="log"></div></div>
+ </section>
+</main>
+<div id="scrim"></div>
+<aside id="drawer"><div class="head"><h2>⚙ 設定</h2><button id="closeSet">✕</button></div><div class="body">
+ <div class="hint" style="margin:0 0 6px">預設組合</div>
+ <div class="presets"><button data-p="single">單人</button><button data-p="group">多人圍觀</button><button data-p="noisy">吵雜環境</button><button data-p="reset">重設預設值</button></div>
+ <div id="groups"></div>
+ <div class="io"><button id="exp">⬇ 匯出 JSON</button><button id="impB">⬆ 匯入 JSON</button><input type="file" id="imp" accept="application/json" hidden></div>
+ <div class="hint">設定會自動存在這個瀏覽器（localStorage），每次連線都會套用。伺服器會檢查並限制數值範圍，只套用到你目前的連線。</div>
+</div></aside>
+<div id="toast"></div>
+<script>
+const $=id=>document.getElementById(id);
+// ---------- settings schema ----------
+const DEF={roi:[0.2,0.05,0.8,0.95],min_conf:0.6,cos_match:0.4,cos_weak:0.2,iou_match:0.3,embed_ema:0.15,join_seconds:2,grace_seconds:15,
+ present_frames:2,absent_frames:3,idle_after:3,present_timeout:15,empty_timeout:5,base_timeout:20,maybe_away_frac:0.5,end_after_away:5,new_group_seconds:3,
+ priority_mode:'vision',present_max_silence:0,fps:1,vad_k:2.5,vad_min:0.005,vad_hang:400};
+const CLIENT=['fps','vad_k','vad_min','vad_hang'];
+const S=(l,h,min,max,step,u='')=>({l,h,min,max,step,u});
+const GROUPS=[
+ ['判斷優先',{priority_mode:{l:'判斷優先',h:'影像優先：畫面有人就不會因為靜默離開，ROI 確定沒人就照 ROI 空的逾時離開（不管聲音），聲音只在影像不確定時使用，適合吵雜環境。平衡：聲音和影像一起決定。聲音優先：主要看靜默，影像只微調逾時。',
+   opts:{vision:'影像優先',balanced:'平衡',audio:'聲音優先'}},
+   present_max_silence:S('有人時最長靜默（影像優先）','影像優先模式下，人在畫面裡但一直不說話，最多等多久就判定離開。0＝不限制。',0,3600,10,'s')}],
+ ['偵測範圍',{roi:S('偵測範圍 ROI (x0,y0,x1,y1)','只有臉的中心點落在這個框裡才算數。可以直接在影像上拖曳。',0,1,0.01),
+   min_conf:S('最低偵測信心','低於這個值的偵測不算有人也不算沒人，會退回只看聲音。',0,1,0.01)}],
+ ['身分比對',{cos_match:S('同一人相似度門檻','臉部 embedding 的 cosine 相似度達到這個值就算同一人（SFace 約 0.36）。',0,1,0.01),
+   cos_weak:S('弱相似度（位置重疊時）','框的位置大致重疊時，相似度只要達到這個較低的值也算同一人。',0,1,0.01),
+   iou_match:S('位置重疊門檻 IoU','前後兩張畫面的框重疊多少算「位置一樣」。',0,1,0.01),
+   embed_ema:S('模板更新速度','每張畫面更新多少比例的臉部模板。越大越能適應光線變化，但也越容易被別人帶偏。',0,1,0.01)}],
+ ['加入與防閃爍',{join_seconds:S('加入參與者所需時間','在 ROI 裡待滿這麼久才算參與者（開口說話會立即加入）。',0,30,0.5,'s'),
+   grace_seconds:S('消失保留時間','參與者看不到超過這麼久才移除，避免短暫被擋住就被踢掉。',0,120,1,'s'),
+   present_frames:S('確認有人所需張數','連續幾張畫面有人才算「有人」。',1,20,1,'張'),
+   absent_frames:S('確認沒人所需張數','連續幾張畫面沒人才算「ROI 空」，可以防止偵測閃爍。',1,20,1,'張')}],
+ ['逾時',{idle_after:S('靜默轉 IDLE','靜默多久會從 ACTIVE 轉成 IDLE。',0,60,0.5,'s'),
+   present_timeout:S('有人時的逾時','人還在畫面裡但不說話時，最多等多久才判定離開（延長）。',1,600,1,'s'),
+   empty_timeout:S('ROI 空時的逾時','沒人又靜默時，多快判定離開（縮短）。',1,120,0.5,'s'),
+   base_timeout:S('影像不確定時的逾時','影像信心太低時，只看聲音的逾時。',1,300,1,'s'),
+   maybe_away_frac:S('MAYBE_AWAY 比例','逾時進行到這個比例時進入 MAYBE_AWAY。',0.05,0.95,0.05),
+   end_after_away:S('AWAY 轉 ENDED','AWAY 持續多久後結束對話並清除 embedding。',0,120,1,'s'),
+   new_group_seconds:S('換組確認時間','舊參與者都不見、新的一群人出現多久後觸發 NEW_GROUP。',0,60,0.5,'s')}],
+ ['畫面與聲音（瀏覽器端）',{fps:S('每秒送出張數','每秒送幾張畫面到伺服器。越高越即時，但越耗頻寬和 CPU。',0.5,5,0.5,'fps'),
+   vad_k:S('VAD 靈敏度（門檻倍數）','音量超過「噪音底 × 這個倍數」才算說話。越小越靈敏。',1.2,8,0.1,'×'),
+   vad_min:S('最低說話音量','絕對音量門檻（RMS），環境吵時調高。',0.001,0.05,0.001),
+   vad_hang:S('說話尾音保留','音量變小後還要維持「說話中」多久，避免句子中間斷掉。',100,1500,50,'ms')}]];
+const META=Object.assign({},...GROUPS.map(g=>g[1]));
+const PRESETS={
+ single:{roi:[0.25,0.05,0.75,0.95],join_seconds:1.5,grace_seconds:10,present_timeout:45,empty_timeout:5,new_group_seconds:3,absent_frames:3},
+ group:{roi:[0.08,0.02,0.92,0.98],join_seconds:3,grace_seconds:20,present_frames:2,absent_frames:4,present_timeout:90,empty_timeout:8,new_group_seconds:5,cos_match:0.42,fps:2},
+ noisy:{priority_mode:'vision',vad_k:3.5,vad_min:0.02,vad_hang:300,min_conf:0.7,base_timeout:15,present_timeout:45,empty_timeout:5}};
+const KEY='presence-cfg-v1';
+let cfg=Object.assign(structuredClone(DEF),JSON.parse(localStorage.getItem(KEY)||'{}'));
+const save=()=>localStorage.setItem(KEY,JSON.stringify(cfg));
+const toast=t=>{const e=$('toast');e.textContent=t;e.classList.add('show');clearTimeout(e._t);e._t=setTimeout(()=>e.classList.remove('show'),2200)};
+const clamp=(k,v)=>{const m=META[k];if(m.opts)return m.opts[v]?v:DEF[k];return Math.min(m.max,Math.max(m.min,Number(v)))};
+// ---------- build settings UI ----------
+function buildUI(){
+ $('groups').innerHTML=GROUPS.map(([g,items],i)=>`<details ${i<1?'open':''}><summary>${g}</summary>`+Object.entries(items).map(([k,m])=>{
+  const d=Array.isArray(DEF[k])?DEF[k].join(', '):DEF[k];
+  const ctl=m.opts?`<select data-k="${k}" style="width:100%;margin-top:6px;background:var(--bg);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:7px">${Object.entries(m.opts).map(([o,t])=>`<option value="${o}">${t}</option>`).join('')}</select>`:k==='roi'?`<div class="roi4">${['x0','y0','x1','y1'].map((n,j)=>`<input type="number" data-k="roi" data-i="${j}" min="0" max="1" step="0.01" title="${n}">`).join('')}</div>`
+   :`<input type="range" data-k="${k}" min="${m.min}" max="${m.max}" step="${m.step}">`;
+  return `<div class="row" id="row_${k}"><div class="top"><label title="${m.h}">${m.l}</label>${k==='roi'||m.opts?'':`<input type="number" data-k="${k}" min="${m.min}" max="${m.max}" step="${m.step}"><span class="def">${m.u}</span>`}</div>
+   ${ctl}<div class="tip">${m.h}　<span class="def">預設 ${m.opts?m.opts[d]:d}${m.u?' '+m.u:''}</span></div></div>`}).join('')+'</details>').join('');
+ $('groups').querySelectorAll('input,select').forEach(inp=>{
+  const ev=inp.type==='range'?'input':'change';
+  if(inp.tagName==='SELECT'){inp.addEventListener('change',()=>setCfg({[inp.dataset.k]:inp.value}));return}
+  inp.addEventListener(ev,()=>{const k=inp.dataset.k;
+   if(k==='roi'){const r=[...cfg.roi];r[+inp.dataset.i]=clamp('roi',inp.value);setCfg({roi:r})}
+   else setCfg({[k]:clamp(k,inp.value)},inp)});
+  if(inp.type==='range')inp.addEventListener('change',()=>sendCfg());
+ });
+ syncUI();
+}
+function syncUI(skip){
+ document.querySelectorAll('#groups input,#groups select').forEach(inp=>{if(inp===skip)return;const k=inp.dataset.k;
+  inp.value=k==='roi'?(+cfg.roi[+inp.dataset.i]).toFixed(2):cfg[k]});
+ for(const k in DEF){const r=$('row_'+k);if(r)r.classList.toggle('changed',JSON.stringify(cfg[k])!==JSON.stringify(DEF[k]))}
+}
+let sendTimer;
+function setCfg(part,src,immediate){Object.assign(cfg,part);save();syncUI(src);
+ if(src&&src.type==='range'){clearTimeout(sendTimer);sendTimer=setTimeout(sendCfg,250)}else sendCfg();
+ if('fps' in part)restartFrames();draw();}
+function serverCfg(){const o={};for(const k in DEF)if(!CLIENT.includes(k))o[k]=cfg[k];return o}
+function sendCfg(){if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'config',config:serverCfg()}))}
+document.querySelectorAll('[data-p]').forEach(b=>b.onclick=()=>{const p=b.dataset.p;
+ cfg=Object.assign(structuredClone(DEF),p==='reset'?{}:PRESETS[p]);save();syncUI();sendCfg();restartFrames();draw();toast('已套用：'+b.textContent)});
+$('exp').onclick=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(cfg,null,2)],{type:'application/json'}));a.download='presence-config.json';a.click()};
+$('impB').onclick=()=>$('imp').click();
+$('imp').onchange=async e=>{try{const j=JSON.parse(await e.target.files[0].text());const n=structuredClone(DEF);
+ for(const k in DEF)if(k in j)n[k]=k==='roi'?j.roi.slice(0,4).map(x=>clamp('roi',x)):clamp(k,j[k]);cfg=n;save();syncUI();sendCfg();restartFrames();draw();toast('已匯入設定')}
+ catch(err){toast('匯入失敗：'+err.message)}e.target.value=''};
+const drawer=(o)=>{$('drawer').classList.toggle('open',o);$('scrim').classList.toggle('open',o)};
+$('openSet').onclick=()=>drawer(true);$('closeSet').onclick=$('scrim').onclick=()=>drawer(false);
+// ---------- websocket ----------
+let ws,last=null;
+function connect(){ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws'+location.search);
+ ws.onopen=()=>{$('conn').classList.add('on');sendCfg();if(running)ws.send(JSON.stringify({type:'start'}))};
+ ws.onclose=()=>{$('conn').classList.remove('on');setTimeout(connect,1500)};
+ ws.onmessage=e=>{const s=JSON.parse(e.data);
+  if(s.type==='stats')return renderStats(s);
+  if(s.type==='pong'){lastRtt=performance.now()-s.t;return}
+  if(s.config_ack&&s.config){let ch=false;for(const k in s.config){const v=k==='roi'?s.config.roi.map(x=>+(+x).toFixed(4)):s.config[k];
+    if(JSON.stringify(v)!==JSON.stringify(cfg[k])){cfg[k]=v;ch=true}}if(ch){save();syncUI()}
+   if(s.warnings&&s.warnings.length)toast('伺服器調整：'+s.warnings.join('；'))}
+  if(!('detections' in s)&&last)s.detections=last.detections;last=s;render(s)}}
+// ---------- render ----------
+const STATES=['ACTIVE','IDLE','MAYBE_AWAY','AWAY','ENDED'];
+$('sm').innerHTML=STATES.map(x=>`<span id="st_${x}">${x.replace('_',' ')}</span>`).join('');
+const pct=(a,b)=>Math.max(0,Math.min(100,b>0?a/b*100:0))+'%';
+function render(s){
+ STATES.forEach(x=>$('st_'+x).className=x===s.state?'cur '+x:'');
+ const tr=[...s.log].reverse().find(e=>e.event==='transition');$('reason').textContent=tr?`${tr.frm} → ${tr.to}：${tr.reason}`:'—';
+ $('pipe').textContent=s.pipeline?'模型：'+s.pipeline:'';
+ $('spk').textContent=s.speaking?'🎙 是':'否';$('sil').textContent=s.silence.toFixed(1)+'s';
+ $('roiSt').textContent=s.present?'有人':s.empty?'空':'不確定';$('sess').textContent='#'+s.session;
+ $('b1').style.width=pct(s.silence,cfg.idle_after);$('b1t').textContent=`${Math.min(s.silence,cfg.idle_after).toFixed(1)} / ${cfg.idle_after}s`;
+ const pm={vision:'影像優先',balanced:'平衡',audio:'聲音優先'}[s.priority_mode]||'';
+ const mode=s.path==='ended'?'未進行':s.priority_mode==='vision'?(s.path==='present'?'有人：靜默不會離開':s.path==='empty'?'ROI 空：只看影像':'影像不確定：看聲音')
+  :s.present?'有人':s.empty?'ROI 空':'只看聲音';
+ $('b2l').textContent=`逾時 → AWAY · ${pm} · ${mode}`;
+ if(!s.timeout){$('b2t').textContent=`${s.elapsed.toFixed(1)}s / ∞`;s={...s,timeout:1e9}}else $('b2t').textContent=`${s.elapsed.toFixed(1)} / ${s.timeout}s`;
+ const f=s.elapsed/s.timeout;$('b2').style.width=pct(s.elapsed,s.timeout);$('b2').style.background=f>=1?'var(--bad)':f>=cfg.maybe_away_frac?'var(--warn)':'var(--ok)';
+ $('b2m').style.left=cfg.maybe_away_frac*100+'%';
+ const a=s.state==='AWAY'?s.in_state:0;$('b3').style.width=pct(a,cfg.end_after_away);$('b3t').textContent=s.state==='AWAY'?`${a.toFixed(1)} / ${cfg.end_after_away}s`:'—';
+ $('people').innerHTML=s.tracks.length?s.tracks.map(t=>`<div class="person"><b style="color:${col(t)}">#${t.id}</b>
+  <span class="badge">${t.participant?'★ 參與者':'候選'}</span><span class="sp">${t.visible?'可見':`消失 ${t.missing}s`}</span>
+  <small>相似 ${t.similarity.toFixed(2)} · conf ${t.conf.toFixed(2)}</small></div>`).join(''):'<div class="empty">目前沒有追蹤對象</div>';
+ $('log').innerHTML=[...s.log].reverse().map(e=>`<div><span style="color:var(--mut)">${e.t.toFixed(1)}</span> <span class="ev ${e.event}">${e.event}</span> ${e.frm?e.frm+'→'+e.to:''} ${e.track?'#'+e.track:''} <span style="color:var(--mut)">${e.reason}</span></div>`).join('');
+ draw();
+}
+const col=t=>!t.visible?'#6e7681':t.participant?'#3fb950':'#d29922';
+// ---------- overlay & ROI drag ----------
+const cv=$('c'),g=cv.getContext('2d');let drag=null;
+function fit(){const r=cv.getBoundingClientRect(),d=devicePixelRatio||1;cv.width=r.width*d;cv.height=r.height*d;draw()}
+addEventListener('resize',fit);
+function draw(){const W=cv.width,H=cv.height,d=devicePixelRatio||1;g.clearRect(0,0,W,H);
+ (last?.detections||[]).forEach(x=>{g.strokeStyle='#ffffff40';g.lineWidth=1*d;g.strokeRect(x.bbox[0]*W,x.bbox[1]*H,(x.bbox[2]-x.bbox[0])*W,(x.bbox[3]-x.bbox[1])*H)});
+ (last?.tracks||[]).forEach(t=>{const b=t.bbox,c=col(t);g.strokeStyle=g.fillStyle=c;g.lineWidth=3*d;
+  g.strokeRect(b[0]*W,b[1]*H,(b[2]-b[0])*W,(b[3]-b[1])*H);g.font=`${13*d}px sans-serif`;
+  const lab=`#${t.id}${t.participant?' ★':''} ${t.similarity.toFixed(2)}`,tw=g.measureText(lab).width;
+  g.fillRect(b[0]*W,b[1]*H-18*d,tw+8*d,18*d);g.fillStyle='#000';g.fillText(lab,b[0]*W+4*d,b[1]*H-5*d)});
+ const r=cfg.roi,x=r[0]*W,y=r[1]*H,w=(r[2]-r[0])*W,h=(r[3]-r[1])*H;
+ g.fillStyle='#0008';g.fillRect(0,0,W,y);g.fillRect(0,y+h,W,H-y-h);g.fillRect(0,y,x,h);g.fillRect(x+w,y,W-x-w,h);
+ g.strokeStyle='#58a6ff';g.lineWidth=2*d;g.setLineDash([8*d,6*d]);g.strokeRect(x,y,w,h);g.setLineDash([]);
+ g.fillStyle='#58a6ff';[[x,y],[x+w,y],[x,y+h],[x+w,y+h]].forEach(([a,b])=>g.fillRect(a-6*d,b-6*d,12*d,12*d));
+}
+function pos(e){const r=cv.getBoundingClientRect();return[(e.clientX-r.left)/r.width,(e.clientY-r.top)/r.height,r]}
+function hit(e){const[px,py,rc]=pos(e),r=cfg.roi,tx=18/rc.width,ty=18/rc.height;
+ const corners=[[0,1],[2,1],[0,3],[2,3]];for(const[i,j]of corners)if(Math.abs(px-r[i])<tx&&Math.abs(py-r[j])<ty)return{mode:'corner',i,j};
+ if(px>r[0]&&px<r[2]&&py>r[1]&&py<r[3])return{mode:'move'};return null}
+cv.addEventListener('pointermove',e=>{if(!drag){const h=hit(e);cv.style.cursor=h?(h.mode==='move'?'move':'nwse-resize'):'default';return}
+ const[px,py]=pos(e),r=[...drag.r],C=v=>Math.min(1,Math.max(0,v));
+ if(drag.mode==='move'){const dx=px-drag.p[0],dy=py-drag.p[1],w=r[2]-r[0],h=r[3]-r[1];
+  const x0=Math.min(1-w,Math.max(0,r[0]+dx)),y0=Math.min(1-h,Math.max(0,r[1]+dy));cfg.roi=[x0,y0,x0+w,y0+h]}
+ else{r[drag.i]=C(px);r[drag.j]=C(py);
+  if(r[2]-r[0]<0.05){if(drag.i===0)r[0]=r[2]-0.05;else r[2]=r[0]+0.05}if(r[3]-r[1]<0.05){if(drag.j===1)r[1]=r[3]-0.05;else r[3]=r[1]+0.05}cfg.roi=r}
+ cfg.roi=cfg.roi.map(v=>+v.toFixed(3));syncUI();draw()});
+cv.addEventListener('pointerdown',e=>{const h=hit(e);if(!h)return;drag={...h,p:pos(e),r:[...cfg.roi]};cv.setPointerCapture(e.pointerId);e.preventDefault()});
+const endDrag=()=>{if(drag){drag=null;save();sendCfg()}};cv.addEventListener('pointerup',endDrag);cv.addEventListener('pointercancel',endDrag);
+// ---------- media: VAD + frames, start/stop ----------
+let speech=false,frameTimer,vadTimer,pingTimer,stream=null,ac=null,running=false,autoPaused=false,lastRtt=null,v=$('v'),off=document.createElement('canvas'),og=off.getContext('2d');
+const wsSend=o=>{if(ws&&ws.readyState===1)ws.send(JSON.stringify(o))};
+function restartFrames(){clearInterval(frameTimer);if(!running)return;
+ frameTimer=setInterval(()=>{if(!ws||ws.readyState!==1||!v.videoWidth)return;const s=480/v.videoHeight;off.width=Math.round(v.videoWidth*s);off.height=480;
+  og.drawImage(v,0,0,off.width,off.height);wsSend({type:'frame',speech,data:off.toDataURL('image/jpeg',0.7)})},1000/cfg.fps)}
+function setUI(){$('start').textContent=running?'■ 停止':'▶ 開始';$('start').className=running?'stop':'pri';
+ $('cam').textContent=running?'鏡頭/麥克風 開':autoPaused?'已自動暫停':'鏡頭/麥克風 關';$('cam').classList.toggle('live',running);
+ $('placeholder').style.display=running?'none':'grid';$('monHint').textContent=running?'':'（開始後每秒更新）'}
+async function start(){
+ if(running)return;
+ stream=await navigator.mediaDevices.getUserMedia({video:{width:{ideal:640},height:{ideal:480},facingMode:'user'},audio:{echoCancellation:true,noiseSuppression:true}});
+ v.srcObject=stream;running=true;autoPaused=false;setUI();wsSend({type:'start'});
+ ac=new (window.AudioContext||window.webkitAudioContext)();await ac.resume();
+ const an=ac.createAnalyser();an.fftSize=1024;ac.createMediaStreamSource(stream).connect(an);
+ const buf=new Float32Array(an.fftSize);let floor=0.01,until=0,prev=false;
+ vadTimer=setInterval(()=>{an.getFloatTimeDomainData(buf);let e=0;for(const x of buf)e+=x*x;const rms=Math.sqrt(e/buf.length),now=performance.now();
+  const thr=Math.max(floor*cfg.vad_k,cfg.vad_min),voiced=rms>thr;
+  floor=voiced?0.999*floor+0.001*rms:0.95*floor+0.05*rms;floor=Math.max(floor,1e-4);
+  if(voiced)until=now+cfg.vad_hang;speech=now<until;
+  const sc=x=>Math.min(100,Math.sqrt(x/0.2)*100)+'%';$('lvl').style.width=sc(rms);$('lvl').style.background=speech?'var(--ok)':'var(--idle)';
+  $('thr').style.left=sc(thr);$('flo').style.left=sc(floor);
+  if(speech!==prev)wsSend({type:'vad',speech});prev=speech},50);
+ pingTimer=setInterval(()=>wsSend({type:'ping',t:performance.now(),rtt:lastRtt}),2000);
+ restartFrames();
+}
+function stop(auto){
+ [frameTimer,vadTimer,pingTimer].forEach(clearInterval);
+ if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;v.srcObject=null;
+ if(ac){ac.close().catch(()=>{});ac=null}
+ speech=false;$('lvl').style.width='0';
+ if(running)wsSend({type:'stop'});running=false;autoPaused=!!auto;setUI();last=null;draw();
+}
+$('start').onclick=()=>running?(stop(),toast('已停止：鏡頭與麥克風已關閉')):start().catch(e=>{stop();toast('無法開啟鏡頭/麥克風：'+e.message+'（需 HTTPS 或 localhost）')});
+document.addEventListener('visibilitychange',()=>{
+ if(document.hidden&&running){stop(true)}
+ else if(!document.hidden&&autoPaused){start().then(()=>toast('已自動恢復')).catch(()=>toast('分頁切回來了，按「開始」繼續'))}});
+// ---------- resource monitor ----------
+const H={cpu:[],sys:[],lat:[],p95:[]},HN=60,push=(a,x)=>{a.push(x);if(a.length>HN)a.shift()};
+const fmtB=b=>b>=1<<30?(b/(1<<30)).toFixed(1)+' GB':b>=1<<20?(b/(1<<20)).toFixed(0)+' MB':(b/1024).toFixed(0)+' KB';
+function spark(id,series,colors,maxMin){const c=$(id),d=devicePixelRatio||1,r=c.getBoundingClientRect();c.width=r.width*d;c.height=r.height*d;
+ const x=c.getContext('2d'),W=c.width,Hh=c.height;const mx=Math.max(maxMin,...series.flat())*1.1||1;
+ x.strokeStyle='#ffffff10';x.beginPath();x.moveTo(0,Hh/2);x.lineTo(W,Hh/2);x.stroke();
+ series.forEach((a,i)=>{if(a.length<2)return;x.beginPath();a.forEach((y,j)=>{const px=W*(j+HN-a.length)/(HN-1),py=Hh-y/mx*(Hh-2)-1;j?x.lineTo(px,py):x.moveTo(px,py)});
+  x.strokeStyle=colors[i];x.lineWidth=1.5*d;x.stroke();
+  if(i===0){x.lineTo(W,Hh);x.lineTo(W*(HN-a.length)/(HN-1),Hh);x.closePath();x.fillStyle=colors[i]+'22';x.fill()}})}
+function renderStats(s){const y=s.system,c=s.conn,L=c.latency_ms,i=s.info;
+ push(H.cpu,y.proc_cpu);push(H.sys,y.sys_cpu);push(H.lat,L.total.avg);push(H.p95,L.total.p95);
+ $('mCpu').textContent=`${y.proc_cpu}% / ${y.sys_cpu}%`;$('mLat').textContent=`${L.total.avg} / ${L.total.p95} ms`;
+ $('mMem').textContent=`${fmtB(y.proc_rss)} / ${fmtB(y.mem_used)} (${y.mem_pct}%)`;
+ $('mFps').textContent=`${c.fps} / ${fmtB(c.bandwidth_Bps)}/s`;
+ spark('spCpu',[H.cpu,H.sys],['#58a6ff','#8b949e'],100);spark('spLat',[H.lat,H.p95],['#3fb950','#d29922'],10);
+ $('mCores').innerHTML=(y.per_core||[]).map(p=>`<i style="height:${Math.max(4,p)}%" title="${p}%"></i>`).join('');
+ const nm={decode:'JPEG 解碼',detect:'偵測',embed:'Embedding',tracker:'Tracker',total:'總計'};
+ $('mLatT').innerHTML=Object.entries(L).map(([k,v])=>`<tr><td>${nm[k]||k}</td><td>${v.last}</td><td>${v.avg}</td><td>${v.p95}</td></tr>`).join('');
+ const kv={'Load avg':y.load?y.load.join(' / '):'—','畫面張數':`收 ${c.frames.received} · 處理 ${c.frames.processed} · 丟棄 ${c.frames.dropped}`,
+  '畫面大小':`${c.frame_size.join('×')} · 平均 ${fmtB(c.frame_bytes_avg)}`,'WS 往返':c.rtt_ms!=null?c.rtt_ms+' ms':(lastRtt?lastRtt.toFixed(0)+' ms':'—'),
+  '模型':i.pipeline,'OpenCV':`${i.opencv} · ${i.dnn_backend} / ${i.dnn_target} · ${i.cv_threads} threads`,'程序':`${y.proc_threads} threads · ${i.cpu_count} cores`};
+ $('mKv').innerHTML=Object.entries(kv).map(([k,v])=>`<span>${k}</span><span>${v}</span>`).join('');
+}
+buildUI();new ResizeObserver(fit).observe(cv);connect();
+</script></body></html>
