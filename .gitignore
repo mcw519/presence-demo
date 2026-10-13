@@ -1,0 +1,11 @@
+.venv/
+models/
+logs/
+state/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.pyc
+token.txt
+.env
+*.zip
