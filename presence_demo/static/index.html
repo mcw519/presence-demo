@@ -17,7 +17,7 @@ main{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(320px,1fr);gap:16
 .card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:14px}
 .card h3{margin:0 0 10px;font-size:13px;color:var(--mut);font-weight:600;letter-spacing:.04em}
 #view{position:relative;aspect-ratio:4/3;background:#000;border-radius:var(--r);overflow:hidden;border:1px solid var(--line)}
-#view video,#view canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:fill}#view canvas{touch-action:none;cursor:default}
+#view video,#view canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:fill}#view canvas{touch-action:none;cursor:default}#view video.mirror{transform:scaleX(-1)}
 #placeholder{position:absolute;inset:0;pointer-events:none;display:grid;place-items:center;color:var(--mut);text-align:center;padding:20px}
 .hint{font-size:12px;color:var(--mut);margin-top:8px}
 .right{display:flex;flex-direction:column;gap:12px;min-width:0}
@@ -108,12 +108,12 @@ button.stop{background:var(--bad);border-color:var(--bad);color:#fff}
 <script>
 const $=id=>document.getElementById(id);
 // ---------- settings schema ----------
-const DEF={face_roi:[0.2,0.05,0.8,0.95],show_face_roi:true,pose_enabled:false,pose_conf:0.4,pose_roi:[0,0,1,1],show_pose_roi:true,roi_rule:'either',
+const DEF={face_roi:[0.2,0.05,0.8,0.95],mirror_view:true,show_face_roi:true,pose_enabled:false,pose_conf:0.4,pose_roi:[0,0,1,1],show_pose_roi:true,roi_rule:'either',
  turned_away_early:true,turned_away_seconds:2,recede_ratio:0.1,distance_enabled:false,camera_hfov:60,face_width_m:0.15,shoulder_width_m:0.38,
  distance_calib:1,distance_ema:0.3,zone_min:0.4,zone_max:2,leave_distance:2.5,min_conf:0.6,embed_backend:'fp32',npu_precision:'int8',cos_match_int8:0.4,cos_match:0.4,cos_weak:0.2,iou_match:0.3,embed_ema:0.15,join_seconds:2,grace_seconds:15,
  present_frames:2,absent_frames:3,idle_after:3,present_timeout:15,empty_timeout:5,base_timeout:20,maybe_away_frac:0.5,end_after_away:5,new_group_seconds:3,
  priority_mode:'vision',speech_join:'auto',presence_model:'rules',intent_model:'rules',intent_tau:1,join_threshold:0.6,drop_threshold:0.35,drop_seconds:8,intent_weighted_presence:false,w_facing:0.45,w_distance:0.1,w_dwell:0.1,w_approach:0.05,w_still:0.15,w_center:0.15,leave_halflife:0.6,detect_gain:4,lowconf_factor:0.15,p_active:0.8,p_maybe:0.6,p_away:0.3,away_hold_seconds:1,tracker_mode:'legacy',coast_seconds:2,coast_present_conf:0.4,gate_mahalanobis:9.21,appearance_min_sim:0.6,appearance_ema:0.2,body_min_conf:0.4,present_max_silence:0,motion_gate:true,motion_threshold:0.015,force_detect_seconds:3,embed_throttle:true,embed_interval:3,embed_move_thresh:0.15,adaptive_fps:true,fps_low:0.5,fps_high:2,roi_crop:true,crop_margin:0.1,max_width:320,fps:1,vad_k:2.5,vad_min:0.005,vad_hang:400};
-const CLIENT=['fps','vad_k','vad_min','vad_hang','show_face_roi','show_pose_roi'];
+const CLIENT=['mirror_view','fps','vad_k','vad_min','vad_hang','show_face_roi','show_pose_roi'];
 const BOXES=['face_roi','pose_roi'];
 const S=(l,h,min,max,step,u='')=>({l,h,min,max,step,u});
 const GROUPS=[
@@ -123,6 +123,7 @@ const GROUPS=[
    opts:{auto:'自動',off:'關閉',single_candidate:'唯一候選人',all:'全部'}},
    present_max_silence:S('有人時最長靜默（影像優先）','影像優先模式下，人在畫面裡但一直不說話，最多等多久就判定離開。0＝不限制。',0,3600,10,'s')}],
  ['偵測範圍',{face_roi:{...S('臉部 ROI (x0,y0,x1,y1)','臉的中心點要落在這個框（藍色）裡才算數。可以直接在影像上拖曳或拉角調整。',0,1,0.01),box:true},
+   mirror_view:{l:'鏡像顯示',h:'像照鏡子一樣左右翻轉預覽畫面與標示框（自拍視角），比較直覺。只影響這個瀏覽器的顯示：送到伺服器的影像不翻轉，和機器人相機看到的一樣；ROI 數值也一律用原始相機座標儲存（鏡像時畫面上的左邊＝x 值大的一側）。',bool:true},
    show_face_roi:{l:'顯示臉部 ROI',h:'在影像上顯示藍色的臉部 ROI 框（只影響顯示）。',bool:true},
    min_conf:S('最低偵測信心','低於這個值的偵測不算有人也不算沒人，會退回只看聲音。',0,1,0.01)}],
  ['身分比對',{cos_match:S('同一人相似度門檻','臉部 embedding 的 cosine 相似度達到這個值就算同一人（SFace 約 0.36）。',0,1,0.01),
@@ -315,14 +316,16 @@ const visBoxes=()=>BOXES.filter(k=>k==='face_roi'?cfg.show_face_roi:(cfg.pose_en
 const cv=$('c'),g=cv.getContext('2d');let drag=null;
 function fit(){const r=cv.getBoundingClientRect(),d=devicePixelRatio||1;cv.width=r.width*d;cv.height=r.height*d;draw()}
 addEventListener('resize',fit);
-function draw(){const W=cv.width,H=cv.height,d=devicePixelRatio||1;g.clearRect(0,0,W,H);
- (last?.detections||[]).forEach(x=>{g.strokeStyle='#ffffff40';g.lineWidth=1*d;g.strokeRect(x.bbox[0]*W,x.bbox[1]*H,(x.bbox[2]-x.bbox[0])*W,(x.bbox[3]-x.bbox[1])*H)});
+// 鏡像只在繪圖時換算 x 座標（文字不會反過來）；cfg/伺服器的座標一律是原始相機座標
+const MIR=()=>!!cfg.mirror_view,mx=x=>MIR()?1-x:x,mbox=b=>MIR()?[1-b[2],b[1],1-b[0],b[3],...b.slice(4)]:b;
+function draw(){const W=cv.width,H=cv.height,d=devicePixelRatio||1;g.clearRect(0,0,W,H);$('v').classList.toggle('mirror',MIR());
+ (last?.detections||[]).forEach(x=>{const xb=mbox(x.bbox);g.strokeStyle='#ffffff40';g.lineWidth=1*d;g.strokeRect(xb[0]*W,xb[1]*H,(xb[2]-xb[0])*W,(xb[3]-xb[1])*H)});//[0]*W,x.bbox[1]*H,(x.bbox[2]-x.bbox[0])*W,(x.bbox[3]-x.bbox[1])*H)});
  (last?.tracks||[]).forEach(t=>{const c=col(t);
-  if(t.body){const bb=t.body;g.strokeStyle=c+'99';g.lineWidth=1.5*d;g.setLineDash([4*d,4*d]);g.strokeRect(bb[0]*W,bb[1]*H,(bb[2]-bb[0])*W,(bb[3]-bb[1])*H);g.setLineDash([])}
+  if(t.body){const bb=mbox(t.body);g.strokeStyle=c+'99';g.lineWidth=1.5*d;g.setLineDash([4*d,4*d]);g.strokeRect(bb[0]*W,bb[1]*H,(bb[2]-bb[0])*W,(bb[3]-bb[1])*H);g.setLineDash([])}
   if(t.keypoints){const K=t.keypoints;g.strokeStyle='#ffffffcc';g.lineWidth=2*d;
-   SK.forEach(([a,b])=>{const p=K[a],q=K[b];if(p&&q&&p[2]>0.4&&q[2]>0.4){g.beginPath();g.moveTo(p[0]*W,p[1]*H);g.lineTo(q[0]*W,q[1]*H);g.stroke()}});
-   g.fillStyle=c;Object.values(K).forEach(p=>{if(p[2]>0.4){g.beginPath();g.arc(p[0]*W,p[1]*H,3*d,0,7);g.fill()}})}
-  const b=t.bbox;g.strokeStyle=g.fillStyle=c;g.lineWidth=(t.has_face===false?1.5:3)*d;
+   SK.forEach(([a,b])=>{const p=K[a],q=K[b];if(p&&q&&p[2]>0.4&&q[2]>0.4){g.beginPath();g.moveTo(mx(p[0])*W,p[1]*H);g.lineTo(mx(q[0])*W,q[1]*H);g.stroke()}});
+   g.fillStyle=c;Object.values(K).forEach(p=>{if(p[2]>0.4){g.beginPath();g.arc(mx(p[0])*W,p[1]*H,3*d,0,7);g.fill()}})}
+  const b=mbox(t.bbox);g.strokeStyle=g.fillStyle=c;g.lineWidth=(t.has_face===false?1.5:3)*d;
   const pred=t.visible_kind==='predicted';if(pred){g.setLineDash([6*d,5*d]);g.lineWidth=2*d}
   g.strokeRect(b[0]*W,b[1]*H,(b[2]-b[0])*W,(b[3]-b[1])*H);g.setLineDash([]);g.font=`${13*d}px sans-serif`;
   let lab=`#${t.id}${t.participant?' ★':''} ${pred?`預測 ${(t.vis_conf??0).toFixed(2)}`:t.has_face===false?'身體':t.similarity.toFixed(2)}`;
@@ -330,16 +333,16 @@ function draw(){const W=cv.width,H=cv.height,d=devicePixelRatio||1;g.clearRect(0
   const tw=g.measureText(lab).width;g.fillStyle=t.zone?ZC[t.zone]:c;
   g.fillRect(b[0]*W,b[1]*H-18*d,tw+8*d,18*d);g.fillStyle='#000';g.fillText(lab,b[0]*W+4*d,b[1]*H-5*d)});
  const vb=visBoxes();
- if(vb.includes('face_roi')){const r=cfg.face_roi,x=r[0]*W,y=r[1]*H,w=(r[2]-r[0])*W,h=(r[3]-r[1])*H;
+ if(vb.includes('face_roi')){const r=mbox(cfg.face_roi),x=r[0]*W,y=r[1]*H,w=(r[2]-r[0])*W,h=(r[3]-r[1])*H;
   g.fillStyle='#0006';g.fillRect(0,0,W,y);g.fillRect(0,y+h,W,H-y-h);g.fillRect(0,y,x,h);g.fillRect(x+w,y,W-x-w,h)}
- vb.forEach(k=>{const r=cfg[k],x=r[0]*W+(k==='pose_roi'?2*d:0),y=r[1]*H+(k==='pose_roi'?2*d:0),w=(r[2]-r[0])*W-(k==='pose_roi'?4*d:0),h=(r[3]-r[1])*H-(k==='pose_roi'?4*d:0);
+ vb.forEach(k=>{const r=mbox(cfg[k]),x=r[0]*W+(k==='pose_roi'?2*d:0),y=r[1]*H+(k==='pose_roi'?2*d:0),w=(r[2]-r[0])*W-(k==='pose_roi'?4*d:0),h=(r[3]-r[1])*H-(k==='pose_roi'?4*d:0);
   g.strokeStyle=ROICOL[k];g.lineWidth=2*d;g.setLineDash(k==='pose_roi'?[3*d,5*d]:[8*d,6*d]);g.strokeRect(x,y,w,h);g.setLineDash([]);
   g.fillStyle=ROICOL[k];[[x,y],[x+w,y],[x,y+h],[x+w,y+h]].forEach(([a,b])=>g.fillRect(a-6*d,b-6*d,12*d,12*d));
   g.font=`${11*d}px sans-serif`;g.fillText(k==='face_roi'?'臉部 ROI':'身體 ROI',x+8*d,y+(k==='face_roi'?16:30)*d)});
  if(cfg.distance_enabled){g.font=`${12*d}px sans-serif`;const txt=`對話區 ${cfg.zone_min}–${cfg.zone_max} m · 離開 > ${cfg.leave_distance} m`;
   const tw=g.measureText(txt).width;g.fillStyle='#000a';g.fillRect(W-tw-16*d,H-24*d,tw+12*d,20*d);g.fillStyle='#e6edf3';g.fillText(txt,W-tw-10*d,H-10*d)}
 }
-function pos(e){const r=cv.getBoundingClientRect();return[(e.clientX-r.left)/r.width,(e.clientY-r.top)/r.height,r]}
+function pos(e){const r=cv.getBoundingClientRect();return[mx((e.clientX-r.left)/r.width),(e.clientY-r.top)/r.height,r]}
 function hit(e){const[px,py,rc]=pos(e),tx=18/rc.width,ty=18/rc.height,vb=visBoxes();
  const corners=[[0,1],[2,1],[0,3],[2,3]];
  for(const k of vb){const r=cfg[k];for(const[i,j]of corners)if(Math.abs(px-r[i])<tx&&Math.abs(py-r[j])<ty)return{mode:'corner',i,j,k}}
