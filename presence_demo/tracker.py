@@ -40,7 +40,7 @@ class Config:
     present_frames: int = 2  # consecutive confident frames before "present"
     idle_after: float = 3.0  # silence before ACTIVE -> IDLE
     base_timeout: float = 20.0  # silence timeout when vision is unknown
-    present_timeout: float = 15.0  # extended timeout when participants visible
+    present_timeout: float = 15.0  # silence timeout while participants are visible (balanced mode)
     empty_timeout: float = 5.0  # shortened timeout when ROI is empty
     maybe_away_frac: float = 0.5  # fraction of timeout to enter MAYBE_AWAY
     end_after_away: float = 5.0  # AWAY -> ENDED
@@ -62,6 +62,7 @@ class Config:
     # --- pose / body (optional) ---
     pose_enabled: bool = False  # run the pose detector (MoveNet MultiPose Lightning)
     pose_conf: float = 0.4  # min pose/person confidence
+    body_min_conf: float = 0.4  # confidence needed for a body-only (no face) detection to count as confident
     pose_roi: tuple = (0.0, 0.0, 1.0, 1.0)  # body ROI (center of body box), normalized
     roi_rule: str = "either"  # either | face | body : which ROI makes a person count
     turned_away_early: bool = True  # turned away + moving away -> early MAYBE_AWAY
@@ -77,6 +78,7 @@ class Config:
     zone_min: float = 0.4  # conversation zone, meters
     zone_max: float = 2.0
     leave_distance: float = 2.5  # beyond this a visible person counts as left
+    speech_join: str = "auto"  # auto (vision: off, else single_candidate) | off | single_candidate | all
     present_max_silence: float = 0.0  # vision mode: cap on silence with people present (0 = off)
 
     @property
@@ -172,6 +174,8 @@ RANGES = {
     "roi_rule": (("either", "face", "body"), None, str),
     "pose_enabled": (False, True, bool),
     "pose_conf": (0.05, 1.0, float),
+    "body_min_conf": (0.05, 1.0, float),
+    "speech_join": (("auto", "off", "single_candidate", "all"), None, str),
     "turned_away_early": (False, True, bool),
     "turned_away_seconds": (0.0, 30.0, float),
     "recede_ratio": (0.01, 0.9, float),
@@ -284,6 +288,9 @@ class PresenceTracker:
         self.empty = True
         self._empty_streak = 0
         self._present_streak = 0
+        self._low_streak = 0
+        self._first_empty_at: float | None = None
+        self._frame_confident = False
         self.empty_since: float | None = now
         self._newgroup_since: float | None = None
         self._away_cue_since: float | None = None
@@ -354,23 +361,60 @@ class PresenceTracker:
         dets = [d for d in detections if self.det_in_roi(d)]
         for d in dets:
             d.embedding = _norm(d.embedding)
-        confident = [d for d in dets if d.conf >= self.cfg.min_conf]
-        low = [d for d in dets if d.conf < self.cfg.min_conf]
+        confident = [d for d in dets if d.conf >= self._min_conf(d)]
+        low = [d for d in dets if d.conf < self._min_conf(d)]
+        starters = [d for d in confident if not self._det_far(d)]
 
-        if self.state == State.ENDED and (confident or (self.speaking and self.cfg.priority_mode != "vision")):
-            self._start(now, "person in ROI" if confident else "speech detected")
+        if self.state == State.ENDED and (starters or (self.speaking and self.cfg.priority_mode != "vision")):
+            self._start(now, "person in ROI" if starters else "speech detected")
 
         self._match(confident, now)
         near = any(t.visible and not t.far for t in self.tracks.values())
         if confident and not near and not self._far_logged:
             self._event(now, "far", f"visible people beyond leave_distance {self.cfg.leave_distance:.1f} m")
         self._far_logged = bool(confident) and not near
+        self._frame_confident = bool(confident)
         self._update_presence(now, near, bool(low))
         self._update_away_cue(now)
         if self.state != State.ENDED:
             self._check_new_group(now)
         self._evaluate(now)
         return self.snapshot(now)
+
+    def _min_conf(self, d: Detection) -> float:
+        """Body-only detections (no face) use ``body_min_conf``; anything with a face uses ``min_conf``."""
+        return self.cfg.body_min_conf if d.face_bbox is None and d.body is not None else self.cfg.min_conf
+
+    def _det_far(self, d: Detection) -> bool:
+        """Single-frame distance check for a detection (used before it has a track)."""
+        c = self.cfg
+        if not c.distance_enabled:
+            return False
+        fw = (d.face_bbox[2] - d.face_bbox[0]) if d.face_bbox is not None else None
+        sw = shoulder_width(d.body) if d.body is not None else None
+        facing = orientation(d.body)[1] if d.body is not None else ("facing" if fw else None)
+        raw = estimate_distance(fw, sw, facing, c.camera_hfov, c.face_width_m, c.shoulder_width_m, 1.0)
+        return raw is not None and raw * c.distance_calib > c.leave_distance
+
+    def _speech_join_mode(self) -> str:
+        m = self.cfg.speech_join
+        if m == "auto":
+            return "off" if self.cfg.priority_mode == "vision" else "single_candidate"
+        return m
+
+    def _speech_joinable(self, t: Track, cands: list[Track]) -> bool:
+        """Whether speech lets track ``t`` join instantly (without waiting ``join_seconds``)."""
+        if not self.speaking:
+            return False
+        mode = self._speech_join_mode()
+        if mode == "all":
+            return True
+        if mode != "single_candidate" or len(cands) != 1:
+            return False
+        c = self.cfg
+        face_ok = t.has_face and self._center_in(t.bbox, c.face_roi)
+        near_ok = not c.distance_enabled or t.distance is None or t.distance <= c.zone_max
+        return face_ok and t.facing == "facing" and near_ok
 
     # ------------------------------------------------------------------ tracking
     def _match(self, dets, now):
@@ -416,19 +460,21 @@ class PresenceTracker:
             self._next_id += 1
             self.tracks[t.id] = t
             self._event(now, "track_new", "new face in ROI", track=t.id)
+        cands = [t for t in self.tracks.values() if t.visible and not t.participant and not t.far]
         for t in list(self.tracks.values()):
+            by_speech = t in cands and self._speech_joinable(t, cands)
             if (
                 t.visible
                 and not t.participant
                 and not t.far
-                and (now - t.in_roi_since >= c.join_seconds or self.speaking)
+                and (now - t.in_roi_since >= c.join_seconds or by_speech)
                 and self._newgroup_since is None
             ) and (not self._old_group_missing() or not self._participants()):
                 t.participant = True
                 self._event(
                     now,
                     "join",
-                    "in ROI %.1fs" % (now - t.in_roi_since) if not self.speaking else "speaking while in ROI",
+                    "in ROI %.1fs" % (now - t.in_roi_since) if not by_speech else "speaking while in ROI",
                     track=t.id,
                 )
             if now - t.last_seen > c.grace_seconds:
@@ -502,15 +548,18 @@ class PresenceTracker:
         return [t for t in self.tracks.values() if t.participant]
 
     def _old_group_missing(self):
+        """All participants confidently gone: none visible (and near), and this frame was not merely
+        low-confidence (a confident detection or a confirmed-empty ROI is required)."""
         p = self._participants()
-        return bool(p) and not any(t.visible and not t.far for t in p)
+        evidence = self._frame_confident or (self.empty and self.empty_since is not None)
+        return bool(p) and evidence and not any(t.visible and not t.far for t in p)
 
     def _check_new_group(self, now):
         c = self.cfg
         newcomers = [
             t
             for t in self.tracks.values()
-            if not t.participant and t.visible and now - t.in_roi_since >= c.join_seconds
+            if not t.participant and t.visible and not t.far and now - t.in_roi_since >= c.join_seconds
         ]
         if self._old_group_missing() and newcomers:
             if self._newgroup_since is None:
@@ -531,17 +580,21 @@ class PresenceTracker:
         c = self.cfg
         if not (low and not confident):
             self._low_streak = 0
+        if confident or low:
+            self._first_empty_at = None
         if confident:
             self._present_streak += 1
             self._empty_streak = 0
         elif low:
             # low confidence: neither confirms presence nor absence (down-weighted)
             self._present_streak = 0
-            self._low_streak = getattr(self, "_low_streak", 0) + 1
+            self._low_streak += 1
             if self._low_streak >= c.absent_frames and (self.present or self.empty):
                 self._event(now, "uncertain", "%d low-confidence frames -> audio-only timeout" % self._low_streak)
                 self.present, self.empty, self.empty_since = False, False, None
         else:
+            if self._empty_streak == 0:
+                self._first_empty_at = now
             self._empty_streak += 1
             self._present_streak = 0
         if self._present_streak >= c.present_frames or (confident and self.present):
@@ -551,7 +604,7 @@ class PresenceTracker:
         if self._empty_streak >= c.absent_frames:
             if not self.empty:
                 self._event(now, "empty", "%d consecutive empty frames" % self._empty_streak)
-                self.empty_since = now - (self._empty_streak - 1) * 1.0
+                self.empty_since = self._first_empty_at if self._first_empty_at is not None else now
             self.present, self.empty = False, True
         if low and not confident and not self.present:
             self.empty = False  # uncertain -> fall back to audio-only base timeout
@@ -588,7 +641,8 @@ class PresenceTracker:
         else:
             self.timeout, elapsed, why = c.base_timeout, silence, "silence %.0fs (vision uncertain)"
         self.elapsed = elapsed
-        returned = self.present if vision_led else (self.speaking or self.present)
+        # vision mode: only a confident person brings the conversation back (speech alone never does)
+        returned = self.present if mode == "vision" else (self.speaking or self.present)
         if self.state == State.AWAY:
             if returned:
                 self._set_state(now, State.ACTIVE, "user returned")
@@ -634,7 +688,9 @@ class PresenceTracker:
             "timeout": self.timeout,
             "elapsed": round(getattr(self, "elapsed", 0.0), 1),
             "in_state": 0.0 if self.state == State.ENDED else round(now - self.state_since, 1),
-            "roi": list(self.cfg.roi),
+            "roi": list(self.cfg.roi),  # legacy alias of face_roi
+            "face_roi": list(self.cfg.face_roi),
+            "pose_roi": list(self.cfg.pose_roi),
             "tracks": [
                 {
                     "id": t.id,

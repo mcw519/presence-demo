@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.4.1 — 2026-10-14
+
+修正 [`docs/ALGORITHM.md`](docs/ALGORITHM.md) 稽核中發現的問題（每項都有測試，見 `tests/test_fixes_041.py`）：
+
+- `empty_since` 記錄第一張空幀的時間，不再假設 1 fps（自適應 fps 下 `empty_timeout` 不會再提早或延後）。
+- 新增 `body_min_conf`（預設 0.4）：只有身體的偵測用這個門檻判斷「有信心」，看不到臉時也能算有人。
+- 超出 `leave_distance` 的人不會從 ENDED 開始 session，也不會觸發 NEW_GROUP（修正每 10 秒重新開始的循環）。
+- 新增 `speech_join`（`auto`／`off`／`single_candidate`／`all`）：vision 模式下說話預設不會讓人立即加入；balanced／audio 只在唯一候選人（臉在 ROI、正面、在對話區內）時立即加入。
+- vision 模式：單靠說話不會從 AWAY 恢復（包括影像不確定時），和文件一致。
+- 修正 `present_timeout` 的說明（有人時的靜默逾時；預設 15 s 比 `base_timeout` 20 s 短）。
+- 小修正：新 session 重設低信心計數；只有低信心的幀不算「舊群組消失」；snapshot 新增 `face_roi`／`pose_roi`（保留 `roi` 別名）。
+- 新增 `docs/ALGORITHM.md`：依程式碼整理的完整偵測邏輯。
+
 ## 0.4.0 — 2026-10-13
 
 - **授權稽核**：新增 [`docs/LICENSES.md`](docs/LICENSES.md)，列出每個模型、套件和測試資料的授權、來源和商用風險。

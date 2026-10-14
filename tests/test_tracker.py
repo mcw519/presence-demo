@@ -191,11 +191,14 @@ def test_vision_uncertain_falls_back_to_audio():
     assert State.AWAY.value in states(tr)
 
 
-def test_vision_speech_with_person_joins_instantly():
+def test_vision_speech_does_not_join_instantly_by_default():
     tr, clk = mk("vision")
     clk.t += 1
     s = tr.update(dets([1]), speaking=True)
-    assert s["state"] == "ACTIVE" and s["tracks"][0]["participant"]
+    assert s["state"] == "ACTIVE" and not s["tracks"][0]["participant"]  # speech_join auto -> off in vision
+    clk.t += 2
+    s = tr.update(dets([1], 1), speaking=True)
+    assert s["tracks"][0]["participant"]  # after join_seconds
 
 
 def test_balanced_speech_keeps_empty_roi_alive():

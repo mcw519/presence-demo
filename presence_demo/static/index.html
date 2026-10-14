@@ -109,13 +109,15 @@ const DEF={face_roi:[0.2,0.05,0.8,0.95],show_face_roi:true,pose_enabled:false,po
  turned_away_early:true,turned_away_seconds:2,recede_ratio:0.1,distance_enabled:false,camera_hfov:60,face_width_m:0.15,shoulder_width_m:0.38,
  distance_calib:1,distance_ema:0.3,zone_min:0.4,zone_max:2,leave_distance:2.5,min_conf:0.6,cos_match:0.4,cos_weak:0.2,iou_match:0.3,embed_ema:0.15,join_seconds:2,grace_seconds:15,
  present_frames:2,absent_frames:3,idle_after:3,present_timeout:15,empty_timeout:5,base_timeout:20,maybe_away_frac:0.5,end_after_away:5,new_group_seconds:3,
- priority_mode:'vision',present_max_silence:0,motion_gate:true,motion_threshold:0.015,force_detect_seconds:3,embed_throttle:true,embed_interval:3,embed_move_thresh:0.15,adaptive_fps:true,fps_low:0.5,fps_high:2,roi_crop:true,crop_margin:0.1,max_width:320,fps:1,vad_k:2.5,vad_min:0.005,vad_hang:400};
+ priority_mode:'vision',speech_join:'auto',body_min_conf:0.4,present_max_silence:0,motion_gate:true,motion_threshold:0.015,force_detect_seconds:3,embed_throttle:true,embed_interval:3,embed_move_thresh:0.15,adaptive_fps:true,fps_low:0.5,fps_high:2,roi_crop:true,crop_margin:0.1,max_width:320,fps:1,vad_k:2.5,vad_min:0.005,vad_hang:400};
 const CLIENT=['fps','vad_k','vad_min','vad_hang','show_face_roi','show_pose_roi'];
 const BOXES=['face_roi','pose_roi'];
 const S=(l,h,min,max,step,u='')=>({l,h,min,max,step,u});
 const GROUPS=[
- ['判斷優先',{priority_mode:{l:'判斷優先',h:'影像優先：畫面有人就不會因為靜默離開，ROI 確定沒人就照 ROI 空的逾時離開（不管聲音），聲音只在影像不確定時使用，適合吵雜環境。平衡：聲音和影像一起決定。聲音優先：主要看靜默，影像只微調逾時。',
+ ['判斷優先',{priority_mode:{l:'判斷優先',h:'影像優先：畫面有人就不會因為靜默離開，ROI 確定沒人就照 ROI 空的逾時離開（不管聲音），聲音只在影像不確定時使用，而且單靠聲音不會從 AWAY 恢復，適合吵雜環境。平衡：聲音和影像一起決定。聲音優先：主要看靜默，影像只微調逾時。',
    opts:{vision:'影像優先',balanced:'平衡',audio:'聲音優先'}},
+   speech_join:{l:'說話立即加入',h:'有人說話時，是否不用等「加入時間」就讓 ROI 內的人成為參與者（聲音沒有位置資訊）。自動：影像優先時關閉，其他模式用「唯一候選人」。唯一候選人：只有一位可見的候選人、臉在臉部 ROI 內、正面朝向（開距離時還要在對話區內）才立即加入。全部：所有可見的候選人都立即加入。',
+   opts:{auto:'自動',off:'關閉',single_candidate:'唯一候選人',all:'全部'}},
    present_max_silence:S('有人時最長靜默（影像優先）','影像優先模式下，人在畫面裡但一直不說話，最多等多久就判定離開。0＝不限制。',0,3600,10,'s')}],
  ['偵測範圍',{face_roi:{...S('臉部 ROI (x0,y0,x1,y1)','臉的中心點要落在這個框（藍色）裡才算數。可以直接在影像上拖曳或拉角調整。',0,1,0.01),box:true},
    show_face_roi:{l:'顯示臉部 ROI',h:'在影像上顯示藍色的臉部 ROI 框（只影響顯示）。',bool:true},
@@ -129,7 +131,7 @@ const GROUPS=[
    present_frames:S('確認有人所需張數','連續幾張畫面有人才算「有人」。',1,20,1,'張'),
    absent_frames:S('確認沒人所需張數','連續幾張畫面沒人才算「ROI 空」，可以防止偵測閃爍。',1,20,1,'張')}],
  ['逾時',{idle_after:S('靜默轉 IDLE','靜默多久會從 ACTIVE 轉成 IDLE。',0,60,0.5,'s'),
-   present_timeout:S('有人時的逾時','人還在畫面裡但不說話時，最多等多久才判定離開（延長）。',1,600,1,'s'),
+   present_timeout:S('有人時的逾時','平衡模式：畫面裡有參與者但都不說話時，靜默多久判定離開。預設 15 s，比影像不確定時的 20 s 短。',1,600,1,'s'),
    empty_timeout:S('ROI 空時的逾時','沒人又靜默時，多快判定離開（縮短）。',1,120,0.5,'s'),
    base_timeout:S('影像不確定時的逾時','影像信心太低時，只看聲音的逾時。',1,300,1,'s'),
    maybe_away_frac:S('MAYBE_AWAY 比例','逾時進行到這個比例時進入 MAYBE_AWAY。',0.05,0.95,0.05),
@@ -138,6 +140,7 @@ const GROUPS=[
 const B=(l,h)=>({l,h,bool:true});
 GROUPS.push(['姿勢',{pose_enabled:B('啟用姿勢偵測','用 MoveNet MultiPose Lightning（Apache-2.0，最多 6 人）偵測身體與關鍵點（肩、髖、鼻、眼）。側身或背對時沒有臉也能判斷有人。CPU 成本較高，預設關閉。'),
    pose_conf:S('身體偵測信心','低於這個值的身體偵測會被忽略。',0.05,1,0.05),
+   body_min_conf:S('只有身體時的信心門檻','看不到臉、只偵測到身體時，信心達到這個值才算「有人」（有臉時用「偵測信心」）。',0.05,1,0.05),
    pose_roi:{...S('身體 ROI (x0,y0,x1,y1)','身體框的中心點落在這個框（紫色）裡才算數，通常比臉部 ROI 大。',0,1,0.01),box:true},
    show_pose_roi:{l:'顯示身體 ROI',h:'在影像上顯示紫色的身體 ROI 框（只影響顯示）。',bool:true},
    roi_rule:{l:'參與者判定規則',h:'臉或身體：臉在臉部 ROI，或身體在身體 ROI，任一成立就算。只看臉：只用臉部 ROI。只看身體：只用身體 ROI（需要開啟姿勢偵測）。',opts:{either:'臉或身體',face:'只看臉',body:'只看身體'}},

@@ -49,10 +49,10 @@ WebSocket 訊息：
 
 ## 追蹤
 
-1. 只保留中心點在 ROI 裡的偵測；conf < `min_conf` 的算低信心。
+1. 只保留中心點在 ROI 裡的偵測；有臉的偵測 conf < `min_conf`、只有身體的偵測 conf < `body_min_conf` 時算低信心。
 2. 高信心偵測和既有 track 做 greedy 配對：分數 = cosine + 0.5·IoU。cosine ≥ `cos_match`，或 IoU ≥ `iou_match` 且 cosine ≥ `cos_weak`，就算同一個人。
 3. 配對成功就更新 bbox、lastSeen，embedding 用 EMA 更新後再做 L2 正規化。沒配到的偵測建立新 track。
-4. 連續在 ROI 裡 `join_seconds`（或在 ROI 裡說話）就成為參與者；消失超過 `grace_seconds` 就移除。
+4. 連續在 ROI 裡 `join_seconds`（或依 `speech_join` 規則在說話時立即加入；vision 模式預設不會）就成為參與者；消失超過 `grace_seconds` 就移除。
 5. 有人／ROI 空採遲滯判定：`present_frames`／`absent_frames`，低信心畫面不影響這兩個計數；連續低信心則切換成「不確定」。
 
 ## 姿勢、身體與距離
@@ -68,7 +68,7 @@ WebSocket 訊息：
 ```mermaid
 stateDiagram-v2
   [*] --> ENDED
-  ENDED --> ACTIVE: 有人進入 ROI / 說話（vision 模式只看有人）
+  ENDED --> ACTIVE: 有信心、非 far 的人進入 ROI / 說話（vision 模式只看有人）
   ACTIVE --> IDLE: 靜默 ≥ idle_after
   IDLE --> ACTIVE: 說話
   IDLE --> MAYBE_AWAY: 計時 ≥ maybe_away_frac × 逾時

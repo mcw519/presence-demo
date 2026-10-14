@@ -9,8 +9,8 @@
 | `priority_mode` | `vision` | `vision`／`balanced`／`audio` | 判斷優先（見下方說明） |
 | `present_max_silence` | 0 | 0–3600 s | vision 模式下，人在畫面裡時最長允許的靜默；0＝不限 |
 
-- **vision（影像優先）**：影像有信心時，畫面有參與者就不會因為靜默判定離開；ROI 確定空了 `empty_timeout` 秒就 AWAY，不管有沒有聲音；單靠聲音不會開始 session，也不會從 AWAY 恢復。影像不確定時才退回用聲音（`base_timeout`）。在 ROI 裡說話仍會立即加入參與者。適合吵雜環境。
-- **balanced（平衡）**：有人時用 `present_timeout`、ROI 空時用 `empty_timeout`（計時取 min(靜默, 空的秒數)）、不確定時用 `base_timeout`；說話一定能維持對話。
+- **vision（影像優先）**：影像有信心時，畫面有參與者就不會因為靜默判定離開；ROI 確定空了 `empty_timeout` 秒就 AWAY，不管有沒有聲音；單靠聲音不會開始 session，也**不會從 AWAY 恢復**（即使影像不確定也一樣，只有影像確認有人才恢復）。影像不確定時，離開計時才退回用聲音（`base_timeout`）。說話預設**不會**讓人立即加入參與者（`speech_join=auto` → 關閉），要等 `join_seconds`。適合吵雜環境。
+- **balanced（平衡）**：有人時用 `present_timeout`、ROI 空時用 `empty_timeout`（計時取 min(靜默, 空的秒數)）、不確定時用 `base_timeout`；說話一定能維持對話，也能讓唯一的候選人立即加入（`speech_join=auto` → `single_candidate`）。
 - **audio（聲音優先）**：只看靜默計時，影像只調整逾時（有人 ×1.5、ROI 空 ×0.5 倍 `base_timeout`）。
 
 ## 偵測範圍
@@ -34,6 +34,7 @@
 | 參數 | 預設 | 範圍 | 說明 |
 |---|---|---|---|
 | `join_seconds` | 2.0 | 0–30 s | 在 ROI 裡待滿這麼久才成為參與者 |
+| `speech_join` | `auto` | `auto`／`off`／`single_candidate`／`all` | 有人說話時是否不等 `join_seconds` 就立即加入（聲音沒有位置資訊）。`auto`：vision 模式為 `off`，其他模式為 `single_candidate`。`single_candidate`：只有一位可見、非 far 的候選人，臉在 `face_roi` 內、朝向為正面，而且開啟距離時在 `zone_max` 以內，才立即加入。`all`：所有可見候選人立即加入（v0.4.0 以前的行為） |
 | `grace_seconds` | 15 | 0–120 s | 消失多久才移除 track |
 | `present_frames` | 2 | 1–20（整數） | 連續幾張有人才算「有人」 |
 | `absent_frames` | 3 | 1–20（整數） | 連續幾張沒人才算「ROI 空」 |
@@ -43,7 +44,7 @@
 | 參數 | 預設 | 範圍 | 說明 |
 |---|---|---|---|
 | `idle_after` | 3 | 0–60 s | 靜默多久從 ACTIVE 轉成 IDLE |
-| `present_timeout` | 15 | 1–600 s | balanced 模式下有人時的逾時 |
+| `present_timeout` | 15 | 1–600 s | balanced 模式：有參與者在畫面中但都不說話時的靜默逾時。注意預設 15 s 比 `base_timeout`（20 s）短，所以有人在場時反而比影像不確定時更快判定離開；需要的話請調高 |
 | `empty_timeout` | 5 | 1–120 s | ROI 空時的逾時 |
 | `base_timeout` | 20 | 1–300 s | 影像不確定時的逾時；audio 模式的基準 |
 | `maybe_away_frac` | 0.5 | 0.05–0.95 | 計時到逾時的這個比例就進入 MAYBE_AWAY |
@@ -55,7 +56,8 @@
 | 參數 | 預設 | 範圍 | 說明 |
 |---|---|---|---|
 | `pose_enabled` | 關 | 開/關 | 啟用 MoveNet MultiPose Lightning 身體與關鍵點偵測 |
-| `pose_conf` | 0.4 | 0.05–1 | 身體偵測信心門檻 |
+| `pose_conf` | 0.4 | 0.05–1 | 身體偵測信心門檻（低於這個值的身體直接丟掉） |
+| `body_min_conf` | 0.4 | 0.05–1 | 只有身體、沒有臉的偵測算「有信心」（可以開始 session、算有人）的門檻；有臉的偵測仍用 `min_conf` |
 | `pose_roi` | (0, 0, 1, 1) | 同 ROI | 身體 ROI（紫色）；身體框中心點要在框內 |
 | `roi_rule` | `either` | `either`／`face`／`body` | 參與者判定規則：臉在臉部 ROI **或**身體在身體 ROI／只看臉／只看身體。姿勢關閉時一律只看臉 |
 | `turned_away_early` | 開 | 開/關 | 所有參與者轉身（側面或背對）**且**正在遠離時，提早進入 MAYBE_AWAY |
