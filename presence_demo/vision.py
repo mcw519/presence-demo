@@ -13,6 +13,7 @@ from typing import Protocol
 import cv2
 import numpy as np
 
+from .intent import frontal_from_landmarks
 from .tracker import Detection
 
 log = logging.getLogger(__name__)
@@ -245,7 +246,7 @@ class VisionPipeline:
                 e = self.embedder.embed(img, raw)
             except Exception:  # noqa: BLE001
                 e = None
-            out.append(Detection(bbox, conf, e))
+            out.append(Detection(bbox, conf, e, frontal=frontal_from_landmarks(raw)))
         t2 = time.perf_counter()
         return out, {"detect": (t1 - t0) * 1000, "embed": (t2 - t1) * 1000}
 

@@ -79,6 +79,20 @@
 | `p_away` | 0.3 | 0.01–0.95 | 群組 P < 這個值並持續 `away_hold_seconds`，判定 AWAY |
 | `away_hold_seconds` | 1.0 | 0–30 s | AWAY 確認時間 |
 
+## 互動意圖（Layer 3）
+
+說明和評估見 [INTENT_MODEL.md](INTENT_MODEL.md)。除了 `intent_model`，其他參數只在 `score` 模式下有作用；`score` 模式不使用 `speech_join`。
+
+| 參數 | 預設 | 範圍 | 說明 |
+|---|---|---|---|
+| `intent_model` | `rules` | `rules`／`score` | rules：待滿 `join_seconds` 就加入；score：意圖分數 |
+| `join_threshold` | 0.6 | 0.05–0.99 | 意圖 ≥ 這個值並持續 `join_seconds` 才加入或開始 session |
+| `drop_threshold` | 0.35 | 0–0.95 | 參與者意圖 < 這個值並持續 `drop_seconds` → 旁觀者（不會降級最後一位） |
+| `drop_seconds` | 8 | 0–120 s | 降級時間 |
+| `intent_tau` | 1.0 | 0.1–20 s | EMA 時間常數 |
+| `intent_weighted_presence` | 關 | 開／關 | hmm 的群組 P 依意圖加權 |
+| `w_facing`／`w_distance`／`w_dwell`／`w_approach`／`w_still`／`w_center` | 0.45／0.1／0.1／0.05／0.15／0.15 | 0–1 | 各線索權重（會自動正規化；沒有的線索會略過） |
+
 ## 姿勢（選用，預設關閉）
 
 | 參數 | 預設 | 範圍 | 說明 |

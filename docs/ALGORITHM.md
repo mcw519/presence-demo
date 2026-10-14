@@ -1,4 +1,4 @@
-# 偵測邏輯詳解（依目前程式碼，v0.6.0）
+# 偵測邏輯詳解（依目前程式碼，v0.7.0）
 
 > 依據 `presence_demo/tracker.py`、`vision.py`、`optimizer.py`、`body.py`、`server.py`、`static/index.html` 的現行程式碼整理。括號內是預設值。座標都是正規化 0–1。
 
@@ -159,6 +159,23 @@ flowchart LR
   - `≤ zone_max`（2.0）→ in；
   - 其他 → far。
   - 真正影響判斷的只有 `far`（`> leave_distance`）：far 的人不能加入，也不算「有人」。所有可見的人都超出距離時，記錄一次 `far` 事件。
+
+### 3b. 互動意圖模式（`intent_model=score`，`_update_intent`）
+
+預設是上面的 rules。score 模式的規則：
+
+- 每個 track 的意圖分數（0–1）= 各線索的加權平均，乘上面向閘門，再用實際 dt 做 EMA。線索有：
+  - 面向：YuNet 五點＋肩膀；
+  - 距離：沒開距離估計就略過；
+  - 停留、走近、沒在路過、ROI 中央；
+  - 可歸屬的說話。
+- **加入**：意圖 ≥ `join_threshold` 持續 `join_seconds`，取代「待滿 join_seconds」和 `speech_join`。
+- **開始 session**：ENDED 時同樣要有人達到加入條件；balanced／audio 模式的說話仍可開始。
+- **降為旁觀者**：意圖 < `drop_threshold` 持續 `drop_seconds`，而且有看到他；最後一位參與者不會被降級。
+- **NEW_GROUP**：新候選人要達到加入條件。
+- **在場（hmm）**：群組 P 只看參與者；還沒有參與者時只看意圖達門檻的 track。
+
+詳細說明見 [INTENT_MODEL.md](INTENT_MODEL.md)。
 
 ## 4. 影像狀態：有人／空／不確定（`_update_presence`）
 

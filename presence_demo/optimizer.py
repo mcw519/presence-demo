@@ -22,6 +22,7 @@ import numpy as np
 
 from .appearance import descriptor, torso_box
 from .body import Body, associate, head_box
+from .intent import frontal_from_landmarks
 from .tracker import Config, Detection, iou
 from .vision import PoseDetector, VisionPipeline
 
@@ -88,7 +89,14 @@ def fuse(faces: list[Detection], bodies: list[Body]) -> list[Detection]:
         if fi is not None:
             f = faces[fi]
             out.append(
-                Detection(f.bbox, f.conf, f.embedding, face_bbox=f.bbox, body=bodies[bi] if bi is not None else None)
+                Detection(
+                    f.bbox,
+                    f.conf,
+                    f.embedding,
+                    face_bbox=f.bbox,
+                    body=bodies[bi] if bi is not None else None,
+                    frontal=f.frontal,
+                )
             )
         else:
             b = bodies[bi]
@@ -227,7 +235,7 @@ class FrameProcessor:
                     ss = float(a @ b / (na * nb)) if na > 0 and nb > 0 and a.shape == b.shape else 0.0
                 t_emb, cb = now, bbox
             new_cache.append(_Cached(cb, emb, t_emb, ss))
-            out.append(Detection(bbox, conf, emb))
+            out.append(Detection(bbox, conf, emb, frontal=frontal_from_landmarks(full)))
         self.cache = new_cache
         tm["embed"] = (time.perf_counter() - t2) * 1000
         tm["pose"] = 0.0

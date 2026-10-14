@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.7.0 — 2026-10-14
+
+- **Layer 3 互動意圖**：新增 `intent_model`（`rules`／`score`，預設 `rules`，行為不變）。
+  - `score`：每個 track 有一個 0–1 的意圖分數，用實際 dt 做 EMA。線索有：
+    - 面向（YuNet 五點的正臉分數＋肩膀方向）；
+    - 對話距離（距離估計關閉時自動略過）；
+    - 停留時間；
+    - 走近／走遠；
+    - 是否在橫向路過；
+    - 是否接近 ROI 中央；
+    - 可歸屬的說話（弱，權重依 priority_mode）。
+  - 分數還會經過一個「面向」注意力閘門。
+  - 加入：意圖 ≥ `join_threshold` 持續 `join_seconds`。session 也要有人達到這個條件才開始。
+  - 降為旁觀者：意圖 < `drop_threshold` 持續 `drop_seconds`；最後一位參與者不會被降級。
+  - NEW_GROUP 的新候選人也要達到加入條件。
+  - hmm 的群組 P 只看參與者；可以選擇依意圖加權（`intent_weighted_presence`）。
+- 新增 `presence_demo/intent.py`。
+- `Detection.frontal`：視覺管線從 YuNet 五點計算正臉分數。
+- state 每個 track 新增 `intent`、`intent_cues`、`role`（`participant`／`bystander`）。
+- 網頁：每個人的意圖條和「參與者／旁觀者」標籤；新增「互動意圖」設定分組。
+- 評估：新增 6 個情境，以及「誤加入」「加入時間」指標；比較版本加入 `kalman+hmm+score`。
+- 新增 [`docs/INTENT_MODEL.md`](docs/INTENT_MODEL.md)。
+
 ## 0.6.0 — 2026-10-14
 
 - **Layer 2 在場機率**：新增 `presence_model`（`rules`／`hmm`，預設 `rules`，行為不變）。

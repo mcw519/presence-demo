@@ -5,6 +5,7 @@ Coordinates are normalized [0,1] (x0, y0, x1, y1).
 
 from __future__ import annotations
 
+import math
 import time
 from collections import deque
 from collections.abc import Callable
@@ -13,6 +14,7 @@ from enum import Enum
 
 import numpy as np
 
+from . import intent as im
 from . import presence_model as pm
 from .body import Body, estimate_distance, orientation, shoulder_width
 from .kalman import KalmanBox, appearance_similarity, hungarian
@@ -96,6 +98,19 @@ class Config:
     p_maybe: float = 0.6  # hmm: group P < this -> MAYBE_AWAY
     p_away: float = 0.3  # hmm: group P < this for away_hold_seconds -> AWAY
     away_hold_seconds: float = 1.0
+    # --- interaction intent (Layer 3) ---
+    intent_model: str = "rules"  # rules (join after join_seconds in ROI) | score (per-track intent score)
+    intent_tau: float = 1.0  # EMA time constant (s) of the intent score
+    join_threshold: float = 0.6  # score: join when intent >= this for join_seconds
+    drop_threshold: float = 0.35  # score: participant -> bystander when intent < this for drop_seconds
+    drop_seconds: float = 8.0
+    intent_weighted_presence: bool = False  # hmm: weight participant P by intent
+    w_facing: float = 0.45
+    w_distance: float = 0.1
+    w_dwell: float = 0.1
+    w_approach: float = 0.05
+    w_still: float = 0.15
+    w_center: float = 0.15
     speech_join: str = "auto"  # auto (vision: off, else single_candidate) | off | single_candidate | all
     present_max_silence: float = 0.0  # vision mode: cap on silence with people present (0 = off)
 
@@ -165,6 +180,9 @@ class Config:
             self.p_away = min(self.p_away, self.p_maybe, self.p_active)
             self.p_active = max(self.p_active, self.p_maybe)
             warnings.append("presence thresholds reordered: p_away <= p_maybe <= p_active")
+        if self.drop_threshold > self.join_threshold:
+            self.drop_threshold = self.join_threshold
+            warnings.append("drop_threshold lowered to join_threshold")
         if self.cos_weak > self.cos_match:
             self.cos_weak = self.cos_match
             warnings.append("cos_weak lowered to cos_match")
@@ -211,6 +229,18 @@ RANGES = {
     "p_maybe": (0.02, 0.98, float),
     "p_away": (0.01, 0.95, float),
     "away_hold_seconds": (0.0, 30.0, float),
+    "intent_model": (("rules", "score"), None, str),
+    "intent_tau": (0.1, 20.0, float),
+    "join_threshold": (0.05, 0.99, float),
+    "drop_threshold": (0.0, 0.95, float),
+    "drop_seconds": (0.0, 120.0, float),
+    "intent_weighted_presence": (False, True, bool),
+    "w_facing": (0.0, 1.0, float),
+    "w_distance": (0.0, 1.0, float),
+    "w_dwell": (0.0, 1.0, float),
+    "w_approach": (0.0, 1.0, float),
+    "w_still": (0.0, 1.0, float),
+    "w_center": (0.0, 1.0, float),
     "speech_join": (("auto", "off", "single_candidate", "all"), None, str),
     "turned_away_early": (False, True, bool),
     "turned_away_seconds": (0.0, 30.0, float),
@@ -249,6 +279,7 @@ class Detection:
     face_bbox: tuple | None = None
     body: Body | None = None
     appearance: np.ndarray | None = None  # torso HSV histogram (kalman mode)
+    frontal: float | None = None  # frontal-face score from YuNet landmarks (1 = facing the camera)
 
     def __post_init__(self):
         if self.face_bbox is None and self.body is None:
@@ -281,6 +312,15 @@ class Track:
     appearance: np.ndarray | None = None
     kf: KalmanBox | None = None
     logodds: float = 0.0  # hmm: log P(present)/P(left)
+    frontal: float | None = None
+    intent: float | None = None  # score: interaction intent in [0, 1] (EMA)
+    intent_cues: dict = field(default_factory=dict)
+    intent_t: float | None = None
+    intent_since: float | None = None  # since when intent >= join_threshold
+    low_intent_since: float | None = None  # participant: since when intent < drop_threshold
+    vx: float = 0.0  # lateral speed (EMA, frame widths / s)
+    size_rate: float = 0.0  # relative size change per second (EMA, + = approaching)
+    _prev: tuple | None = None  # (t, cx, size) of the last detection
 
     @property
     def p(self) -> float:
@@ -415,13 +455,23 @@ class PresenceTracker:
         low = [d for d in dets if d.conf < self._min_conf(d)]
         starters = [d for d in confident if not self._det_far(d)]
 
-        if self.state == State.ENDED and (starters or (self.speaking and self.cfg.priority_mode != "vision")):
-            self._start(now, "person in ROI" if starters else "speech detected")
+        score = self.cfg.intent_model == "score"
+        if self.state == State.ENDED and (
+            (starters and not score) or (self.speaking and self.cfg.priority_mode != "vision")
+        ):
+            self._start(now, "person in ROI" if starters and not score else "speech detected")
 
         if self.cfg.tracker_mode == "kalman":
             self._match_kalman(confident, now)
         else:
             self._match(confident, now)
+        if self.state == State.ENDED and score and any(t.participant for t in self.tracks.values()):
+            # score mode: a session starts only when somebody shows interaction intent (not any passer-by)
+            keep = dict(self.tracks)
+            self._start(now, "intent from #" + ",".join(str(t.id) for t in keep.values() if t.participant))
+            self.tracks = keep
+            for t in keep.values():
+                t.logodds = max(t.logodds, 0.0)
         near = any(t.visible and not t.far and t.visible_kind == "detected" for t in self.tracks.values())
         coasting = any(t.visible and not t.far and t.visible_kind == "predicted" for t in self.tracks.values())
         if confident and not near and not self._far_logged:
@@ -591,28 +641,121 @@ class PresenceTracker:
         self._new_tracks([d for i, d in enumerate(dets) if i not in used_d], now)
         self._join_and_drop(now)
 
+    def _update_intent(self, now: float) -> None:
+        """Layer 3: per-track intent score (EMA over real dt) from facing/distance/dwell/motion/center/speech."""
+        c = self.cfg
+        cands = [t for t in self.tracks.values() if t.visible_kind == "detected" and not t.far]
+        facing_cands = [t for t in cands if t.has_face and (t.frontal is None or t.frontal >= 0.5)]
+        roi_c = c.face_roi
+        for t in self.tracks.values():
+            if t.visible_kind != "detected":
+                # unseen: no new evidence; let the score sag slowly toward 0 (half the normal speed)
+                if t.intent is not None and t.intent_t is not None:
+                    t.intent = im.smooth(t.intent, 0.0, now - t.intent_t, c.intent_tau * 4)
+                t.intent_t = now
+                continue
+            cx = (t.bbox[0] + t.bbox[2]) / 2
+            size = (t.body.bbox[3] - t.body.bbox[1]) if t.body is not None else (t.bbox[2] - t.bbox[0])
+            if t.kf is not None:
+                t.vx = t.kf.velocity[0]
+            if t._prev is not None and now > t._prev[0]:
+                dt = now - t._prev[0]
+                a = 1.0 - math.exp(-dt / 1.0)
+                if t.kf is None:
+                    t.vx += ((cx - t._prev[1]) / dt - t.vx) * a
+                rel = (size - t._prev[2]) / max(t._prev[2], 1e-3) / dt
+                t.size_rate += (rel - t.size_rate) * a
+            t._prev = (now, cx, size)
+            pose = t.facing_score if t.body is not None else None
+            cues = {
+                "facing": im.facing_cue(t.has_face, t.frontal, pose),
+                "distance": im.distance_cue(t.distance, c.zone_max, c.leave_distance) if c.distance_enabled else None,
+                "dwell": min(1.0, (now - (t.in_roi_since or now)) / im.DWELL_FULL),
+                "approach": im.approach_cue(t.size_rate),
+                "still": im.still_cue(t.vx),
+                "center": im.center_cue(cx, (t.bbox[1] + t.bbox[3]) / 2, roi_c),
+            }
+            weights = {
+                "facing": c.w_facing,
+                "distance": c.w_distance,
+                "dwell": c.w_dwell,
+                "approach": c.w_approach,
+                "still": c.w_still,
+                "center": c.w_center,
+            }
+            # speech: weak, only when attribution is plausible (single candidate, or the only one facing us)
+            if self.speaking and (len(cands) == 1 or (len(facing_cands) == 1 and facing_cands[0] is t)):
+                cues["speech"] = 1.0
+                weights["speech"] = im.SPEECH_WEIGHT.get(c.priority_mode, 0.05)
+            raw = im.gate(im.raw_score(cues, weights), cues["facing"])
+            t.intent_cues = {k: (None if v is None else round(v, 2)) for k, v in cues.items()}
+            if t.intent is None:
+                t.intent = raw
+            else:
+                t.intent = im.smooth(t.intent, raw, now - (t.intent_t or now), c.intent_tau)
+            t.intent_t = now
+        for t in self.tracks.values():
+            if t.intent is None:
+                continue
+            if t.intent >= c.join_threshold and t.visible_kind == "detected":
+                t.intent_since = t.intent_since if t.intent_since is not None else now
+            elif t.intent < c.join_threshold:
+                t.intent_since = None
+            if t.participant and t.intent < c.drop_threshold:
+                t.low_intent_since = t.low_intent_since if t.low_intent_since is not None else now
+            else:
+                t.low_intent_since = None
+
+    def _intent_ok(self, t: Track, now: float) -> bool:
+        """score mode: intent >= join_threshold sustained for join_seconds."""
+        return t.intent_since is not None and now - t.intent_since >= self.cfg.join_seconds
+
     def _join_and_drop(self, now):
         c = self.cfg
+        score = c.intent_model == "score"
+        if score:
+            self._update_intent(now)
+            for t in self.tracks.values():
+                # drop only while we can see the person being disengaged; absence is Layer 2's job
+                if (
+                    t.participant
+                    and t.visible_kind == "detected"
+                    and t.low_intent_since is not None
+                    and now - t.low_intent_since >= c.drop_seconds
+                    and len(self._participants()) > 1  # never drop the last one: absence is Layer 2's job
+                ):
+                    t.participant = False
+                    t.low_intent_since = None
+                    t.intent_since = None
+                    reason = "intent %.2f < %.2f for %.0fs" % (t.intent, c.drop_threshold, c.drop_seconds)
+                    self._event(now, "drop", reason, track=t.id)
         cands = [
             t
             for t in self.tracks.values()
             if t.visible and t.visible_kind == "detected" and not t.participant and not t.far
         ]
         for t in list(self.tracks.values()):
-            by_speech = t in cands and self._speech_joinable(t, cands)
+            by_speech = not score and t in cands and self._speech_joinable(t, cands)
+            ready = self._intent_ok(t, now) if score else (now - t.in_roi_since >= c.join_seconds or by_speech)
             if (
                 t.visible
                 and t.visible_kind == "detected"
                 and not t.participant
                 and not t.far
-                and (now - t.in_roi_since >= c.join_seconds or by_speech)
+                and ready
                 and self._newgroup_since is None
             ) and (not self._old_group_missing_rules() or not self._participants()):  # join rule unchanged
                 t.participant = True
                 self._event(
                     now,
                     "join",
-                    "in ROI %.1fs" % (now - t.in_roi_since) if not by_speech else "speaking while in ROI",
+                    (
+                        "intent %.2f >= %.2f for %.1fs" % (t.intent, c.join_threshold, now - t.intent_since)
+                        if score
+                        else "in ROI %.1fs" % (now - t.in_roi_since)
+                        if not by_speech
+                        else "speaking while in ROI"
+                    ),
                     track=t.id,
                 )
             if now - t.last_seen > c.grace_seconds:
@@ -629,6 +772,7 @@ class PresenceTracker:
         """Pose, orientation, size trend and distance for a matched/new track."""
         c = self.cfg
         t.has_face = d.face_bbox is not None
+        t.frontal = d.frontal if t.has_face else None
         t.body = d.body
         if d.body is not None:
             t.facing_score, t.facing = orientation(d.body)
@@ -709,6 +853,7 @@ class PresenceTracker:
             and not t.far
             and now - t.in_roi_since >= c.join_seconds
             and (c.presence_model != "hmm" or t.p >= c.p_active)
+            and (c.intent_model != "score" or self._intent_ok(t, now))
         ]
         if self._old_group_missing() and newcomers:
             if self._newgroup_since is None:
@@ -797,12 +942,18 @@ class PresenceTracker:
         """Group presence from tracks: max P over participants (else over all tracks). With no track at all
         (e.g. a session started by speech) it is unknown (0.5), except in vision mode (nobody seen)."""
         c = self.cfg
-        ts = self._participants() or list(self.tracks.values())
+        score = c.intent_model == "score"
+        now = self._hmm_t
+        ts = self._participants()
+        if not ts:  # nobody joined yet: any track (rules) / tracks that show intent (score)
+            ts = [t for t in self.tracks.values() if not score or (t.intent or 0) >= c.join_threshold]
         unknown = pm.P_MIN if c.priority_mode == "vision" else 0.5
-        p = max((t.p for t in ts), default=unknown)
+        if score and c.intent_weighted_presence:
+            p = max((t.p * min(1.0, (t.intent or 0) / c.join_threshold) for t in ts), default=unknown)
+        else:
+            p = max((t.p for t in ts), default=unknown)
         if self._participants() and p < c.p_away:
             # old group gone but a stable new candidate is here: a NEW_GROUP is forming, don't flap to AWAY
-            now = self._hmm_t
             forming = [
                 t.p
                 for t in self.tracks.values()
@@ -811,6 +962,7 @@ class PresenceTracker:
                 and not t.far
                 and t.p >= c.p_active
                 and now - t.in_roi_since >= c.join_seconds
+                and (not score or self._intent_ok(t, now))
             ]
             p = max([p, *forming])
         return p
@@ -943,6 +1095,9 @@ class PresenceTracker:
                     "visible_kind": t.visible_kind,
                     "vis_conf": round(t.vis_conf, 2),
                     "p": round(t.p, 3) if self.cfg.presence_model == "hmm" else None,
+                    "intent": None if t.intent is None else round(t.intent, 3),
+                    "intent_cues": t.intent_cues if self.cfg.intent_model == "score" else None,
+                    "role": "participant" if t.participant else "bystander",
                     "dwell_seconds": round(now - t.first_seen, 1),
                     "velocity": [round(v, 3) for v in t.kf.velocity] if t.kf is not None else None,
                     "conf": round(t.conf, 2),
@@ -965,6 +1120,7 @@ class PresenceTracker:
             ],
             "away_cue": self._away_cue_since is not None,
             "presence_model": self.cfg.presence_model,
+            "intent_model": self.cfg.intent_model,
             "p_group": None if self.p_group is None or self.state == State.ENDED else round(self.p_group, 3),
             "p_tracks": None if self.p_tracks is None or self.state == State.ENDED else round(self.p_tracks, 3),
             "log": self.log[-30:],

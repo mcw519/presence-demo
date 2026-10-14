@@ -112,7 +112,7 @@ const DEF={face_roi:[0.2,0.05,0.8,0.95],show_face_roi:true,pose_enabled:false,po
  turned_away_early:true,turned_away_seconds:2,recede_ratio:0.1,distance_enabled:false,camera_hfov:60,face_width_m:0.15,shoulder_width_m:0.38,
  distance_calib:1,distance_ema:0.3,zone_min:0.4,zone_max:2,leave_distance:2.5,min_conf:0.6,cos_match:0.4,cos_weak:0.2,iou_match:0.3,embed_ema:0.15,join_seconds:2,grace_seconds:15,
  present_frames:2,absent_frames:3,idle_after:3,present_timeout:15,empty_timeout:5,base_timeout:20,maybe_away_frac:0.5,end_after_away:5,new_group_seconds:3,
- priority_mode:'vision',speech_join:'auto',presence_model:'rules',leave_halflife:0.6,detect_gain:4,lowconf_factor:0.15,p_active:0.8,p_maybe:0.6,p_away:0.3,away_hold_seconds:1,tracker_mode:'legacy',coast_seconds:2,coast_present_conf:0.4,gate_mahalanobis:9.21,appearance_min_sim:0.6,appearance_ema:0.2,body_min_conf:0.4,present_max_silence:0,motion_gate:true,motion_threshold:0.015,force_detect_seconds:3,embed_throttle:true,embed_interval:3,embed_move_thresh:0.15,adaptive_fps:true,fps_low:0.5,fps_high:2,roi_crop:true,crop_margin:0.1,max_width:320,fps:1,vad_k:2.5,vad_min:0.005,vad_hang:400};
+ priority_mode:'vision',speech_join:'auto',presence_model:'rules',intent_model:'rules',intent_tau:1,join_threshold:0.6,drop_threshold:0.35,drop_seconds:8,intent_weighted_presence:false,w_facing:0.45,w_distance:0.1,w_dwell:0.1,w_approach:0.05,w_still:0.15,w_center:0.15,leave_halflife:0.6,detect_gain:4,lowconf_factor:0.15,p_active:0.8,p_maybe:0.6,p_away:0.3,away_hold_seconds:1,tracker_mode:'legacy',coast_seconds:2,coast_present_conf:0.4,gate_mahalanobis:9.21,appearance_min_sim:0.6,appearance_ema:0.2,body_min_conf:0.4,present_max_silence:0,motion_gate:true,motion_threshold:0.015,force_detect_seconds:3,embed_throttle:true,embed_interval:3,embed_move_thresh:0.15,adaptive_fps:true,fps_low:0.5,fps_high:2,roi_crop:true,crop_margin:0.1,max_width:320,fps:1,vad_k:2.5,vad_min:0.005,vad_hang:400};
 const CLIENT=['fps','vad_k','vad_min','vad_hang','show_face_roi','show_pose_roi'];
 const BOXES=['face_roi','pose_roi'];
 const S=(l,h,min,max,step,u='')=>({l,h,min,max,step,u});
@@ -141,6 +141,19 @@ const GROUPS=[
    end_after_away:S('AWAY 轉 ENDED','AWAY 持續多久後結束對話並清除 embedding。',0,120,1,'s'),
    new_group_seconds:S('換組確認時間','舊參與者都不見、新的一群人出現多久後觸發 NEW_GROUP。',0,60,0.5,'s')}]];
 const B=(l,h)=>({l,h,bool:true});
+GROUPS.push(['互動意圖',{intent_model:{l:'加入規則',h:'規則：在 ROI 待滿「加入時間」就成為參與者（目前預設）。意圖分數：每個人有 0–1 的互動意圖（是否面向機器人、距離、停留、是否走近、是否只是路過、是否在畫面中央、說話），分數高於門檻並持續「加入時間」才加入；路人、旁觀者不會加入，也不會讓對話一直持續。',
+   opts:{rules:'規則',score:'意圖分數'}},
+   join_threshold:S('加入門檻','意圖分數模式：意圖高於這個值並持續「加入時間」，才成為參與者（也才會開始新的對話）。',0.05,0.99,0.01),
+   drop_threshold:S('降為旁觀者門檻','意圖分數模式：參與者的意圖低於這個值並持續「降級時間」，變成旁觀者（最後一位參與者不會被降級，離開與否由在場機率決定）。',0,0.95,0.01),
+   drop_seconds:S('降級時間','意圖低於門檻要持續多久才降為旁觀者。',0,120,1,'s'),
+   intent_tau:S('平滑時間','意圖分數的平滑時間常數，越大越穩定但反應越慢。',0.1,20,0.1,'s'),
+   intent_weighted_presence:B('在場機率依意圖加權','開啟後（機率模式），參與者的在場機率乘上意圖比例：意圖低的參與者比較撐不住對話。'),
+   w_facing:S('權重：面向','臉是否正對（YuNet 五點）＋肩膀方向（姿勢）。面向也會整體縮放分數：背對的人很難得到高分。',0,1,0.05),
+   w_distance:S('權重：距離','在對話距離內＝1，到「離開距離」降為 0。距離估計關閉時自動忽略。',0,1,0.05),
+   w_dwell:S('權重：停留','在 ROI 待越久越高（4 s 滿分）。',0,1,0.05),
+   w_approach:S('權重：走近','變大（走近）加分、變小（走遠）扣分。',0,1,0.05),
+   w_still:S('權重：沒在路過','橫向移動越快分數越低，用來排除走過去的路人。',0,1,0.05),
+   w_center:S('權重：位置','越接近 ROI 中央越高。',0,1,0.05)}]);
 GROUPS.push(['在場機率',{presence_model:{l:'在場判斷模型',h:'規則：用連續幀計數（有人／沒人）加逾時判斷（目前預設）。機率：每個人有一個「在場機率」，看到就往上、沒看到就往下，最後用整群的機率加門檻決定狀態，比較不怕偵測閃爍和短暫遮擋。搭配 Kalman 追蹤效果最好。',
    opts:{rules:'規則',hmm:'機率'}},
    leave_halflife:S('離開半衰期','機率模式：完全沒看到人時，「在場」的勝算每隔這麼多秒減半。越小越快判定離開。預設 0.6 s 約等於 ROI 空 5 秒判定 AWAY。',0.1,30,0.1,'s'),
@@ -284,8 +297,8 @@ function render(s){
  $('b2m').style.left=cfg.maybe_away_frac*100+'%';
  const a=s.state==='AWAY'?s.in_state:0;$('b3').style.width=pct(a,cfg.end_after_away);$('b3t').textContent=s.state==='AWAY'?`${a.toFixed(1)} / ${cfg.end_after_away}s`:'—';
  $('people').innerHTML=s.tracks.length?s.tracks.map(t=>`<div class="person"><b style="color:${col(t)}">#${t.id}</b>
-  <span class="badge">${t.participant?'★ 參與者':'候選'}</span><span class="sp">${t.visible_kind==='predicted'?`預測中 vis ${(t.vis_conf??0).toFixed(2)}`:t.visible?'可見':`消失 ${t.missing}s`}${t.dwell_seconds!=null?` · 停留 ${t.dwell_seconds}s`:''}${t.velocity?` · 速度 ${Math.hypot(...t.velocity).toFixed(2)}/s`:''}${t.has_face===false?' · 無臉(身體)':''}${t.facing?' · '+({facing:'正面',side:'側身',away:'背對'}[t.facing]):''}${t.distance!=null?` · ${t.distance} m ${TR[t.trend]||''}`:''}</span>
-  <small>相似 ${t.similarity.toFixed(2)} · conf ${t.conf.toFixed(2)}</small>${t.p!=null?`<div class="track" title="此人在場機率 P" style="margin-top:4px;height:6px"><div class="fill" style="width:${(t.p*100).toFixed(0)}%;background:${t.p>=cfg.p_active?'var(--ok)':t.p>=cfg.p_away?'var(--warn)':'var(--bad)'}"></div></div><small>P ${t.p.toFixed(2)}</small>`:''}</div>`).join(''):'<div class="empty">目前沒有追蹤對象</div>';
+  <span class="badge">${t.participant?'★ 參與者':s.intent_model==='score'?'旁觀者':'候選'}</span><span class="sp">${t.visible_kind==='predicted'?`預測中 vis ${(t.vis_conf??0).toFixed(2)}`:t.visible?'可見':`消失 ${t.missing}s`}${t.dwell_seconds!=null?` · 停留 ${t.dwell_seconds}s`:''}${t.velocity?` · 速度 ${Math.hypot(...t.velocity).toFixed(2)}/s`:''}${t.has_face===false?' · 無臉(身體)':''}${t.facing?' · '+({facing:'正面',side:'側身',away:'背對'}[t.facing]):''}${t.distance!=null?` · ${t.distance} m ${TR[t.trend]||''}`:''}</span>
+  <small>相似 ${t.similarity.toFixed(2)} · conf ${t.conf.toFixed(2)}</small>${t.p!=null?`<div class="track" title="此人在場機率 P" style="margin-top:4px;height:6px"><div class="fill" style="width:${(t.p*100).toFixed(0)}%;background:${t.p>=cfg.p_active?'var(--ok)':t.p>=cfg.p_away?'var(--warn)':'var(--bad)'}"></div></div><small>P ${t.p.toFixed(2)}</small>`:''}${t.intent!=null?`<div class="track" title="互動意圖（0–1）。白線＝加入門檻" style="margin-top:4px;height:6px;position:relative"><div class="fill" style="width:${(t.intent*100).toFixed(0)}%;background:${t.intent>=cfg.join_threshold?'var(--ok)':t.intent>=cfg.drop_threshold?'var(--idle)':'var(--mut)'}"></div><div class="mark" style="left:${cfg.join_threshold*100}%"></div></div><small title="${t.intent_cues?Object.entries(t.intent_cues).map(([k,v])=>k+' '+(v==null?'—':v)).join(' · '):''}">意圖 ${t.intent.toFixed(2)}</small>`:''}</div>`).join(''):'<div class="empty">目前沒有追蹤對象</div>';
  $('log').innerHTML=[...s.log].reverse().map(e=>`<div><span style="color:var(--mut)">${e.t.toFixed(1)}</span> <span class="ev ${e.event}">${e.event}</span> ${e.frm?e.frm+'→'+e.to:''} ${e.track?'#'+e.track:''} <span style="color:var(--mut)">${e.reason}</span></div>`).join('');
  draw();
 }
