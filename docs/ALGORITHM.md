@@ -1,4 +1,4 @@
-# 偵測邏輯詳解（依目前程式碼，v0.4.1）
+# 偵測邏輯詳解（依目前程式碼，v0.5.0）
 
 > 依據 `presence_demo/tracker.py`、`vision.py`、`optimizer.py`、`body.py`、`server.py`、`static/index.html` 的現行程式碼整理。括號內是預設值。座標都是正規化 0–1。
 
@@ -105,6 +105,36 @@ flowchart LR
   - 有身體時用身體框高度，否則用臉寬，保留最近 12 筆。
   - 和至少 1.5 s 前最近的一筆比：比值 `< 1−recede_ratio`（0.9）是 receding，`> 1.1` 是 approaching，其他是 steady。
 - **移除**：`now − last_seen > grace_seconds`（15 s）的 track 會被刪除（`track_drop`）。參與者也一樣。
+
+### 2b. kalman 追蹤模式（`tracker_mode=kalman`，`_match_kalman`）
+
+預設是上面的 legacy。kalman 模式的完整說明和評估見 [TRACKING.md](TRACKING.md)。
+
+1. **預測**：每個 track 的 Kalman 濾波器（狀態是 cx、cy、w、h 和它們的速度）用實際的 `dt` 預測到現在。
+2. **門檻篩選**（任一條件成立就不配對）：
+   - Mahalanobis² > `gate_mahalanobis`（9.21），而且 IoU < `iou_match`，臉部 cosine 也沒有達到 `cos_match`；
+   - 兩邊都有臉，但 cosine < `cos_weak`；
+   - 沒有臉，而且衣服相似度 < `appearance_min_sim`（0.6）。
+3. **分數**：有資料的項目做加權平均：
+   - IoU（預測框或身體框）×1；
+   - 移動一致性 `exp(−m²/gate)` ×1；
+   - 臉 `min(1, cos/cos_match)` ×2；
+   - 衣服 `(sim−0.5)/0.5` ×1.5。
+   
+   分數 ≥ 0.3 才可以配對；代價 = 1 − 分數。
+4. **匈牙利演算法**：求全域最佳配對。配對成功時用偵測結果更新 Kalman，再套用和 legacy 相同的更新（bbox、身體、embedding EMA、距離），衣服模板用 `appearance_ema`（0.2）更新。
+5. **預測延續**：沒配對到而且消失 ≤ `coast_seconds`（2 s）的 track：
+   - bbox 改成預測框，`visible_kind=predicted`，`vis_conf = 1 − 消失秒數／coast_seconds`；
+   - `visible = vis_conf ≥ coast_present_conf`（0.4）。
+   
+   超過 `coast_seconds` 就是 `none`。
+6. **對其他規則的影響**：
+   - 預測中而且 visible 的 track 會讓「有人」繼續成立。它不會增加 `present_streak`，但會延後 ROI 空的判定，`first_empty_at` 從預測結束後的第一張空幀開始算。
+   - 預測中的 track 不能加入成參與者，也不算 NEW_GROUP 的 newcomer。
+   - 在「舊群組是否消失」的判斷中，它算是可見。
+7. **衣服描述子**：只在 kalman 模式時，由 `FrameProcessor` 在記憶體中計算。軀幹區域優先用肩膀和髖部的關鍵點，其次用身體框，最後用臉下方的區域。
+
+所有模式的 snapshot 都多了 `visible_kind`、`vis_conf`、`dwell_seconds`、`velocity`（legacy 模式下 `velocity` 是 null）。
 
 ## 3. 參與者規則
 
@@ -282,6 +312,8 @@ _evaluate: ENDED? 跳過
 - snapshot 新增 `face_roi`、`pose_roi`（保留 `roi` 當作 `face_roi` 的別名）。
 
 ## 目前已知的限制
+
+（下列是 legacy 預設模式下的限制；kalman 模式另外有約 1 s 的離開判定延遲，見 TRACKING.md。）
 
 1. **`present_timeout`（15 s）比 `base_timeout`（20 s）短**：這是使用者選定的預設值。在 balanced 模式下，有人在場時反而比影像不確定時更快判定離開，和 audio 模式（有人時 ×1.5）方向相反。需要時請調高。
 2. **新 session 一開始的 path 是 empty**：`present_frames`=2 要第二張幀才會變成 present。

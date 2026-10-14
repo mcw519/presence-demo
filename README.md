@@ -8,6 +8,7 @@
 
 ## 功能
 
+- **追蹤模式**：`legacy`（預設）或 `kalman`（Kalman 預測 + 匈牙利配對 + 衣服顏色，短暫遮擋時延續追蹤），見 [TRACKING](docs/TRACKING.md)。
 - **群組追蹤**：每個人一個 track（IoU + cosine 比對、EMA 更新 embedding），任何一位參與者還在就不算離開；被擋住有寬限期；換成一群陌生人時觸發 **NEW_GROUP**。
 - **狀態機**：`ACTIVE → IDLE → MAYBE_AWAY → AWAY → ENDED`，含防閃爍遲滯，每次轉換都記錄原因。
 - **判斷優先模式**：`vision`（預設）／`balanced`／`audio`，可另設 `present_max_silence`。
@@ -45,6 +46,7 @@ uv run presence-demo --host 0.0.0.0 --port 8000
 uv run ruff check . && uv run ruff format --check .
 uv run pytest -q
 uv run python scripts/benchmark.py        # 60 秒模擬情境，比較各最佳化、姿勢、距離的 CPU 成本
+uv run python scripts/eval_tracking.py    # 合成追蹤情境，比較 legacy 與 kalman
 ```
 
 ## 專案結構
@@ -54,11 +56,13 @@ presence_demo/
   tracker.py     Config、群組追蹤、狀態機（純邏輯）
   vision.py      YuNet / SFace / Haar 備援、MoveNet 姿勢偵測、記憶體內解碼
   body.py        身體朝向、臉與身體配對、距離估計與校正
+  kalman.py      Kalman 濾波、匈牙利演算法、外觀相似度
+  appearance.py  軀幹 HSV 直方圖（衣服外觀）
   optimizer.py   移動閘門、embedding 節流、ROI 裁切、自適應 fps
   stats.py       資源與延遲統計
   server.py      FastAPI + WebSocket、權杖中介層
   static/index.html  網頁 demo（設定、監控、ROI、骨架疊圖）
-scripts/benchmark.py
+scripts/benchmark.py, scripts/eval_tracking.py
 tests/           單元、WebSocket、隱私、姿勢／距離測試
 docs/            文件
 ```
@@ -69,6 +73,7 @@ docs/            文件
 - [docs/ALGORITHM.md](docs/ALGORITHM.md)：依程式碼整理的完整偵測邏輯（條件、預設值、已知限制）
 - [docs/CONFIGURATION.md](docs/CONFIGURATION.md)：所有參數、範圍、預設值、預設組合
 - [docs/TUNING.md](docs/TUNING.md)：調參方法
+- [docs/TRACKING.md](docs/TRACKING.md)：追蹤模式比較（legacy 與 kalman）
 - [docs/PERFORMANCE.md](docs/PERFORMANCE.md)：效能最佳化與基準測試
 - [docs/LICENSES.md](docs/LICENSES.md)：模型、套件、測試資料的授權
 - [CONTRIBUTING.md](CONTRIBUTING.md)、[CHANGELOG.md](CHANGELOG.md)

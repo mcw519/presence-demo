@@ -51,6 +51,19 @@
 | `end_after_away` | 5 | 0–120 s | AWAY 持續多久後 ENDED |
 | `new_group_seconds` | 3 | 0–60 s | 換組確認時間 |
 
+## 追蹤（Layer 4）
+
+比較結果和建議見 [TRACKING.md](TRACKING.md)。除了 `tracker_mode`，其他參數只在 `kalman` 模式下有作用。
+
+| 參數 | 預設 | 範圍 | 說明 |
+|---|---|---|---|
+| `tracker_mode` | `legacy` | `legacy`／`kalman` | `legacy`：IoU + 臉部 cosine，逐一貪婪配對（v0.4 行為）。`kalman`：Kalman 等速預測、門檻篩選、IoU + 移動 + 臉 + 衣服顏色的綜合分數、匈牙利演算法配對、短暫遮擋時沿預測位置延續 |
+| `coast_seconds` | 2 | 0–10 s | 沒偵測到時沿預測位置延續多久（`visible_kind=predicted`），之後變成不可見；寬限期照常計算 |
+| `coast_present_conf` | 0.4 | 0–1 | 預測中的 track，`vis_conf`（1 → 0 線性下降）≥ 這個值時仍然算有人，也會延後 ROI 空的判定。預設約延續 1.2 s；調高可以更快判定離開 |
+| `gate_mahalanobis` | 9.21 | 1–100 | 偵測中心和預測中心的 Mahalanobis² 門檻（2 自由度 99%）；超過而且 IoU 也很低時不配對，除非臉部相似度 ≥ `cos_match` |
+| `appearance_min_sim` | 0.6 | 0–1 | 看不到臉時，衣服顏色（軀幹 HSV 直方圖，Bhattacharyya 係數）低於這個值就視為不同的人 |
+| `appearance_ema` | 0.2 | 0–1 | 衣服顏色模板的更新率 |
+
 ## 姿勢（選用，預設關閉）
 
 | 參數 | 預設 | 範圍 | 說明 |

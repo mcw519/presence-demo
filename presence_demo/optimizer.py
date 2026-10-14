@@ -20,6 +20,7 @@ from dataclasses import dataclass, replace
 import cv2
 import numpy as np
 
+from .appearance import descriptor, torso_box
 from .body import Body, associate, head_box
 from .tracker import Config, Detection, iou
 from .vision import PoseDetector, VisionPipeline
@@ -235,6 +236,11 @@ class FrameProcessor:
             bodies = self._detect_bodies(img, cfg)
             tm["pose"] = (time.perf_counter() - t3) * 1000
             out = fuse(out, bodies)
+        if cfg.tracker_mode == "kalman":  # torso appearance for re-identification (in memory only)
+            t4 = time.perf_counter()
+            for d in out:
+                d.appearance = descriptor(img, torso_box(d.face_bbox, d.body))
+            tm["appearance"] = (time.perf_counter() - t4) * 1000
         self.last_dets = [replace(d) for d in out]
         self.counts["embed_computed"] += computed
         self.counts["embed_reused"] += reused

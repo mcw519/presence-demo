@@ -14,6 +14,7 @@ from enum import Enum
 import numpy as np
 
 from .body import Body, estimate_distance, orientation, shoulder_width
+from .kalman import KalmanBox, appearance_similarity, hungarian
 
 
 class State(str, Enum):
@@ -78,6 +79,13 @@ class Config:
     zone_min: float = 0.4  # conversation zone, meters
     zone_max: float = 2.0
     leave_distance: float = 2.5  # beyond this a visible person counts as left
+    # --- tracking (Layer 4) ---
+    tracker_mode: str = "legacy"  # legacy (greedy IoU+cosine) | kalman (Kalman + Hungarian + appearance)
+    coast_seconds: float = 2.0  # kalman: unmatched tracks coast on the prediction this long
+    coast_present_conf: float = 0.4  # kalman: a coasting track counts as present while vis_conf >= this
+    gate_mahalanobis: float = 9.21  # kalman: chi-square gate on the predicted center (2 dof, 99%)
+    appearance_min_sim: float = 0.6  # kalman: torso-histogram similarity below this => different person (no face)
+    appearance_ema: float = 0.2  # kalman: appearance template update rate
     speech_join: str = "auto"  # auto (vision: off, else single_candidate) | off | single_candidate | all
     present_max_silence: float = 0.0  # vision mode: cap on silence with people present (0 = off)
 
@@ -175,6 +183,12 @@ RANGES = {
     "pose_enabled": (False, True, bool),
     "pose_conf": (0.05, 1.0, float),
     "body_min_conf": (0.05, 1.0, float),
+    "tracker_mode": (("legacy", "kalman"), None, str),
+    "coast_seconds": (0.0, 10.0, float),
+    "coast_present_conf": (0.0, 1.0, float),
+    "gate_mahalanobis": (1.0, 100.0, float),
+    "appearance_min_sim": (0.0, 1.0, float),
+    "appearance_ema": (0.0, 1.0, float),
     "speech_join": (("auto", "off", "single_candidate", "all"), None, str),
     "turned_away_early": (False, True, bool),
     "turned_away_seconds": (0.0, 30.0, float),
@@ -212,6 +226,7 @@ class Detection:
     embedding: np.ndarray | None = None
     face_bbox: tuple | None = None
     body: Body | None = None
+    appearance: np.ndarray | None = None  # torso HSV histogram (kalman mode)
 
     def __post_init__(self):
         if self.face_bbox is None and self.body is None:
@@ -239,6 +254,10 @@ class Track:
     trend: str = "steady"  # approaching | receding | steady
     far: bool = False  # beyond leave_distance
     size_hist: deque = field(default_factory=lambda: deque(maxlen=12))
+    visible_kind: str = "detected"  # detected | predicted | none
+    vis_conf: float = 1.0  # 1 when detected; decays while coasting (kalman)
+    appearance: np.ndarray | None = None
+    kf: KalmanBox | None = None
 
 
 def _norm(v):
@@ -368,13 +387,17 @@ class PresenceTracker:
         if self.state == State.ENDED and (starters or (self.speaking and self.cfg.priority_mode != "vision")):
             self._start(now, "person in ROI" if starters else "speech detected")
 
-        self._match(confident, now)
-        near = any(t.visible and not t.far for t in self.tracks.values())
+        if self.cfg.tracker_mode == "kalman":
+            self._match_kalman(confident, now)
+        else:
+            self._match(confident, now)
+        near = any(t.visible and not t.far and t.visible_kind == "detected" for t in self.tracks.values())
+        coasting = any(t.visible and not t.far and t.visible_kind == "predicted" for t in self.tracks.values())
         if confident and not near and not self._far_logged:
             self._event(now, "far", f"visible people beyond leave_distance {self.cfg.leave_distance:.1f} m")
         self._far_logged = bool(confident) and not near
         self._frame_confident = bool(confident)
-        self._update_presence(now, near, bool(low))
+        self._update_presence(now, near, bool(low), coasting)
         self._update_away_cue(now)
         if self.state != State.ENDED:
             self._check_new_group(now)
@@ -420,7 +443,7 @@ class PresenceTracker:
     def _match(self, dets, now):
         c = self.cfg
         for t in self.tracks.values():
-            t.visible = False
+            t.visible, t.visible_kind, t.vis_conf = False, "none", 0.0
         pairs = []
         for di, d in enumerate(dets):
             for t in self.tracks.values():
@@ -441,30 +464,111 @@ class PresenceTracker:
                 continue
             used_d.add(di)
             used_t.add(tid)
-            d, t = dets[di], self.tracks[tid]
-            if not t.participant and now - t.last_seen > 2.5:  # gap -> restart join timer
-                t.in_roi_since = now
-            t.bbox, t.conf, t.last_seen, t.visible, t.similarity = d.bbox, d.conf, now, True, cs
-            self._update_body(t, d, now)
-            if d.embedding is not None:
-                t.embedding = (
-                    d.embedding
-                    if t.embedding is None
-                    else _norm((1 - c.embed_ema) * t.embedding + c.embed_ema * d.embedding)
-                )
-        for di, d in enumerate(dets):
-            if di in used_d:
-                continue
-            t = Track(self._next_id, d.bbox, d.embedding, d.conf, now, now, now)
+            self._apply_match(self.tracks[tid], dets[di], now, cs)
+        self._new_tracks([d for di, d in enumerate(dets) if di not in used_d], now)
+        self._join_and_drop(now)
+
+    def _apply_match(self, t: Track, d: Detection, now: float, cs: float) -> None:
+        c = self.cfg
+        if not t.participant and now - t.last_seen > 2.5:  # gap -> restart join timer
+            t.in_roi_since = now
+        t.bbox, t.conf, t.last_seen, t.visible, t.similarity = d.bbox, d.conf, now, True, cs
+        t.visible_kind, t.vis_conf = "detected", 1.0
+        self._update_body(t, d, now)
+        if d.embedding is not None:
+            t.embedding = (
+                d.embedding
+                if t.embedding is None
+                else _norm((1 - c.embed_ema) * t.embedding + c.embed_ema * d.embedding)
+            )
+        if d.appearance is not None:
+            if t.appearance is None:
+                t.appearance = d.appearance
+            else:
+                a = (1 - c.appearance_ema) * t.appearance + c.appearance_ema * d.appearance
+                t.appearance = a / max(float(a.sum()), 1e-9)
+
+    def _new_tracks(self, dets, now) -> None:
+        for d in dets:
+            t = Track(self._next_id, d.bbox, d.embedding, d.conf, now, now, now, appearance=d.appearance)
+            if self.cfg.tracker_mode == "kalman":
+                t.kf = KalmanBox(d.bbox, now)
             self._update_body(t, d, now)
             self._next_id += 1
             self.tracks[t.id] = t
             self._event(now, "track_new", "new face in ROI", track=t.id)
-        cands = [t for t in self.tracks.values() if t.visible and not t.participant and not t.far]
+
+    def _match_kalman(self, dets, now):
+        """Kalman predict -> gated cost (IoU, motion, face cosine, torso appearance) -> Hungarian -> coast."""
+        c = self.cfg
+        tracks = list(self.tracks.values())
+        for t in tracks:
+            if t.kf is None:
+                t.kf = KalmanBox(t.bbox, t.last_seen)
+            t.kf.predict_to(now)
+        pred = [t.kf.bbox() for t in tracks]
+        BIG = 1e6
+        cost = np.full((len(dets), len(tracks)), BIG)
+        cos_of = {}
+        for i, d in enumerate(dets):
+            for j, t in enumerate(tracks):
+                ov = iou(d.bbox, pred[j])
+                if d.body is not None and t.body is not None:
+                    ov = max(ov, iou(d.body.bbox, t.body.bbox))
+                m2 = t.kf.mahalanobis(d.bbox)
+                cs = cosine(d.embedding, t.embedding) if d.embedding is not None and t.embedding is not None else None
+                ap = appearance_similarity(d.appearance, t.appearance)
+                strong_face = cs is not None and cs >= c.cos_match
+                if m2 > c.gate_mahalanobis and ov < c.iou_match and not strong_face:
+                    continue  # motion gate (a confident face match may re-identify anywhere)
+                if cs is not None and cs < c.cos_weak:
+                    continue  # faces say: different people
+                if cs is None and ap is not None and ap < c.appearance_min_sim:
+                    continue  # no face: clothing says different people
+                comps = [(1.0, ov), (1.0, float(np.exp(-m2 / c.gate_mahalanobis)))]
+                if cs is not None:
+                    comps.append((2.0, min(1.0, max(0.0, cs) / max(c.cos_match, 1e-6))))
+                if ap is not None:
+                    comps.append((1.5, min(1.0, max(0.0, (ap - 0.5) / 0.5))))
+                score = sum(w * v for w, v in comps) / sum(w for w, _ in comps)
+                if score >= 0.3:
+                    cost[i, j] = 1.0 - score
+                    cos_of[i, j] = 0.0 if cs is None else cs
+        used_d, used_t = set(), set()
+        for i, j in hungarian(cost) if len(dets) and len(tracks) else []:
+            if cost[i, j] >= BIG:
+                continue
+            used_d.add(i)
+            used_t.add(j)
+            t = tracks[j]
+            t.kf.update(dets[i].bbox)
+            self._apply_match(t, dets[i], now, cos_of[i, j])
+        for j, t in enumerate(tracks):
+            if j in used_t:
+                continue
+            missing = now - t.last_seen
+            if c.coast_seconds > 0 and missing <= c.coast_seconds:
+                t.bbox = pred[j]
+                t.visible_kind = "predicted"
+                t.vis_conf = max(0.0, 1.0 - missing / c.coast_seconds)
+                t.visible = t.vis_conf >= c.coast_present_conf
+            else:
+                t.visible, t.visible_kind, t.vis_conf = False, "none", 0.0
+        self._new_tracks([d for i, d in enumerate(dets) if i not in used_d], now)
+        self._join_and_drop(now)
+
+    def _join_and_drop(self, now):
+        c = self.cfg
+        cands = [
+            t
+            for t in self.tracks.values()
+            if t.visible and t.visible_kind == "detected" and not t.participant and not t.far
+        ]
         for t in list(self.tracks.values()):
             by_speech = t in cands and self._speech_joinable(t, cands)
             if (
                 t.visible
+                and t.visible_kind == "detected"
                 and not t.participant
                 and not t.far
                 and (now - t.in_roi_since >= c.join_seconds or by_speech)
@@ -559,7 +663,11 @@ class PresenceTracker:
         newcomers = [
             t
             for t in self.tracks.values()
-            if not t.participant and t.visible and not t.far and now - t.in_roi_since >= c.join_seconds
+            if not t.participant
+            and t.visible
+            and t.visible_kind == "detected"
+            and not t.far
+            and now - t.in_roi_since >= c.join_seconds
         ]
         if self._old_group_missing() and newcomers:
             if self._newgroup_since is None:
@@ -576,7 +684,9 @@ class PresenceTracker:
         else:
             self._newgroup_since = None
 
-    def _update_presence(self, now, confident: bool, low: bool):
+    def _update_presence(self, now, confident: bool, low: bool, coasting: bool = False):
+        """``coasting``: a predicted (kalman) track still above ``coast_present_conf``. It keeps presence
+        and holds off the 'empty' decision; the empty clock starts when coasting ends."""
         c = self.cfg
         if not (low and not confident):
             self._low_streak = 0
@@ -593,7 +703,7 @@ class PresenceTracker:
                 self._event(now, "uncertain", "%d low-confidence frames -> audio-only timeout" % self._low_streak)
                 self.present, self.empty, self.empty_since = False, False, None
         else:
-            if self._empty_streak == 0:
+            if self._first_empty_at is None and not coasting:
                 self._first_empty_at = now
             self._empty_streak += 1
             self._present_streak = 0
@@ -601,7 +711,7 @@ class PresenceTracker:
             if not self.present:
                 self._event(now, "presence", "%d confident frames" % self._present_streak)
             self.present, self.empty, self.empty_since = True, False, None
-        if self._empty_streak >= c.absent_frames:
+        if self._empty_streak >= c.absent_frames and not coasting:
             if not self.empty:
                 self._event(now, "empty", "%d consecutive empty frames" % self._empty_streak)
                 self.empty_since = self._first_empty_at if self._first_empty_at is not None else now
@@ -698,6 +808,10 @@ class PresenceTracker:
                     "participant": t.participant,
                     "visible": t.visible,
                     "similarity": round(t.similarity, 3),
+                    "visible_kind": t.visible_kind,
+                    "vis_conf": round(t.vis_conf, 2),
+                    "dwell_seconds": round(now - t.first_seen, 1),
+                    "velocity": [round(v, 3) for v in t.kf.velocity] if t.kf is not None else None,
                     "conf": round(t.conf, 2),
                     "missing": round(now - t.last_seen, 1),
                     "has_face": t.has_face,

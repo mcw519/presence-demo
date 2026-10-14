@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.0 — 2026-10-14
+
+- **Layer 4 追蹤**：新增 `tracker_mode`（`legacy`／`kalman`，預設 `legacy`，行為不變）。
+  - `kalman`：每個 track 一個等速 Kalman 濾波器（用實際時間戳記計算 dt），Mahalanobis 門檻篩選，綜合 IoU、移動、臉部 cosine 和衣服顏色的分數，用匈牙利演算法配對。
+  - 短暫遮擋時沿預測位置延續（`coast_seconds`、`coast_present_conf`）。
+  - 新增參數：`gate_mahalanobis`、`appearance_min_sim`、`appearance_ema`。
+- 新增 `presence_demo/kalman.py`（Kalman、匈牙利演算法、Bhattacharyya 相似度，純 numpy，不需要 SciPy）和 `presence_demo/appearance.py`（軀幹 HSV 直方圖，不需要模型權重，只在記憶體中計算）。
+- snapshot 每個 track 新增 `visible_kind`、`vis_conf`、`dwell_seconds`、`velocity`。
+- 網頁：新增「追蹤」設定分組；預測中的框用虛線畫，並顯示可見信心、停留時間和速度。
+- 新增 `scripts/eval_tracking.py`（在記憶體中產生合成情境，比較兩種模式）和 [`docs/TRACKING.md`](docs/TRACKING.md)。
+- 新增 `tests/test_kalman.py`；更新 ALGORITHM、CONFIGURATION。
+
 ## 0.4.1 — 2026-10-14
 
 修正 [`docs/ALGORITHM.md`](docs/ALGORITHM.md) 稽核中發現的問題（每項都有測試，見 `tests/test_fixes_041.py`）：
