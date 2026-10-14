@@ -120,6 +120,37 @@ uv run python scripts/benchmark.py            # --repeat 3 --fps 1
 - **空畫面和靜止畫面**：大多數幀在 1 ms 內完成（移動閘門），只有強制完整偵測的幀比較慢。
 - **WebSocket 端到端**：p50 約 17–18 ms（無姿勢）、約 25 ms（有姿勢），1 fps 和 2 fps 差不多。比管線本身多約 3–4 ms，是 base64、JSON 和事件迴圈的開銷。
 
+## 嵌入後端比較（v0.8.0）
+
+指令：`uv run python scripts/benchmark.py --latency`。這部分的設定是 kalman+hmm+score、姿勢關閉，並關閉移動閘門和 embedding 節流，所以每張都計算 embedding。測試機器同上（Intel Xeon 8 vCPU），**不是 Kebbi**。
+
+| 後端 | 實際使用 | 加速器 | 輸入 | embed | total |
+|---|---|---|---|---|---|
+| fp32 | SFace | cpu (OpenCV DNN) | 640×480 | 10.5 / 12.7 / 13.4 | 14.7 / 17.2 / 18.0 |
+| fp32 | SFace | cpu (OpenCV DNN) | 1280×720 | 10.9 / 13.5 / 14.0 | 16.8 / 19.6 / 20.5 |
+| int8 | SFace int8 | cpu (OpenCV DNN) | 640×480 | 12.2 / 14.6 / 15.6 | 16.6 / 19.4 / 20.4 |
+| int8 | SFace int8 | cpu (OpenCV DNN) | 1280×720 | 13.9 / 15.5 / 21.9 | 20.2 / 22.1 / 31.9 |
+| npu (int8) | SFace TFLite fp16 | cpu (LiteRT XNNPACK) | 640×480 | 4.0 / 4.6 / 5.0 | 8.6 / 10.0 / 10.3 |
+| npu (int8) | SFace TFLite fp16 | cpu (LiteRT XNNPACK) | 1280×720 | 4.7 / 6.1 / 6.9 | 10.7 / 13.2 / 16.5 |
+|  | 註：NPU delegate not active (no npu_delegate_path set); running on CPU with the fp16 model (faster than int8 on CPU) | | | | |
+| npu (fp16) | SFace TFLite fp16 | cpu (LiteRT XNNPACK) | 640×480 | 3.6 / 4.1 / 4.1 | 7.7 / 8.4 / 8.6 |
+| npu (fp16) | SFace TFLite fp16 | cpu (LiteRT XNNPACK) | 1280×720 | 4.1 / 4.9 / 5.1 | 9.4 / 10.5 / 12.0 |
+|  | 註：NPU delegate not active (no npu_delegate_path set); running on CPU | | | | |
+
+只算模型本身（112×112 對齊後的臉）：
+
+| 模型 | p50 | p95 | max |
+|---|---|---|---|
+| fp32 ONNX · OpenCV DNN | 7.47 | 10.83 | 25.30 |
+| int8 ONNX · OpenCV DNN | 12.51 | 13.95 | 15.01 |
+| int8 TFLite · LiteRT CPU 4 執行緒 | 32.59 | 35.36 | 37.59 |
+| int8 TFLite · LiteRT CPU 1 執行緒 | 34.01 | 36.95 | 40.21 |
+| fp16 TFLite · LiteRT CPU 4 執行緒 | 2.81 | 3.23 | 3.73 |
+| fp16 TFLite · LiteRT CPU 1 執行緒 | 8.58 | 10.53 | 11.86 |
+
+- **這台 x86 上**：最快的是 fp16 TFLite（LiteRT XNNPACK，4 個執行緒），整張約 8 ms；fp32 約 15 ms。官方 int8 ONNX 反而比較慢。
+- **ARM 和 NPU**：要在實機上測試，方法見 [NPU.md](NPU.md)。
+
 ## 注意事項
 
 - `max_width` 太小時，遠處的小臉會偵測不到；臉在縮小後的影像中寬度最好至少 40–50 px。

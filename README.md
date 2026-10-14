@@ -79,6 +79,7 @@ docs/            文件
 - [docs/PRESENCE_MODEL.md](docs/PRESENCE_MODEL.md)：在場機率模型（rules 與 hmm）的數學和評估
 - [docs/INTENT_MODEL.md](docs/INTENT_MODEL.md)：互動意圖分數（rules 與 score）
 - [docs/PERFORMANCE.md](docs/PERFORMANCE.md)：效能最佳化與基準測試
+- [docs/NPU.md](docs/NPU.md)：SFace 嵌入後端（fp32／int8／npu）和 Android NPU 使用方式
 - [docs/LICENSES.md](docs/LICENSES.md)：模型、套件、測試資料的授權
 - [CONTRIBUTING.md](CONTRIBUTING.md)、[CHANGELOG.md](CHANGELOG.md)
 

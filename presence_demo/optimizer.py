@@ -167,6 +167,8 @@ class FrameProcessor:
         now = self.clock()
         h, w = img.shape[:2]
         self.counts["frames"] += 1
+        if hasattr(self.pipe, "select_embedder"):
+            self.pipe.select_embedder(cfg.embed_backend, cfg.npu_delegate_path, cfg.npu_precision)
         t0 = time.perf_counter()
         thumb = cv2.resize(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), THUMB, interpolation=cv2.INTER_AREA)
         diff = 1.0 if self.last_thumb is None else float(np.mean(cv2.absdiff(thumb, self.last_thumb))) / 255.0

@@ -119,6 +119,103 @@ def synth(kind: str, w: int, h: int, i: int, face: np.ndarray, rng: np.random.Ge
     return img
 
 
+def run_latency(pipe, cfg, kind, w, h, frames, face):
+    clk = SimClock()
+    proc = FrameProcessor(pipe, clock=clk, pose_loader=load_pose_detector)
+    tr = PresenceTracker(cfg, clock=clk)
+    rng = np.random.default_rng(0)
+    rows, skipped = [], 0
+    static_jpg = None
+    for i in range(frames + 3):
+        if kind == "static" and static_jpg is not None:
+            jpg = static_jpg
+        else:
+            im = synth(kind, w, h, i, face, rng)
+            jpg = cv2.imencode(".jpg", im, [cv2.IMWRITE_JPEG_QUALITY, 70])[1].tobytes()
+            del im
+            static_jpg = jpg if kind == "static" else None
+        t0 = time.perf_counter()
+        img, dec = decode_jpeg(jpg)
+        dets, tm = proc.process(img, cfg, tr.state.value not in ("MAYBE_AWAY", "AWAY"))
+        tr.update(dets, speaking=False)
+        total = (time.perf_counter() - t0) * 1000
+        del img
+        clk.t += 0.5
+        if i < 3:
+            continue
+        skipped += bool(tm.get("skipped"))
+        rows.append({"decode": dec, **{k: tm.get(k, 0.0) for k in STAGES[1:6]}, **tr.timings, "total": total})
+    return rows, skipped
+
+
+def pct(rows, st):
+    a = np.array([r.get(st, 0.0) for r in rows])
+    return f"{np.percentile(a, 50):.1f} / {np.percentile(a, 95):.1f} / {a.max():.1f}"
+
+
+def backends_table(frames: int) -> None:
+    """Embedding backends side by side (every frame computes an embedding: gate + throttle off)."""
+    pipe = VisionPipeline()
+    face = cv2.imread(str(FACE))
+    print(
+        f"\n嵌入後端比較 · kalman+hmm+score · 姿勢關 · 移動閘門與 embedding 節流關閉（每張都算 embedding）"
+        f" · {frames} 張 · ms p50 / p95 / max"
+    )
+    print("| 後端 | 實際使用 | 加速器 | 輸入 | embed | total |")
+    print("|---|---|---|---|---|---|")
+    for be, prec in (("fp32", "int8"), ("int8", "int8"), ("npu", "int8"), ("npu", "fp16")):
+        for iname, w, h in (("640×480", 640, 480), ("1280×720", 1280, 720)):
+            cfg = Config(
+                distance_enabled=True,
+                motion_gate=False,
+                embed_throttle=False,
+                embed_backend=be,
+                npu_precision=prec,
+                **LAT_CONFIGS["kalman+hmm+score"],
+            )
+            rows, _ = run_latency(pipe, cfg, "face", w, h, frames, face)
+            st = pipe.embed_status
+            label = be if be != "npu" else f"npu ({prec})"
+            print(
+                f"| {label} | {st['model']} | {st['accelerator']} | {iname} "
+                f"| {pct(rows, 'embed')} | {pct(rows, 'total')} |"
+            )
+        if pipe.embed_status["note"]:
+            print(f"|  | 註：{pipe.embed_status['note']} | | | | |")
+
+
+def embed_micro(n: int = 200) -> None:
+    """Model-only latency of each embedding model on an aligned 112x112 crop (no fallback logic)."""
+    from presence_demo.embed_backends import OpenCVSFace, TFLiteSFace
+    from presence_demo.vision import MODEL_DIR, SFACE, SFACE_INT8, SFACE_TFLITE
+
+    img = cv2.imread(str(FACE))
+    crop = cv2.resize(img, (112, 112))
+    models = [("fp32 ONNX · OpenCV DNN", lambda: OpenCVSFace(MODEL_DIR / SFACE[0]))]
+    models.append(("int8 ONNX · OpenCV DNN", lambda: OpenCVSFace(MODEL_DIR / SFACE_INT8[0], "int8")))
+    for prec in ("int8", "fp16"):
+        for th in (4, 1):
+            p = MODEL_DIR / SFACE_TFLITE[prec]
+            if p.exists():
+                models.append(
+                    (f"{prec} TFLite · LiteRT CPU {th} 執行緒", lambda p=p, th=th: TFLiteSFace(p, threads=th))
+                )
+    print(f"\n模型本身（112×112 對齊後的臉，{n} 次，ms）")
+    print("| 模型 | p50 | p95 | max |")
+    print("|---|---|---|---|")
+    for name, mk in models:
+        m = mk()
+        for _ in range(10):
+            m.feature_aligned(crop)
+        ts = []
+        for _ in range(n):
+            t0 = time.perf_counter()
+            m.feature_aligned(crop)
+            ts.append((time.perf_counter() - t0) * 1000)
+        a = np.array(ts)
+        print(f"| {name} | {np.percentile(a, 50):.2f} | {np.percentile(a, 95):.2f} | {a.max():.2f} |")
+
+
 def latency(frames: int) -> None:
     pipe = VisionPipeline()
     face = cv2.imread(str(FACE))
@@ -138,37 +235,8 @@ def latency(frames: int) -> None:
         for pose in (False, True):
             for iname, kind, w, h in inputs:
                 cfg = Config(pose_enabled=pose, distance_enabled=True, **ckw)
-                clk = SimClock()
-                proc = FrameProcessor(pipe, clock=clk, pose_loader=load_pose_detector)
-                tr = PresenceTracker(cfg, clock=clk)
-                rng = np.random.default_rng(0)
-                rows, skipped = [], 0
-                static_jpg = None
-                for i in range(frames + 3):
-                    if kind == "static" and static_jpg is not None:
-                        jpg = static_jpg
-                    else:
-                        im = synth(kind, w, h, i, face, rng)
-                        jpg = cv2.imencode(".jpg", im, [cv2.IMWRITE_JPEG_QUALITY, 70])[1].tobytes()
-                        del im
-                        static_jpg = jpg if kind == "static" else None
-                    t0 = time.perf_counter()
-                    img, dec = decode_jpeg(jpg)
-                    dets, tm = proc.process(img, cfg, tr.state.value not in ("MAYBE_AWAY", "AWAY"))
-                    tr.update(dets, speaking=False)
-                    total = (time.perf_counter() - t0) * 1000
-                    del img
-                    clk.t += 0.5
-                    if i < 3:
-                        continue
-                    skipped += bool(tm.get("skipped"))
-                    rows.append(
-                        {"decode": dec, **{k: tm.get(k, 0.0) for k in STAGES[1:6]}, **tr.timings, "total": total}
-                    )
-                cells = []
-                for st in STAGES:
-                    a = np.array([r.get(st, 0.0) for r in rows])
-                    cells.append(f"{np.percentile(a, 50):.1f} / {np.percentile(a, 95):.1f} / {a.max():.1f}")
+                rows, skipped = run_latency(pipe, cfg, kind, w, h, frames, face)
+                cells = [pct(rows, st) for st in STAGES]
                 print(
                     f"| {cname} | {'開' if pose else '關'} | {iname} | "
                     + " | ".join(cells)
@@ -268,6 +336,8 @@ def main() -> None:
     if a.latency or a.ws:
         if a.latency:
             latency(a.frames)
+            backends_table(a.frames)
+            embed_micro()
         if a.ws:
             ws_bench(a.frames, a.port)
         return

@@ -4,7 +4,10 @@ from presence_demo.tracker import RANGES, Config
 
 
 def test_ranges_cover_all_fields():
-    assert {f.name for f in fields(Config)} == set(RANGES)
+    # npu_delegate_path is server-side only (env PRESENCE_NPU_DELEGATE): never settable over WebSocket
+    assert {f.name for f in fields(Config)} - {"npu_delegate_path"} == set(RANGES)
+    c = Config()
+    assert c.update({"npu_delegate_path": "/tmp/evil.so"}) and c.npu_delegate_path != "/tmp/evil.so"
 
 
 def test_clamp_and_types():

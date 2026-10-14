@@ -29,6 +29,19 @@
 | `iou_match` | 0.30 | 0–1 | 位置重疊門檻 |
 | `embed_ema` | 0.15 | 0–1 | 模板更新速度 |
 
+## 嵌入後端
+
+說明、匯出方式和實機注意事項見 [NPU.md](NPU.md)。
+
+| 參數 | 預設 | 範圍 | 說明 |
+|---|---|---|---|
+| `embed_backend` | `fp32` | `fp32`／`int8`／`npu` | SFace 的計算方式：fp32 ONNX、官方 int8 ONNX（OpenCV DNN），或 TFLite（LiteRT，可以掛 NPU delegate） |
+| `npu_precision` | `int8` | `int8`／`fp16` | npu 後端使用的 TFLite 模型。沒有 delegate 時，int8 會自動改用 fp16（CPU 上比較快） |
+| `cos_match_int8` | 0.40 | 0–1 | 使用 int8 或 npu int8 時的「同一人」門檻（實測不需要調整） |
+| `npu_delegate_path` | 空 | — | 外部 delegate `.so`。**只能用環境變數 `PRESENCE_NPU_DELEGATE` 設定**，WebSocket 無法修改 |
+
+網頁「資源監控 → Embedding」會顯示實際使用的後端和加速器。
+
 ## 加入與防閃爍
 
 | 參數 | 預設 | 範圍 | 說明 |
@@ -178,3 +191,4 @@
 |---|---|
 | `PRESENCE_TOKEN` | 設定後，頁面、API、WS 都需要 `?token=` |
 | `PRESENCE_MODEL_DIR` | 模型存放目錄（預設 `./models`） |
+| `PRESENCE_NPU_DELEGATE` | npu 後端的外部 TFLite delegate 函式庫路徑（例如 NNAPI／NeuroPilot）；沒有設定時用 CPU |

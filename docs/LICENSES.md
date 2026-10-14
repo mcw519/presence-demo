@@ -11,6 +11,8 @@
 | **YuNet** 人臉偵測（`face_detection_yunet_2023mar.onnx`） | MIT（opencv_zoo 目錄 LICENSE，Copyright 2020 Shiqi Yu）；訓練程式 libfacedetection.train 為 BSD-3-Clause | https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet ・ https://github.com/ShiqiYu/libfacedetection.train | ⚠️ 大致可以 | 權重本身是 MIT。README 說明是用 **WIDER FACE** 訓練；WIDER FACE 資料集本身的使用條款沒有在 opencv_zoo 寫明，我們也沒能從官方網站確認（網站連線逾時）。「用研究資料集訓練的權重能否商用」在法律上沒有定論。風險比 SFace 低。 |
 | **SFace** 人臉 embedding（`face_recognition_sface_2021dec.onnx`） | Apache-2.0（opencv_zoo 目錄 LICENSE：「All files in this directory are licensed under Apache 2.0」） | https://github.com/opencv/opencv_zoo/tree/main/models/face_recognition_sface ・ 原始程式 https://github.com/zhongyy/SFace | ⚠️ **高風險** | 權重檔標示 Apache-2.0，但 opencv_zoo **沒有寫出這個權重用哪個資料集訓練**。SFace 論文和原始 repo 的實驗是用 **CASIA-WebFace、VGGFace2、MS-Celeb-1M** 訓練。這些資料集是從網路蒐集的名人照片：MS-Celeb-1M 已被微軟撤下，VGGFace2 和 CASIA-WebFace 也都只限非商業研究使用（請自行查證各資料集現行條款）。如果這個權重是用其中之一訓練的，商用有風險，而且臉部 embedding 屬於生物特徵資料，另有個資法規（GDPR、BIPA 等）問題。**建議產品不要依賴這個模型**（見下方替代方案）。 |
 | **MoveNet MultiPose Lightning**（`movenet_multipose_lightning_fp16.tflite`，本版預設姿勢模型） | Apache-2.0（Kaggle 模型頁：「This model follows Apache 2.0」，每個 variation 標示 License: Apache 2.0） | https://www.kaggle.com/models/google/movenet （variation：`tfLite/multipose-lightning-tflite-float16`） | ✅ | Google 官方釋出。模型卡把「任何形式的監控或身分辨識」列為**非預期用途（out-of-scope）**；本專案只用它判斷有沒有人、朝向和距離，不用來辨識身分。官方說明主要針對 3–6 呎距離、健身動作，對話場景請自行驗證準確度。模型卡的訓練資料（COCO 等）沒有在授權中另外限制。 |
+| **SFace int8**（`face_recognition_sface_2021dec_int8.onnx`，`embed_backend=int8`） | Apache-2.0（同一個 opencv_zoo 目錄 LICENSE） | https://github.com/opencv/opencv_zoo/tree/main/models/face_recognition_sface | ⚠️ **高風險（同 SFace）** | fp32 SFace 的官方量化版，訓練資料的疑慮完全相同。下載時檢查 sha256 `2b0e941e6f16cc048c20aee0c8e31f569118f65d702914540f7bfdc14048d78a`（等於 git-LFS oid）。 |
+| **SFace TFLite**（`..._int8.tflite`、`..._fp16.tflite`，`embed_backend=npu`） | 衍生自 Apache-2.0 的 SFace 權重；用 `scripts/export_sface_tflite.py` 在本機產生，**不放進 git、不散布** | 本專案腳本 | ⚠️ **高風險（同 SFace）** | 格式轉換不會改變權重的授權和訓練資料疑慮。INT8 校正只用 CC0 人像，而且只在記憶體中處理。 |
 | ~~YOLOv8n-pose~~（v0.3.0） | AGPL-3.0（Ultralytics） | https://github.com/ultralytics/ultralytics | ❌ 已移除 | AGPL 對網路服務也要求開放原始碼；商用需要 Ultralytics 企業授權。v0.4.0 已刪除程式碼和下載。 |
 | Haar cascade（備援，`haarcascade_frontalface_default.xml`，OpenCV 內附） | Intel License Agreement（BSD 類，寫在 XML 檔頭） | OpenCV 套件內 `cv2/data/` | ✅ | 只在沒有 YuNet 時使用。 |
 | HSV 直方圖 embedding（備援） | 本專案程式碼，沒有模型權重 | `presence_demo/vision.py` | ✅ | 沒有訓練資料問題，但辨識力很弱（主要靠衣服顏色），換衣服或光線變化就不準。 |
@@ -38,11 +40,29 @@
 
 前端：`static/index.html` 是本專案自寫，沒有使用第三方 JS 函式庫或 CDN。
 
+## 匯出工具（不屬於執行時，只在獨立環境中使用）
+
+| 套件 | 版本 | 授權（套件中繼資料） | 商用？ |
+|---|---|---|---|
+| onnx2tf | 2.6.9 | MIT | ✅ |
+| tensorflow／tf-keras | 2.21.0 | Apache-2.0 | ✅ |
+| onnx | 1.20.1 | Apache-2.0 | ✅ |
+| onnxruntime | 1.26.0 | MIT | ✅ |
+| onnx-graphsurgeon | 0.6.1 | Apache-2.0 | ✅ |
+| onnxsim | 0.6.5 | MIT AND (Apache-2.0 OR BSD-2-Clause) | ✅ |
+| sng4onnx | 2.0.1 | MIT | ✅ |
+| ai-edge-litert（執行時也有使用） | 2.3.0 | Apache-2.0 | ✅ |
+
+**NPU 執行時**：
+- NNAPI 是 Android 平台的一部分（AOSP，Apache-2.0）。
+- MediaTek NeuroPilot／Neuron delegate 是 MediaTek 的**專有 SDK**，商用條款要向 MediaTek 或機器人廠商確認（**尚未確認**）。
+
 ## 測試資料
 
 | 檔案 | 授權 | 來源 | 商用？ | 說明 |
 |---|---|---|---|---|
 | `tests/data/face.jpg` | **CC0 1.0** | Julia Margaret Cameron，〈Julia Jackson Duckworth〉，1867，Cleveland Museum of Art 1996.343 ・ https://clevelandart.org/art/1996.343 ・ https://commons.wikimedia.org/wiki/File:Julia_Margaret_Cameron_-_Julia_Jackson_Duckworth_(1846-1895)_-_1996.343_-_Cleveland_Museum_of_Art.tif | ✅ | 500 px 縮圖。19 世紀照片，被攝者 1895 年過世，沒有肖像權問題。只用在測試和基準測試，不隨產品散布。 |
+| Cleveland Museum of Art Open Access 人像（只在評估和校正時使用） | **CC0 1.0**（API 查詢時加上 `cc0=1`，每筆的 `share_license_status` 都是 `CC0`） | https://openaccess-api.clevelandart.org/ ・ https://www.clevelandart.org/open-access | ✅ | `scripts/faces_cc0.py` 只把影像下載到記憶體，對齊後就丟掉，**不存檔、不散布**。被攝者多是 19 世紀到 20 世紀初的人物。 |
 | ~~lena.jpg~~（v0.3.0 以前） | 不明（原圖是 1972 年 Playboy 照片，版權歸屬有爭議） | OpenCV samples | ❌ 已替換 | |
 
 ## 有問題的元件與替代方案

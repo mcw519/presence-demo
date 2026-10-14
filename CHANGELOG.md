@@ -1,6 +1,25 @@
 # Changelog
 
-## 未發布
+## 0.8.0 — 2026-10-14
+
+- **SFace 嵌入後端**：新增 `embed_backend`（`fp32`（預設）／`int8`／`npu`）、`npu_precision`（`int8`／`fp16`）和 `cos_match_int8`。
+  - `int8`：opencv_zoo 官方的 `face_recognition_sface_2021dec_int8.onnx`，下載時驗證 sha256。
+  - `npu`：用 LiteRT 執行 TFLite 模型，可以掛外部 delegate。
+    - delegate 路徑只能用環境變數 `PRESENCE_NPU_DELEGATE` 設定，WebSocket 無法修改。
+    - delegate 無法使用時改用 CPU XNNPACK，並在狀態中顯示實際使用的加速器。
+- 新增 `presence_demo/embed_backends.py`（Umeyama 5 點對齊、OpenCV 和 TFLite 兩種後端）。
+- `ensure_model`：支援 sha256 驗證，先下載到 `.part` 暫存檔再換名。
+- `VisionPipeline(allow_download=False)` 會使用已經下載的模型。
+- 新增 `scripts/export_sface_tflite.py`：可重現的 fp16／全 INT8 TFLite 匯出。
+  - PReLU 合併成單一 op；
+  - 用 CC0 人像在記憶體中校正；
+  - onnx2tf 會改寫輸入檔，所以轉換複本。
+- 新增 `scripts/faces_cc0.py`（只在記憶體中處理的 CC0 人臉）和 `scripts/eval_embed_backends.py`（各後端和 fp32 的精度一致性）。
+- `benchmark.py --latency`：新增嵌入後端比較和模型本身的延遲。
+- 網頁：新增「嵌入後端」設定；「資源監控」顯示實際使用的後端和加速器。
+- 文件：新增 [`docs/NPU.md`](docs/NPU.md)；更新 LICENSES、CONFIGURATION、PERFORMANCE。
+
+### 先前未發布的變更
 
 - `scripts/benchmark.py` 新增兩種模式：
   - `--latency`：各階段 p50／p95／max（設定 × 輸入）；

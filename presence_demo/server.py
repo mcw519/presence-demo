@@ -89,7 +89,6 @@ async def ws(sock: WebSocket):
         return
     await sock.accept()
     pipe = await asyncio.to_thread(pipeline)
-    info = pipe.info()
     st = {"tr": PresenceTracker(Config()), "running": False}
     stats = ConnStats()
     proc = FrameProcessor(pipe, pose_loader=pose_detector)
@@ -118,7 +117,7 @@ async def ws(sock: WebSocket):
                         build_stats(
                             stats,
                             {
-                                **info,
+                                **pipe.info(),
                                 "pose_model": (
                                     _pose_cache.get("det").name
                                     if _pose_cache.get("det")

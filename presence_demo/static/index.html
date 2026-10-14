@@ -110,7 +110,7 @@ const $=id=>document.getElementById(id);
 // ---------- settings schema ----------
 const DEF={face_roi:[0.2,0.05,0.8,0.95],show_face_roi:true,pose_enabled:false,pose_conf:0.4,pose_roi:[0,0,1,1],show_pose_roi:true,roi_rule:'either',
  turned_away_early:true,turned_away_seconds:2,recede_ratio:0.1,distance_enabled:false,camera_hfov:60,face_width_m:0.15,shoulder_width_m:0.38,
- distance_calib:1,distance_ema:0.3,zone_min:0.4,zone_max:2,leave_distance:2.5,min_conf:0.6,cos_match:0.4,cos_weak:0.2,iou_match:0.3,embed_ema:0.15,join_seconds:2,grace_seconds:15,
+ distance_calib:1,distance_ema:0.3,zone_min:0.4,zone_max:2,leave_distance:2.5,min_conf:0.6,embed_backend:'fp32',npu_precision:'int8',cos_match_int8:0.4,cos_match:0.4,cos_weak:0.2,iou_match:0.3,embed_ema:0.15,join_seconds:2,grace_seconds:15,
  present_frames:2,absent_frames:3,idle_after:3,present_timeout:15,empty_timeout:5,base_timeout:20,maybe_away_frac:0.5,end_after_away:5,new_group_seconds:3,
  priority_mode:'vision',speech_join:'auto',presence_model:'rules',intent_model:'rules',intent_tau:1,join_threshold:0.6,drop_threshold:0.35,drop_seconds:8,intent_weighted_presence:false,w_facing:0.45,w_distance:0.1,w_dwell:0.1,w_approach:0.05,w_still:0.15,w_center:0.15,leave_halflife:0.6,detect_gain:4,lowconf_factor:0.15,p_active:0.8,p_maybe:0.6,p_away:0.3,away_hold_seconds:1,tracker_mode:'legacy',coast_seconds:2,coast_present_conf:0.4,gate_mahalanobis:9.21,appearance_min_sim:0.6,appearance_ema:0.2,body_min_conf:0.4,present_max_silence:0,motion_gate:true,motion_threshold:0.015,force_detect_seconds:3,embed_throttle:true,embed_interval:3,embed_move_thresh:0.15,adaptive_fps:true,fps_low:0.5,fps_high:2,roi_crop:true,crop_margin:0.1,max_width:320,fps:1,vad_k:2.5,vad_min:0.005,vad_hang:400};
 const CLIENT=['fps','vad_k','vad_min','vad_hang','show_face_roi','show_pose_roi'];
@@ -127,6 +127,9 @@ const GROUPS=[
    min_conf:S('最低偵測信心','低於這個值的偵測不算有人也不算沒人，會退回只看聲音。',0,1,0.01)}],
  ['身分比對',{cos_match:S('同一人相似度門檻','臉部 embedding 的 cosine 相似度達到這個值就算同一人（SFace 約 0.36）。',0,1,0.01),
    cos_weak:S('弱相似度（位置重疊時）','框的位置大致重疊時，相似度只要達到這個較低的值也算同一人。',0,1,0.01),
+   embed_backend:{l:'嵌入後端',h:'計算人臉特徵（SFace）的方式。fp32：原始模型，最準（預設）。int8：opencv_zoo 官方的 INT8 量化版，檔案小 4 倍；在這台 x86 伺服器上反而比較慢，但在 ARM 手機上通常比較快。npu：轉成 TFLite，在 Android 上可以交給 NPU（NNAPI／NeuroPilot）計算；伺服器上沒有 NPU，會用 CPU 執行，並在「資源監控」顯示實際使用的加速器。',opts:{fp32:'fp32',int8:'int8',npu:'npu (TFLite)'}},
+   npu_precision:{l:'NPU 模型精度',h:'npu 後端使用的 TFLite 模型。int8：全整數量化，最適合 NPU。fp16：半精度，適合 GPU；也是沒有 NPU 時 CPU 最快的選項（int8 在沒有 NPU 時會自動改用 fp16）。',opts:{int8:'int8',fp16:'fp16'}},
+   cos_match_int8:S('同一人門檻（量化模型）','使用 int8 或 npu int8 後端時的「同一人」相似度門檻。實測量化模型和 fp32 的判定一致率約 99.9%，預設和 fp32 相同。',0,1,0.01),
    iou_match:S('位置重疊門檻 IoU','前後兩張畫面的框重疊多少算「位置一樣」。',0,1,0.01),
    embed_ema:S('模板更新速度','每張畫面更新多少比例的臉部模板。越大越能適應光線變化，但也越容易被別人帶偏。',0,1,0.01)}],
  ['加入與防閃爍',{join_seconds:S('加入參與者所需時間','在 ROI 裡待滿這麼久才算參與者（開口說話會立即加入）。',0,30,0.5,'s'),
@@ -408,7 +411,7 @@ function renderStats(s){const y=s.system,c=s.conn,L=c.latency_ms,i=s.info;
  $('mLatT').innerHTML=Object.entries(L).map(([k,v])=>`<tr><td>${nm[k]||k}</td><td>${v.last}</td><td>${v.avg}</td><td>${v.p95}</td></tr>`).join('');
  const kv={'Load avg':y.load?y.load.join(' / '):'—','畫面張數':`收 ${c.frames.received} · 處理 ${c.frames.processed} · 丟棄 ${c.frames.dropped}`,
   '畫面大小':`${c.frame_size.join('×')} · 平均 ${fmtB(c.frame_bytes_avg)}`,'WS 往返':c.rtt_ms!=null?c.rtt_ms+' ms':(lastRtt?lastRtt.toFixed(0)+' ms':'—'),
-  '模型':i.pipeline,'OpenCV':`${i.opencv} · ${i.dnn_backend} / ${i.dnn_target} · ${i.cv_threads} threads`,'程序':`${y.proc_threads} threads · ${i.cpu_count} cores`,
+  '模型':i.pipeline,'Embedding':i.embed_backend?`${i.embed_backend.active}（要求 ${i.embed_backend.requested}）· ${i.embed_backend.model} · ${i.embed_backend.accelerator}${i.embed_backend.note?' · '+i.embed_backend.note:''}`:'—','OpenCV':`${i.opencv} · ${i.dnn_backend} / ${i.dnn_target} · ${i.cv_threads} threads`,'程序':`${y.proc_threads} threads · ${i.cpu_count} cores`,
   '效能':c.optim?`跳過 ${c.optim.skipped_pct}%（${c.optim.skipped} 張）· embedding 計算 ${c.optim.embed_computed} / 重用 ${c.optim.embed_reused}（${c.optim.embed_reused_pct}%）`:'—',
   '姿勢':`${i.pose_model||'—'} · 呼叫 ${c.optim?c.optim.pose_calls:0} 次 · avg ${L.pose?L.pose.avg:0} ms`,
   '送幀 fps':`${curFps()}${cfg.adaptive_fps?`（自適應，伺服器建議 ${c.optim?c.optim.recommended_fps:'—'}）`:'（固定）'}`};

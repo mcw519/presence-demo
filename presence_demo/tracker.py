@@ -6,6 +6,7 @@ Coordinates are normalized [0,1] (x0, y0, x1, y1).
 from __future__ import annotations
 
 import math
+import os
 import time
 from collections import deque
 from collections.abc import Callable
@@ -37,6 +38,13 @@ class Config:
     iou_match: float = 0.3
     cos_match: float = 0.40  # cosine >= this => same person (SFace ~0.363)
     cos_weak: float = 0.20  # with good IoU, this weaker cosine is accepted
+    # --- embedding backend ---
+    embed_backend: str = "fp32"  # fp32 (OpenCV DNN) | int8 (official opencv_zoo int8 ONNX) | npu (TFLite + delegate)
+    # external TFLite delegate .so (NNAPI / NeuroPilot); empty -> CPU. SECURITY: loading a shared library
+    # runs native code, so this is set only server-side (env PRESENCE_NPU_DELEGATE), never over WebSocket.
+    npu_delegate_path: str = field(default_factory=lambda: os.environ.get("PRESENCE_NPU_DELEGATE", ""))
+    npu_precision: str = "int8"  # npu backend model: int8 (full-integer) | fp16
+    cos_match_int8: float = 0.40  # cos_match used with quantized embeddings (int8 / npu int8)
     embed_ema: float = 0.15  # template update rate
     join_seconds: float = 2.0  # continuous time in ROI to become participant
     grace_seconds: float = 15.0  # keep missing tracks this long
@@ -113,6 +121,12 @@ class Config:
     w_center: float = 0.15
     speech_join: str = "auto"  # auto (vision: off, else single_candidate) | off | single_candidate | all
     present_max_silence: float = 0.0  # vision mode: cap on silence with people present (0 = off)
+
+    @property
+    def match_cos(self) -> float:
+        """Strong-match cosine threshold for the active embedding backend."""
+        quant = self.embed_backend == "int8" or (self.embed_backend == "npu" and self.npu_precision == "int8")
+        return self.cos_match_int8 if quant else self.cos_match
 
     @property
     def roi(self) -> tuple:
@@ -197,6 +211,9 @@ RANGES = {
     "iou_match": (0.0, 1.0, float),
     "cos_match": (0.0, 1.0, float),
     "cos_weak": (0.0, 1.0, float),
+    "embed_backend": (("fp32", "int8", "npu"), None, str),
+    "npu_precision": (("int8", "fp16"), None, str),
+    "cos_match_int8": (0.0, 1.0, float),
     "embed_ema": (0.0, 1.0, float),
     "join_seconds": (0.0, 30.0, float),
     "grace_seconds": (0.0, 120.0, float),
@@ -546,7 +563,7 @@ class PresenceTracker:
                 if d.body is not None and t.body is not None and (d.embedding is None or t.embedding is None):
                     ov = max(ov, iou(d.body.bbox, t.body.bbox))  # identity continuity via body when no face
                 if (
-                    cs >= c.cos_match
+                    cs >= c.match_cos
                     or (ov >= c.iou_match and cs >= c.cos_weak)
                     or (ov >= c.iou_match and (d.embedding is None or t.embedding is None))
                 ):
@@ -612,7 +629,7 @@ class PresenceTracker:
                 m2 = t.kf.mahalanobis(d.bbox)
                 cs = cosine(d.embedding, t.embedding) if d.embedding is not None and t.embedding is not None else None
                 ap = appearance_similarity(d.appearance, t.appearance)
-                strong_face = cs is not None and cs >= c.cos_match
+                strong_face = cs is not None and cs >= c.match_cos
                 if m2 > c.gate_mahalanobis and ov < c.iou_match and not strong_face:
                     continue  # motion gate (a confident face match may re-identify anywhere)
                 if cs is not None and cs < c.cos_weak:
@@ -621,7 +638,7 @@ class PresenceTracker:
                     continue  # no face: clothing says different people
                 comps = [(1.0, ov), (1.0, float(np.exp(-m2 / c.gate_mahalanobis)))]
                 if cs is not None:
-                    comps.append((2.0, min(1.0, max(0.0, cs) / max(c.cos_match, 1e-6))))
+                    comps.append((2.0, min(1.0, max(0.0, cs) / max(c.match_cos, 1e-6))))
                 if ap is not None:
                     comps.append((1.5, min(1.0, max(0.0, (ap - 0.5) / 0.5))))
                 score = sum(w * v for w, v in comps) / sum(w for w, _ in comps)

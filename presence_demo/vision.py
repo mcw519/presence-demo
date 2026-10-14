@@ -23,7 +23,19 @@ YUNET = ("face_detection_yunet_2023mar.onnx", ZOO + "face_detection_yunet/face_d
 SFACE = (
     "face_recognition_sface_2021dec.onnx",
     ZOO + "face_recognition_sface/face_recognition_sface_2021dec.onnx",
+    "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79",
 )
+# official opencv_zoo INT8 quantization of the same model (sha256 = git-LFS oid in opencv_zoo)
+SFACE_INT8 = (
+    "face_recognition_sface_2021dec_int8.onnx",
+    ZOO + "face_recognition_sface/face_recognition_sface_2021dec_int8.onnx",
+    "2b0e941e6f16cc048c20aee0c8e31f569118f65d702914540f7bfdc14048d78a",
+)
+# produced locally by scripts/export_sface_tflite.py (not downloadable; not committed)
+SFACE_TFLITE = {
+    "int8": "face_recognition_sface_2021dec_int8.tflite",
+    "fp16": "face_recognition_sface_2021dec_fp16.tflite",
+}
 
 
 # MoveNet.MultiPose Lightning (Google, Apache-2.0), TFLite float16, run with ai-edge-litert (LiteRT).
@@ -134,14 +146,46 @@ class Embedder(Protocol):
     def embed(self, img: np.ndarray, raw: np.ndarray) -> np.ndarray: ...
 
 
-def ensure_model(fname, url) -> Path | None:
+def _sha256(p: Path) -> str:
+    import hashlib
+
+    h = hashlib.sha256()
+    with open(p, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+_verified: set = set()
+
+
+def _local(spec) -> Path | None:
+    """Already-downloaded model file (no network)."""
+    p = MODEL_DIR / spec[0]
+    return p if p.exists() and p.stat().st_size > 1000 else None
+
+
+def ensure_model(fname, url, sha256: str | None = None) -> Path | None:
+    """Return the model path, downloading it on first use; verify sha256 when given."""
     p = MODEL_DIR / fname
     if p.exists() and p.stat().st_size > 1000:
+        if sha256 and p not in _verified:
+            if _sha256(p) != sha256:
+                log.warning("checksum mismatch for %s, re-downloading", fname)
+                p.unlink()
+                return ensure_model(fname, url, sha256)
+            _verified.add(p)
         return p
     try:
         MODEL_DIR.mkdir(parents=True, exist_ok=True)
         log.info("downloading %s", url)
-        urllib.request.urlretrieve(url, p)
+        tmp = p.with_suffix(p.suffix + ".part")
+        urllib.request.urlretrieve(url, tmp)
+        if sha256 and _sha256(tmp) != sha256:
+            tmp.unlink()
+            raise ValueError(f"sha256 mismatch for {fname}")
+        tmp.replace(p)
+        _verified.add(p)
         return p
     except Exception as e:  # noqa: BLE001
         log.warning("model download failed (%s): %s", fname, e)
@@ -189,6 +233,9 @@ class SFaceEmbedder:
     def embed(self, img, raw):
         return self.rec.feature(self.rec.alignCrop(img, raw)).ravel()
 
+    def feature_aligned(self, crop):
+        return self.rec.feature(crop).ravel()
+
 
 class HistEmbedder:
     """Weak fallback: HSV histogram of face + upper body region. Tune cos thresholds higher."""
@@ -216,14 +263,86 @@ def decode_jpeg(data: bytes) -> tuple[np.ndarray | None, float]:
 class VisionPipeline:
     def __init__(self, detector: Detector | None = None, embedder: Embedder | None = None, allow_download: bool = True):
         if detector is None:
-            p = ensure_model(*YUNET) if allow_download else None
+            p = ensure_model(*YUNET) if allow_download else _local(YUNET)
             detector = YuNetDetector(p) if p else HaarDetector()
         if embedder is None:
             # PRESENCE_FACE_EMBEDDER=hist disables SFace (see docs/LICENSES.md for the training-data caveat).
             want_sface = os.environ.get("PRESENCE_FACE_EMBEDDER", "sface").lower() != "hist"
-            p = ensure_model(*SFACE) if allow_download and want_sface else None
+            p = (ensure_model(*SFACE) if allow_download else _local(SFACE)) if want_sface else None
             embedder = SFaceEmbedder(p) if p and isinstance(detector, YuNetDetector) else HistEmbedder()
         self.detector, self.embedder = detector, embedder
+        self.allow_download = allow_download
+        self._embedders: dict = {}
+        self._backend_key = ("fp32", "", "int8")
+        self.embed_status = {
+            "requested": "fp32",
+            "active": "fp32" if isinstance(embedder, SFaceEmbedder) else "hist",
+            "model": embedder.name,
+            "accelerator": "cpu (OpenCV DNN)",
+            "note": "",
+        }
+
+    def select_embedder(self, backend: str = "fp32", delegate_path: str = "", precision: str = "int8") -> dict:
+        """Switch the SFace backend (fp32 | int8 | npu). Unavailable backends fall back to fp32 with a note.
+
+        Only applies when the default SFace embedder is in use (not the HSV-histogram fallback)."""
+        key = (backend, delegate_path or "", precision)
+        if key == self._backend_key or not isinstance(self._embedders.get("fp32", self.embedder), SFaceEmbedder):
+            return self.embed_status
+        if "fp32" not in self._embedders:
+            if not isinstance(self.embedder, SFaceEmbedder):
+                return self.embed_status
+            self._embedders["fp32"] = self.embedder
+        from .embed_backends import OpenCVSFace, TFLiteSFace
+
+        note, emb, accel = "", None, "cpu (OpenCV DNN)"
+        try:
+            if backend == "int8":
+                emb = self._embedders.get("int8")
+                if emb is None:
+                    p = ensure_model(*SFACE_INT8) if self.allow_download else _local(SFACE_INT8)
+                    if not p or not Path(p).exists():
+                        raise FileNotFoundError(SFACE_INT8[0])
+                    emb = self._embedders["int8"] = OpenCVSFace(p, "int8")
+            elif backend == "npu":
+                emb = self._embedders.get(key)
+                if emb is None:
+                    p = MODEL_DIR / SFACE_TFLITE.get(precision, SFACE_TFLITE["int8"])
+                    if not p.exists():
+                        raise FileNotFoundError(f"{p.name} (run scripts/export_sface_tflite.py)")
+                    emb = TFLiteSFace(p, delegate_path or None)
+                    if emb.delegate_error or not delegate_path:
+                        why = emb.delegate_error or "no npu_delegate_path set"
+                        note = f"NPU delegate not active ({why}); running on CPU"
+                        fp16 = MODEL_DIR / SFACE_TFLITE["fp16"]
+                        if precision == "int8" and fp16.exists():
+                            # LiteRT's CPU kernels are much faster for fp16 than for this int8 graph on x86
+                            emb = TFLiteSFace(fp16)
+                            note += " with the fp16 model (faster than int8 on CPU)"
+                    emb.note = note
+                    self._embedders[key] = emb
+                note = getattr(emb, "note", "")
+                accel = emb.accelerator
+            else:
+                emb = self._embedders["fp32"]
+        except Exception as e:  # noqa: BLE001
+            log.warning("embedding backend %s unavailable, using fp32: %s", backend, e)
+            emb, note = self._embedders["fp32"], f"{backend} unavailable ({e}); using fp32"
+        if emb is self._embedders["fp32"]:
+            accel = "cpu (OpenCV DNN)"
+        self.embedder = emb
+        self._backend_key = key
+        active = "fp32" if emb is self._embedders["fp32"] else backend
+        self.embed_status = {
+            "requested": backend,
+            "active": active,
+            "model": emb.name,
+            "accelerator": accel,
+            "note": note,
+        }
+        if note:
+            log.info("embedding backend: %s", note)
+        return self.embed_status
 
     @property
     def name(self):
@@ -274,6 +393,7 @@ class VisionPipeline:
             "opencv": cv2.__version__,
             "cv_threads": cv2.getNumThreads(),
             "dnn_backend": "OpenCV (CPU)",
+            "embed_backend": dict(self.embed_status),
             "dnn_target": "CPU",
             "cpu_count": os.cpu_count(),
         }
