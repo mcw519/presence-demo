@@ -13,6 +13,7 @@ from enum import Enum
 
 import numpy as np
 
+from . import presence_model as pm
 from .body import Body, estimate_distance, orientation, shoulder_width
 from .kalman import KalmanBox, appearance_similarity, hungarian
 
@@ -86,6 +87,15 @@ class Config:
     gate_mahalanobis: float = 9.21  # kalman: chi-square gate on the predicted center (2 dof, 99%)
     appearance_min_sim: float = 0.6  # kalman: torso-histogram similarity below this => different person (no face)
     appearance_ema: float = 0.2  # kalman: appearance template update rate
+    # --- presence model (Layer 2) ---
+    presence_model: str = "rules"  # rules (counters + timeouts) | hmm (per-track Bayes filter)
+    leave_halflife: float = 0.6  # hmm: with nobody seen, odds of "present" halve every this many seconds
+    detect_gain: float = 4.0  # hmm: evidence rate per second for a detection (x confidence)
+    lowconf_factor: float = 0.15  # hmm: low-confidence frames decay this fraction of the normal rate
+    p_active: float = 0.8  # hmm: group P >= this -> ACTIVE/IDLE (from MAYBE_AWAY/AWAY)
+    p_maybe: float = 0.6  # hmm: group P < this -> MAYBE_AWAY
+    p_away: float = 0.3  # hmm: group P < this for away_hold_seconds -> AWAY
+    away_hold_seconds: float = 1.0
     speech_join: str = "auto"  # auto (vision: off, else single_candidate) | off | single_candidate | all
     present_max_silence: float = 0.0  # vision mode: cap on silence with people present (0 = off)
 
@@ -151,6 +161,10 @@ class Config:
         if self.fps_low > self.fps_high:
             self.fps_low = self.fps_high
             warnings.append("fps_low lowered to fps_high")
+        if not (self.p_away <= self.p_maybe <= self.p_active):
+            self.p_away = min(self.p_away, self.p_maybe, self.p_active)
+            self.p_active = max(self.p_active, self.p_maybe)
+            warnings.append("presence thresholds reordered: p_away <= p_maybe <= p_active")
         if self.cos_weak > self.cos_match:
             self.cos_weak = self.cos_match
             warnings.append("cos_weak lowered to cos_match")
@@ -189,6 +203,14 @@ RANGES = {
     "gate_mahalanobis": (1.0, 100.0, float),
     "appearance_min_sim": (0.0, 1.0, float),
     "appearance_ema": (0.0, 1.0, float),
+    "presence_model": (("rules", "hmm"), None, str),
+    "leave_halflife": (0.1, 30.0, float),
+    "detect_gain": (0.1, 20.0, float),
+    "lowconf_factor": (0.0, 1.0, float),
+    "p_active": (0.05, 0.99, float),
+    "p_maybe": (0.02, 0.98, float),
+    "p_away": (0.01, 0.95, float),
+    "away_hold_seconds": (0.0, 30.0, float),
     "speech_join": (("auto", "off", "single_candidate", "all"), None, str),
     "turned_away_early": (False, True, bool),
     "turned_away_seconds": (0.0, 30.0, float),
@@ -258,6 +280,11 @@ class Track:
     vis_conf: float = 1.0  # 1 when detected; decays while coasting (kalman)
     appearance: np.ndarray | None = None
     kf: KalmanBox | None = None
+    logodds: float = 0.0  # hmm: log P(present)/P(left)
+
+    @property
+    def p(self) -> float:
+        return pm.sigmoid(self.logodds)
 
 
 def _norm(v):
@@ -314,6 +341,10 @@ class PresenceTracker:
         self._newgroup_since: float | None = None
         self._away_cue_since: float | None = None
         self._far_logged = False
+        self._hmm_t = now
+        self._below_away_since: float | None = None
+        self.p_group: float | None = None
+        self.p_tracks: float | None = None
         self.timeout = self.cfg.base_timeout
         self.session = getattr(self, "session", 0) + (0 if initial else 1)
 
@@ -397,8 +428,11 @@ class PresenceTracker:
             self._event(now, "far", f"visible people beyond leave_distance {self.cfg.leave_distance:.1f} m")
         self._far_logged = bool(confident) and not near
         self._frame_confident = bool(confident)
-        self._update_presence(now, near, bool(low), coasting)
         self._update_away_cue(now)
+        if self.cfg.presence_model == "hmm":
+            self._hmm_update(now, bool(low) and not confident)
+        else:
+            self._update_presence(now, near, bool(low), coasting)
         if self.state != State.ENDED:
             self._check_new_group(now)
         self._evaluate(now)
@@ -573,7 +607,7 @@ class PresenceTracker:
                 and not t.far
                 and (now - t.in_roi_since >= c.join_seconds or by_speech)
                 and self._newgroup_since is None
-            ) and (not self._old_group_missing() or not self._participants()):
+            ) and (not self._old_group_missing_rules() or not self._participants()):  # join rule unchanged
                 t.participant = True
                 self._event(
                     now,
@@ -652,6 +686,12 @@ class PresenceTracker:
         return [t for t in self.tracks.values() if t.participant]
 
     def _old_group_missing(self):
+        if self.cfg.presence_model == "hmm":
+            p = self._participants()
+            return bool(p) and all(t.p < self.cfg.p_away for t in p)
+        return self._old_group_missing_rules()
+
+    def _old_group_missing_rules(self):
         """All participants confidently gone: none visible (and near), and this frame was not merely
         low-confidence (a confident detection or a confirmed-empty ROI is required)."""
         p = self._participants()
@@ -668,6 +708,7 @@ class PresenceTracker:
             and t.visible_kind == "detected"
             and not t.far
             and now - t.in_roi_since >= c.join_seconds
+            and (c.presence_model != "hmm" or t.p >= c.p_active)
         ]
         if self._old_group_missing() and newcomers:
             if self._newgroup_since is None:
@@ -719,11 +760,102 @@ class PresenceTracker:
         if low and not confident and not self.present:
             self.empty = False  # uncertain -> fall back to audio-only base timeout
 
+    # ------------------------------------------------------------------ presence model (hmm)
+    def _hmm_update(self, now: float, low_frame: bool) -> None:
+        """Integrate this frame's evidence into every track's log-odds; derive present/empty flags."""
+        c = self.cfg
+        dt = now - self._hmm_t
+        self._hmm_t = now
+        for t in self.tracks.values():
+            turned = c.turned_away_early and t.facing in ("side", "away") and t.trend == "receding"
+            rate = pm.track_rate(
+                t.visible_kind,
+                t.conf,
+                t.vis_conf,
+                halflife=c.leave_halflife,
+                detect_gain=c.detect_gain,
+                lowconf_factor=c.lowconf_factor,
+                low_frame=low_frame,
+                turned_away=turned,
+                far=t.far,
+            )
+            if t.first_seen == now:  # new track: start from the neutral prior + this frame's evidence
+                t.logodds = pm.step(0.0, rate, 0.5)
+            else:
+                t.logodds = pm.step(t.logodds, rate, dt)
+        p = self._track_group_p()
+        self.p_tracks = p
+        was_empty = self.empty
+        self.present = p >= c.p_active or (self.present and p >= c.p_maybe)
+        self.empty = p < c.p_away
+        if self.empty and not was_empty:
+            self.empty_since = now
+        elif not self.empty:
+            self.empty_since = None
+
+    def _track_group_p(self) -> float:
+        """Group presence from tracks: max P over participants (else over all tracks). With no track at all
+        (e.g. a session started by speech) it is unknown (0.5), except in vision mode (nobody seen)."""
+        c = self.cfg
+        ts = self._participants() or list(self.tracks.values())
+        unknown = pm.P_MIN if c.priority_mode == "vision" else 0.5
+        p = max((t.p for t in ts), default=unknown)
+        if self._participants() and p < c.p_away:
+            # old group gone but a stable new candidate is here: a NEW_GROUP is forming, don't flap to AWAY
+            now = self._hmm_t
+            forming = [
+                t.p
+                for t in self.tracks.values()
+                if not t.participant
+                and t.visible_kind == "detected"
+                and not t.far
+                and t.p >= c.p_active
+                and now - t.in_roi_since >= c.join_seconds
+            ]
+            p = max([p, *forming])
+        return p
+
+    def _evaluate_hmm(self, now, silence):
+        c = self.cfg
+        p_tr = self.p_tracks if self.p_tracks is not None else self._track_group_p()
+        a = pm.audio_offset(c.priority_mode, self.speaking, silence, c.base_timeout)
+        pg = pm.sigmoid(pm.logit(p_tr) + a)
+        self.p_group = pg
+        self.path = "present" if self.present else "empty" if self.empty else "uncertain"
+        self.timeout, self.elapsed = 0.0, 0.0
+        if pg < c.p_away:
+            if self._below_away_since is None:
+                self._below_away_since = now
+        else:
+            self._below_away_since = None
+        # vision: only the cameras can bring the conversation back (audio never does)
+        p_ret = p_tr if c.priority_mode == "vision" else pg
+        if self.state == State.AWAY:
+            if p_ret >= c.p_active:
+                self._set_state(now, State.ACTIVE, "user returned (P=%.2f)" % p_ret)
+            elif now - self.state_since >= c.end_after_away:
+                self._end(now, f"away for {c.end_after_away:.0f}s")
+            return
+        capped = c.priority_mode == "vision" and c.present_max_silence > 0 and silence >= c.present_max_silence
+        if capped:
+            self._set_state(now, State.AWAY, "silence %.0fs reached present_max_silence" % silence)
+        elif self._below_away_since is not None and now - self._below_away_since >= c.away_hold_seconds:
+            self._set_state(now, State.AWAY, "P=%.2f < %.2f for %.1fs" % (pg, c.p_away, now - self._below_away_since))
+        elif pg < c.p_maybe or (self.state == State.MAYBE_AWAY and pg < c.p_active):
+            self._set_state(now, State.MAYBE_AWAY, "P=%.2f" % pg)
+        elif silence < c.idle_after:
+            self._set_state(now, State.ACTIVE, "speech")
+        else:
+            self._set_state(now, State.IDLE, f"silence {silence:.0f}s")
+
     # ------------------------------------------------------------------ fusion
     def _evaluate(self, now):
         c = self.cfg
         if self.state == State.ENDED:
             self.elapsed, self.path = 0.0, "ended"
+            return
+        if c.presence_model == "hmm":
+            self._evaluate_hmm(now, 0.0 if self.speaking else now - self.last_speech)
             return
         silence = 0.0 if self.speaking else now - self.last_speech
         mode = c.priority_mode
@@ -810,6 +942,7 @@ class PresenceTracker:
                     "similarity": round(t.similarity, 3),
                     "visible_kind": t.visible_kind,
                     "vis_conf": round(t.vis_conf, 2),
+                    "p": round(t.p, 3) if self.cfg.presence_model == "hmm" else None,
                     "dwell_seconds": round(now - t.first_seen, 1),
                     "velocity": [round(v, 3) for v in t.kf.velocity] if t.kf is not None else None,
                     "conf": round(t.conf, 2),
@@ -831,6 +964,9 @@ class PresenceTracker:
                 for t in self.tracks.values()
             ],
             "away_cue": self._away_cue_since is not None,
+            "presence_model": self.cfg.presence_model,
+            "p_group": None if self.p_group is None or self.state == State.ENDED else round(self.p_group, 3),
+            "p_tracks": None if self.p_tracks is None or self.state == State.ENDED else round(self.p_tracks, 3),
             "log": self.log[-30:],
         }
 

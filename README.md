@@ -9,6 +9,7 @@
 ## 功能
 
 - **追蹤模式**：`legacy`（預設）或 `kalman`（Kalman 預測 + 匈牙利配對 + 衣服顏色，短暫遮擋時延續追蹤），見 [TRACKING](docs/TRACKING.md)。
+- **在場判斷模型**：`rules`（預設）或 `hmm`（每個人一個在場機率，用門檻和遲滯決定狀態，比較不怕偵測閃爍），見 [PRESENCE_MODEL](docs/PRESENCE_MODEL.md)。
 - **群組追蹤**：每個人一個 track（IoU + cosine 比對、EMA 更新 embedding），任何一位參與者還在就不算離開；被擋住有寬限期；換成一群陌生人時觸發 **NEW_GROUP**。
 - **狀態機**：`ACTIVE → IDLE → MAYBE_AWAY → AWAY → ENDED`，含防閃爍遲滯，每次轉換都記錄原因。
 - **判斷優先模式**：`vision`（預設）／`balanced`／`audio`，可另設 `present_max_silence`。
@@ -74,6 +75,7 @@ docs/            文件
 - [docs/CONFIGURATION.md](docs/CONFIGURATION.md)：所有參數、範圍、預設值、預設組合
 - [docs/TUNING.md](docs/TUNING.md)：調參方法
 - [docs/TRACKING.md](docs/TRACKING.md)：追蹤模式比較（legacy 與 kalman）
+- [docs/PRESENCE_MODEL.md](docs/PRESENCE_MODEL.md)：在場機率模型（rules 與 hmm）的數學和評估
 - [docs/PERFORMANCE.md](docs/PERFORMANCE.md)：效能最佳化與基準測試
 - [docs/LICENSES.md](docs/LICENSES.md)：模型、套件、測試資料的授權
 - [CONTRIBUTING.md](CONTRIBUTING.md)、[CHANGELOG.md](CHANGELOG.md)

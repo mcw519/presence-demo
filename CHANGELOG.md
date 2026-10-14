@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.6.0 — 2026-10-14
+
+- **Layer 2 在場機率**：新增 `presence_model`（`rules`／`hmm`，預設 `rules`，行為不變）。
+  - `hmm`：每個 track 一個兩狀態（在場／離開）Bayes 濾波器，用對數勝算加「每秒證據 × 實際 dt」計算，和 fps 無關。
+  - 證據來源：偵測信心、kalman 預測（較弱）、低信心幀（接近中立）、轉身＋遠離、超出距離。
+  - 聲音是全域的弱證據，權重依 `priority_mode` 不同，不會歸到任何人身上。
+  - 群組 P 取參與者中的最大值，再用遲滯門檻決定 ACTIVE／MAYBE_AWAY／AWAY。
+  - hmm 模式的 NEW_GROUP 條件：舊參與者 P < `p_away`，而且新候選人的 P 穩定在 `p_active` 以上。
+  - 新增參數：`leave_halflife`、`detect_gain`、`lowconf_factor`、`p_active`、`p_maybe`、`p_away`、`away_hold_seconds`。
+- 新增 `presence_demo/presence_model.py`。
+- state 新增 `p_group`、`p_tracks`；每個 track 新增 `p`。
+- 網頁：新增「在場機率」卡片（群組 P 曲線和門檻線）、每個人的機率條，以及「在場機率」設定分組。
+- `scripts/eval_tracking.py`（別名 `scripts/eval_presence.py`）：
+  - 改為比較 legacy+rules、kalman+rules、kalman+hmm 三個版本；
+  - 新增 6 個情境：低信心閃爍、ROI 空＋電視聲、長時間安靜、慢慢離開、短暫走開、遠處路人；
+  - 新增「狀態切換/分」指標。
+- 新增 [`docs/PRESENCE_MODEL.md`](docs/PRESENCE_MODEL.md)。
+
 ## 0.5.0 — 2026-10-14
 
 - **Layer 4 追蹤**：新增 `tracker_mode`（`legacy`／`kalman`，預設 `legacy`，行為不變）。

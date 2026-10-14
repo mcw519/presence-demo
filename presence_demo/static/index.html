@@ -74,6 +74,9 @@ button.stop{background:var(--bad);border-color:var(--bad);color:#fff}
    <div class="stat"><small>ROI</small><b id="roiSt">—</b></div><div class="stat"><small>Session</small><b id="sess">—</b></div></div>
    <div class="meter" title="麥克風音量（黃線＝說話門檻、灰線＝噪音底）"><div class="lvl" id="lvl"></div><div class="flo" id="flo"></div><div class="thr" id="thr"></div></div>
   </div>
+  <div class="card" id="pCard" style="display:none"><h3>在場機率 <span id="pVal" style="font-weight:400"></span></h3>
+   <canvas id="pSpark" style="width:100%;height:60px;display:block" title="群組在場機率（最近 2 分鐘）。綠線＝回到 ACTIVE 門檻、黃線＝MAYBE_AWAY 門檻、紅線＝AWAY 門檻"></canvas>
+   <div class="hint" id="pHint"></div></div>
   <div class="card"><h3>倒數</h3>
    <div class="bar"><div class="lab"><span>靜默 → IDLE</span><span id="b1t"></span></div><div class="track"><div class="fill" id="b1" style="background:var(--idle)"></div></div></div>
    <div class="bar"><div class="lab"><span id="b2l">逾時 → AWAY</span><span id="b2t"></span></div><div class="track"><div class="fill" id="b2"></div><div class="mark" id="b2m"></div></div></div>
@@ -109,7 +112,7 @@ const DEF={face_roi:[0.2,0.05,0.8,0.95],show_face_roi:true,pose_enabled:false,po
  turned_away_early:true,turned_away_seconds:2,recede_ratio:0.1,distance_enabled:false,camera_hfov:60,face_width_m:0.15,shoulder_width_m:0.38,
  distance_calib:1,distance_ema:0.3,zone_min:0.4,zone_max:2,leave_distance:2.5,min_conf:0.6,cos_match:0.4,cos_weak:0.2,iou_match:0.3,embed_ema:0.15,join_seconds:2,grace_seconds:15,
  present_frames:2,absent_frames:3,idle_after:3,present_timeout:15,empty_timeout:5,base_timeout:20,maybe_away_frac:0.5,end_after_away:5,new_group_seconds:3,
- priority_mode:'vision',speech_join:'auto',tracker_mode:'legacy',coast_seconds:2,coast_present_conf:0.4,gate_mahalanobis:9.21,appearance_min_sim:0.6,appearance_ema:0.2,body_min_conf:0.4,present_max_silence:0,motion_gate:true,motion_threshold:0.015,force_detect_seconds:3,embed_throttle:true,embed_interval:3,embed_move_thresh:0.15,adaptive_fps:true,fps_low:0.5,fps_high:2,roi_crop:true,crop_margin:0.1,max_width:320,fps:1,vad_k:2.5,vad_min:0.005,vad_hang:400};
+ priority_mode:'vision',speech_join:'auto',presence_model:'rules',leave_halflife:0.6,detect_gain:4,lowconf_factor:0.15,p_active:0.8,p_maybe:0.6,p_away:0.3,away_hold_seconds:1,tracker_mode:'legacy',coast_seconds:2,coast_present_conf:0.4,gate_mahalanobis:9.21,appearance_min_sim:0.6,appearance_ema:0.2,body_min_conf:0.4,present_max_silence:0,motion_gate:true,motion_threshold:0.015,force_detect_seconds:3,embed_throttle:true,embed_interval:3,embed_move_thresh:0.15,adaptive_fps:true,fps_low:0.5,fps_high:2,roi_crop:true,crop_margin:0.1,max_width:320,fps:1,vad_k:2.5,vad_min:0.005,vad_hang:400};
 const CLIENT=['fps','vad_k','vad_min','vad_hang','show_face_roi','show_pose_roi'];
 const BOXES=['face_roi','pose_roi'];
 const S=(l,h,min,max,step,u='')=>({l,h,min,max,step,u});
@@ -138,6 +141,15 @@ const GROUPS=[
    end_after_away:S('AWAY 轉 ENDED','AWAY 持續多久後結束對話並清除 embedding。',0,120,1,'s'),
    new_group_seconds:S('換組確認時間','舊參與者都不見、新的一群人出現多久後觸發 NEW_GROUP。',0,60,0.5,'s')}]];
 const B=(l,h)=>({l,h,bool:true});
+GROUPS.push(['在場機率',{presence_model:{l:'在場判斷模型',h:'規則：用連續幀計數（有人／沒人）加逾時判斷（目前預設）。機率：每個人有一個「在場機率」，看到就往上、沒看到就往下，最後用整群的機率加門檻決定狀態，比較不怕偵測閃爍和短暫遮擋。搭配 Kalman 追蹤效果最好。',
+   opts:{rules:'規則',hmm:'機率'}},
+   leave_halflife:S('離開半衰期','機率模式：完全沒看到人時，「在場」的勝算每隔這麼多秒減半。越小越快判定離開。預設 0.6 s 約等於 ROI 空 5 秒判定 AWAY。',0.1,30,0.1,'s'),
+   detect_gain:S('偵測證據強度','機率模式：每秒偵測到人時，機率往上升的速度（乘上偵測信心）。越大回到 ACTIVE 越快。',0.1,20,0.1),
+   lowconf_factor:S('低信心衰減比例','機率模式：只有低信心偵測時，機率下降速度是「完全沒看到」的多少倍。小一點可以在光線不好時不輕易判定離開。',0,1,0.05),
+   p_active:S('ACTIVE 門檻','機率模式：群組機率高於這個值，才從 MAYBE_AWAY／AWAY 回到 ACTIVE。',0.05,0.99,0.01),
+   p_maybe:S('MAYBE_AWAY 門檻','機率模式：群組機率低於這個值，進入 MAYBE_AWAY。',0.02,0.98,0.01),
+   p_away:S('AWAY 門檻','機率模式：群組機率低於這個值並持續「AWAY 確認時間」，判定 AWAY。',0.01,0.95,0.01),
+   away_hold_seconds:S('AWAY 確認時間','機率模式：機率要持續低於 AWAY 門檻多久才判定 AWAY。',0,30,0.5,'s')}]);
 GROUPS.push(['追蹤',{tracker_mode:{l:'追蹤模式',h:'傳統：IoU + 臉部相似度，逐一貪婪配對（目前預設）。Kalman：每個人用 Kalman 濾波預測位置和速度，結合 IoU、移動距離、臉部相似度和衣服顏色（軀幹 HSV 直方圖，不需要模型），用匈牙利演算法一次配對；短暫被擋住時沿著預測位置繼續追蹤（虛線框）。',
    opts:{legacy:'傳統',kalman:'Kalman'}},
    coast_seconds:S('預測延續時間','Kalman：沒偵測到時，沿著預測位置繼續追蹤多久。之後就當作不可見（寬限期照常計算）。',0,10,0.5,'s'),
@@ -247,7 +259,16 @@ function connect(){ws=new WebSocket((location.protocol==='https:'?'wss://':'ws:/
 const STATES=['ACTIVE','IDLE','MAYBE_AWAY','AWAY','ENDED'];
 $('sm').innerHTML=STATES.map(x=>`<span id="st_${x}">${x.replace('_',' ')}</span>`).join('');
 const pct=(a,b)=>Math.max(0,Math.min(100,b>0?a/b*100:0))+'%';
+const PH=[];
+function drawP(s){const card=$('pCard');if(s.presence_model!=='hmm'){card.style.display='none';return}card.style.display='';
+ if(s.p_group!=null){PH.push([performance.now(),s.p_group]);while(PH.length&&performance.now()-PH[0][0]>120000)PH.shift()}
+ $('pVal').textContent=s.p_group!=null?`P = ${s.p_group.toFixed(2)}（影像 ${s.p_tracks!=null?s.p_tracks.toFixed(2):'—'}）`:'—';
+ $('pHint').textContent=`群組 P ≥ ${cfg.p_active} 回到 ACTIVE；< ${cfg.p_maybe} 進入 MAYBE_AWAY；< ${cfg.p_away} 持續 ${cfg.away_hold_seconds}s 判定 AWAY`;
+ const c=$('pSpark'),d=devicePixelRatio||1,r=c.getBoundingClientRect();c.width=r.width*d;c.height=r.height*d;const g=c.getContext('2d'),W=c.width,H=c.height;
+ g.clearRect(0,0,W,H);[[cfg.p_active,'#3fb950'],[cfg.p_maybe,'#d29922'],[cfg.p_away,'#f85149']].forEach(([v,col])=>{g.strokeStyle=col+'aa';g.setLineDash([4*d,4*d]);g.beginPath();g.moveTo(0,H-v*H);g.lineTo(W,H-v*H);g.stroke()});g.setLineDash([]);
+ if(PH.length>1){const t0=performance.now()-120000;g.strokeStyle='#58a6ff';g.lineWidth=2*d;g.beginPath();PH.forEach(([t,v],i)=>{const x=(t-t0)/120000*W,y=H-v*H;i?g.lineTo(x,y):g.moveTo(x,y)});g.stroke()}}
 function render(s){
+ drawP(s);
  STATES.forEach(x=>$('st_'+x).className=x===s.state?'cur '+x:'');
  const tr=[...s.log].reverse().find(e=>e.event==='transition');$('reason').textContent=tr?`${tr.frm} → ${tr.to}：${tr.reason}`:'—';
  $('pipe').textContent=s.pipeline?'模型：'+s.pipeline:'';
@@ -264,7 +285,7 @@ function render(s){
  const a=s.state==='AWAY'?s.in_state:0;$('b3').style.width=pct(a,cfg.end_after_away);$('b3t').textContent=s.state==='AWAY'?`${a.toFixed(1)} / ${cfg.end_after_away}s`:'—';
  $('people').innerHTML=s.tracks.length?s.tracks.map(t=>`<div class="person"><b style="color:${col(t)}">#${t.id}</b>
   <span class="badge">${t.participant?'★ 參與者':'候選'}</span><span class="sp">${t.visible_kind==='predicted'?`預測中 vis ${(t.vis_conf??0).toFixed(2)}`:t.visible?'可見':`消失 ${t.missing}s`}${t.dwell_seconds!=null?` · 停留 ${t.dwell_seconds}s`:''}${t.velocity?` · 速度 ${Math.hypot(...t.velocity).toFixed(2)}/s`:''}${t.has_face===false?' · 無臉(身體)':''}${t.facing?' · '+({facing:'正面',side:'側身',away:'背對'}[t.facing]):''}${t.distance!=null?` · ${t.distance} m ${TR[t.trend]||''}`:''}</span>
-  <small>相似 ${t.similarity.toFixed(2)} · conf ${t.conf.toFixed(2)}</small></div>`).join(''):'<div class="empty">目前沒有追蹤對象</div>';
+  <small>相似 ${t.similarity.toFixed(2)} · conf ${t.conf.toFixed(2)}</small>${t.p!=null?`<div class="track" title="此人在場機率 P" style="margin-top:4px;height:6px"><div class="fill" style="width:${(t.p*100).toFixed(0)}%;background:${t.p>=cfg.p_active?'var(--ok)':t.p>=cfg.p_away?'var(--warn)':'var(--bad)'}"></div></div><small>P ${t.p.toFixed(2)}</small>`:''}</div>`).join(''):'<div class="empty">目前沒有追蹤對象</div>';
  $('log').innerHTML=[...s.log].reverse().map(e=>`<div><span style="color:var(--mut)">${e.t.toFixed(1)}</span> <span class="ev ${e.event}">${e.event}</span> ${e.frm?e.frm+'→'+e.to:''} ${e.track?'#'+e.track:''} <span style="color:var(--mut)">${e.reason}</span></div>`).join('');
  draw();
 }

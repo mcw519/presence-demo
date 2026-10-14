@@ -1,4 +1,4 @@
-# 偵測邏輯詳解（依目前程式碼，v0.5.0）
+# 偵測邏輯詳解（依目前程式碼，v0.6.0）
 
 > 依據 `presence_demo/tracker.py`、`vision.py`、`optimizer.py`、`body.py`、`server.py`、`static/index.html` 的現行程式碼整理。括號內是預設值。座標都是正規化 0–1。
 
@@ -259,6 +259,27 @@ MAYBE_AWAY 沒有自己的遲滯：條件一消失，下一次評估就回到 AC
     - `update()`：ROI 內有**有信心而且不是 far** 的人（任何模式；far 用這一幀的距離估計判斷）；或在 balanced／audio 模式下正在說話。
     - `set_speech(True)`：只在 balanced／audio 模式。
   - 重新開始時 session +1，所有狀態重設：`empty=True`、`empty_since=now`、`last_speech=now`。
+
+### 6b. 在場機率模式（`presence_model=hmm`，`_hmm_update`／`_evaluate_hmm`）
+
+預設是上面的 rules。hmm 模式下，第 4 節的計數和本節的逾時表都不使用：
+
+- 每個 track 存一個對數勝算 L，每張幀加上 `rate × dt`，並限制在 P = 0.02–0.98 之間。rate 的來源：
+  - 偵測到：`+detect_gain × conf`；
+  - 預測中：較弱；
+  - 低信心幀：接近中立；
+  - 沒看到：每 `leave_halflife` 秒勝算減半；
+  - 轉身＋遠離、超出距離：往「離開」推。
+- 群組 P = sigmoid(參與者最大 L + 聲音證據 A)。A 的權重依 priority_mode：vision 幾乎是 0，balanced 中等，audio 最高。
+- 狀態判斷：
+  - P < `p_away` 持續 `away_hold_seconds` → AWAY；
+  - P < `p_maybe`（或已經在 MAYBE_AWAY 且 P < `p_active`）→ MAYBE_AWAY；
+  - 否則依靜默時間 → ACTIVE／IDLE。
+- AWAY 時 P ≥ `p_active` → ACTIVE（vision 只看影像的 P）；AWAY 持續 `end_after_away` → ENDED。
+- NEW_GROUP：舊參與者的 P 都 < `p_away`，而且新候選人的 P ≥ `p_active`。
+- 加入規則不變。
+
+詳細說明見 [PRESENCE_MODEL.md](PRESENCE_MODEL.md)。
 
 ## 7. NEW_GROUP（`_check_new_group`，只在不是 ENDED 時檢查）
 

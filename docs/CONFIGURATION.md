@@ -64,6 +64,21 @@
 | `appearance_min_sim` | 0.6 | 0–1 | 看不到臉時，衣服顏色（軀幹 HSV 直方圖，Bhattacharyya 係數）低於這個值就視為不同的人 |
 | `appearance_ema` | 0.2 | 0–1 | 衣服顏色模板的更新率 |
 
+## 在場機率（Layer 2）
+
+數學說明和評估見 [PRESENCE_MODEL.md](PRESENCE_MODEL.md)。除了 `presence_model`，其他參數只在 `hmm` 模式下有作用；`hmm` 模式不使用 `present_frames`／`absent_frames` 和各模式的逾時。
+
+| 參數 | 預設 | 範圍 | 說明 |
+|---|---|---|---|
+| `presence_model` | `rules` | `rules`／`hmm` | 判斷模型。rules：計數＋逾時；hmm：每個人的在場機率 |
+| `leave_halflife` | 0.6 | 0.1–30 s | 完全沒看到人時，在場勝算減半的時間。預設約 5 s 判定 AWAY |
+| `detect_gain` | 4.0 | 0.1–20 | 偵測證據強度（每秒，乘上信心） |
+| `lowconf_factor` | 0.15 | 0–1 | 只有低信心偵測時，下降速度是「完全沒看到」的幾倍 |
+| `p_active` | 0.8 | 0.05–0.99 | 群組 P ≥ 這個值才回到 ACTIVE |
+| `p_maybe` | 0.6 | 0.02–0.98 | 群組 P < 這個值進入 MAYBE_AWAY |
+| `p_away` | 0.3 | 0.01–0.95 | 群組 P < 這個值並持續 `away_hold_seconds`，判定 AWAY |
+| `away_hold_seconds` | 1.0 | 0–30 s | AWAY 確認時間 |
+
 ## 姿勢（選用，預設關閉）
 
 | 參數 | 預設 | 範圍 | 說明 |
