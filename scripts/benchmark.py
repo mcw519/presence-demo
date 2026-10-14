@@ -6,7 +6,10 @@ Nothing is written to disk.
 Scenario (simulated time): 0-15 s person static, 15-30 s person shifting, 30-45 s empty ROI,
 45-60 s person back (static). Frames get light sensor noise.
 
-    uv run python scripts/benchmark.py
+    uv run python scripts/benchmark.py              # optimizations off vs on (60 s scenario)
+    uv run python scripts/benchmark.py --latency    # per-stage latency p50/p95/max per config x input
+    uv run python scripts/benchmark.py --ws         # end-to-end over a localhost WebSocket (starts and
+                                                    # stops a temporary server on 127.0.0.1)
 """
 
 from __future__ import annotations
@@ -92,11 +95,182 @@ def run(pipe: VisionPipeline, cfg: Config, fixed_fps: float, label: str) -> dict
 OFF = dict(motion_gate=False, embed_throttle=False, adaptive_fps=False, roi_crop=False, max_width=1920)
 
 
+# ---------------------------------------------------------------- per-stage latency
+LAT_CONFIGS = {
+    "legacy+rules+rules": dict(tracker_mode="legacy", presence_model="rules", intent_model="rules"),
+    "kalman+hmm+score": dict(tracker_mode="kalman", presence_model="hmm", intent_model="score"),
+}
+STAGES = ("decode", "motion", "detect", "embed", "pose", "appearance", "tracker", "presence", "intent", "total")
+
+
+def synth(kind: str, w: int, h: int, i: int, face: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    """In-memory frame: 'face' (person moving slightly), 'static' (identical every time), 'empty'."""
+    img = np.full((h, w, 3), 90, np.uint8)
+    img[:, :, 0] = np.linspace(60, 140, w, dtype=np.uint8)
+    if kind in ("face", "static"):
+        fh = int(h * 0.75)
+        fw = int(fh * 240 / 360)
+        f = cv2.resize(face, (fw, fh))
+        dx = 0 if kind == "static" else int(0.06 * w * np.sin(i * 0.9))
+        x, y = (w - fw) // 2 + dx, (h - fh) // 2
+        img[y : y + fh, x : x + fw] = f
+    if kind != "static":
+        img = np.clip(img.astype(np.int16) + rng.normal(0, 2.0, img.shape).astype(np.int16), 0, 255).astype(np.uint8)
+    return img
+
+
+def latency(frames: int) -> None:
+    pipe = VisionPipeline()
+    face = cv2.imread(str(FACE))
+    inputs = [
+        ("人臉 640×480（移動）", "face", 640, 480),
+        ("人臉 1280×720（移動）", "face", 1280, 720),
+        ("空畫面 640×480", "empty", 640, 480),
+        ("靜止畫面 640×480（移動閘門）", "static", 640, 480),
+    ]
+    print(
+        f"Pipeline: {pipe.name} · {frames} 張/列（前 3 張暖機不計）· 2 fps 模擬時間 · 距離開啟 · "
+        "單位 ms，p50 / p95 / max"
+    )
+    print("| 設定 | 姿勢 | 輸入 | " + " | ".join(STAGES) + " | 跳過率 |")
+    print("|" + "---|" * (len(STAGES) + 4))
+    for cname, ckw in LAT_CONFIGS.items():
+        for pose in (False, True):
+            for iname, kind, w, h in inputs:
+                cfg = Config(pose_enabled=pose, distance_enabled=True, **ckw)
+                clk = SimClock()
+                proc = FrameProcessor(pipe, clock=clk, pose_loader=load_pose_detector)
+                tr = PresenceTracker(cfg, clock=clk)
+                rng = np.random.default_rng(0)
+                rows, skipped = [], 0
+                static_jpg = None
+                for i in range(frames + 3):
+                    if kind == "static" and static_jpg is not None:
+                        jpg = static_jpg
+                    else:
+                        im = synth(kind, w, h, i, face, rng)
+                        jpg = cv2.imencode(".jpg", im, [cv2.IMWRITE_JPEG_QUALITY, 70])[1].tobytes()
+                        del im
+                        static_jpg = jpg if kind == "static" else None
+                    t0 = time.perf_counter()
+                    img, dec = decode_jpeg(jpg)
+                    dets, tm = proc.process(img, cfg, tr.state.value not in ("MAYBE_AWAY", "AWAY"))
+                    tr.update(dets, speaking=False)
+                    total = (time.perf_counter() - t0) * 1000
+                    del img
+                    clk.t += 0.5
+                    if i < 3:
+                        continue
+                    skipped += bool(tm.get("skipped"))
+                    rows.append(
+                        {"decode": dec, **{k: tm.get(k, 0.0) for k in STAGES[1:6]}, **tr.timings, "total": total}
+                    )
+                cells = []
+                for st in STAGES:
+                    a = np.array([r.get(st, 0.0) for r in rows])
+                    cells.append(f"{np.percentile(a, 50):.1f} / {np.percentile(a, 95):.1f} / {a.max():.1f}")
+                print(
+                    f"| {cname} | {'開' if pose else '關'} | {iname} | "
+                    + " | ".join(cells)
+                    + f" | {skipped / len(rows):.0%} |"
+                )
+
+
+# ---------------------------------------------------------------- end-to-end WebSocket
+def ws_bench(frames: int, port: int) -> None:
+    import asyncio
+    import base64
+    import json
+    import subprocess
+    import sys
+
+    import websockets
+
+    srv = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "uvicorn",
+            "presence_demo.server:app",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+            "--log-level",
+            "warning",
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    face = cv2.imread(str(FACE))
+
+    async def one(ckw: dict, pose: bool, fps: float) -> list[float]:
+        async with websockets.connect(f"ws://127.0.0.1:{port}/ws", max_size=None) as ws:
+            cfg = {"pose_enabled": pose, "distance_enabled": True, "adaptive_fps": False, **ckw}
+            await ws.send(json.dumps({"type": "config", "config": cfg}))
+            await ws.send(json.dumps({"type": "start"}))
+            rng = np.random.default_rng(0)
+            lat = []
+            for i in range(frames + 2):
+                im = synth("face", 640, 480, i, face, rng)
+                b64 = base64.b64encode(cv2.imencode(".jpg", im, [cv2.IMWRITE_JPEG_QUALITY, 70])[1]).decode()
+                del im
+                t0 = time.perf_counter()
+                await ws.send(json.dumps({"type": "frame", "data": "data:image/jpeg;base64," + b64, "speech": False}))
+                while True:  # skip ticker/stats messages; a processed frame carries 'detections'
+                    m = json.loads(await ws.recv())
+                    if m.get("type") == "state" and "detections" in m:
+                        break
+                dt = time.perf_counter() - t0
+                if i >= 2:
+                    lat.append(dt * 1000)
+                await asyncio.sleep(max(0.0, 1.0 / fps - dt))
+            await ws.send(json.dumps({"type": "stop"}))
+            return lat
+
+    async def main_ws():
+        for _ in range(100):  # wait for the server
+            try:
+                async with websockets.connect(f"ws://127.0.0.1:{port}/ws"):
+                    break
+            except OSError:
+                await asyncio.sleep(0.2)
+        print(
+            f"WebSocket 127.0.0.1:{port} · 640×480 JPEG q70 · 送出 → 收到該張的 state · {frames} 張/列（前 2 張不計）"
+        )
+        print("| 設定 | 姿勢 | fps | p50 | p95 | max |")
+        print("|---|---|---|---|---|---|")
+        for cname, ckw in LAT_CONFIGS.items():
+            for pose in (False, True):
+                for fps in (1.0, 2.0):
+                    a = np.array(await one(ckw, pose, fps))
+                    print(
+                        f"| {cname} | {'開' if pose else '關'} | {fps:g} | {np.percentile(a, 50):.1f} | "
+                        f"{np.percentile(a, 95):.1f} | {a.max():.1f} |"
+                    )
+
+    try:
+        asyncio.run(main_ws())
+    finally:
+        srv.terminate()
+        srv.wait(timeout=10)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--fps", type=float, default=1.0, help="fixed fps when adaptive fps is off")
     ap.add_argument("--repeat", type=int, default=3)
+    ap.add_argument("--latency", action="store_true", help="per-stage latency table")
+    ap.add_argument("--ws", action="store_true", help="end-to-end latency over a localhost WebSocket")
+    ap.add_argument("--frames", type=int, default=40)
+    ap.add_argument("--port", type=int, default=8799)
     a = ap.parse_args()
+    if a.latency or a.ws:
+        if a.latency:
+            latency(a.frames)
+        if a.ws:
+            ws_bench(a.frames, a.port)
+        return
     cv2.setNumThreads(cv2.getNumThreads())
     pipe = VisionPipeline()
     variants = [

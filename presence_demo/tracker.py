@@ -461,10 +461,13 @@ class PresenceTracker:
         ):
             self._start(now, "person in ROI" if starters and not score else "speech detected")
 
+        _t0 = time.perf_counter()
+        self._intent_ms = 0.0
         if self.cfg.tracker_mode == "kalman":
             self._match_kalman(confident, now)
         else:
             self._match(confident, now)
+        _t1 = time.perf_counter()
         if self.state == State.ENDED and score and any(t.participant for t in self.tracks.values()):
             # score mode: a session starts only when somebody shows interaction intent (not any passer-by)
             keep = dict(self.tracks)
@@ -486,6 +489,13 @@ class PresenceTracker:
         if self.state != State.ENDED:
             self._check_new_group(now)
         self._evaluate(now)
+        _t2 = time.perf_counter()
+        # per-stage timings (ms) of the last update, for benchmarks/stats; intent runs inside matching
+        self.timings = {
+            "tracker": (_t1 - _t0) * 1000 - self._intent_ms,
+            "intent": self._intent_ms,
+            "presence": (_t2 - _t1) * 1000,
+        }
         return self.snapshot(now)
 
     def _min_conf(self, d: Detection) -> float:
@@ -714,7 +724,9 @@ class PresenceTracker:
         c = self.cfg
         score = c.intent_model == "score"
         if score:
+            _ti = time.perf_counter()
             self._update_intent(now)
+            self._intent_ms = getattr(self, "_intent_ms", 0.0) + (time.perf_counter() - _ti) * 1000
             for t in self.tracks.values():
                 # drop only while we can see the person being disengaged; absence is Layer 2's job
                 if (

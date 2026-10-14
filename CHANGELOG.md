@@ -1,5 +1,13 @@
 # Changelog
 
+## 未發布
+
+- `scripts/benchmark.py` 新增兩種模式：
+  - `--latency`：各階段 p50／p95／max（設定 × 輸入）；
+  - `--ws`：本機 WebSocket 端到端延遲（暫時啟動伺服器，量完自動關閉）。
+- `PresenceTracker.timings`：記錄最近一次 update 的 tracker／intent／presence 耗時（ms）。
+- PERFORMANCE.md 新增 v0.7.0 的每幀延遲結果。
+
 ## 0.7.0 — 2026-10-14
 
 - **Layer 3 互動意圖**：新增 `intent_model`（`rules`／`score`，預設 `rules`，行為不變）。
