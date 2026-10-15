@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.2 — 2026-10-15
+
+- **修正**：balanced／audio priority + rules 在場模型下，在場但沉默的人讓狀態每 0.5 s 在 AWAY 和 ACTIVE 之間來回跳、session 永遠不會結束。
+  - 從 AWAY 回來現在需要**新的證據**：說話開始、確認沒人後再出現，或進入 AWAY 時不在畫面上的新人。人一直待著不算。回來時重設靜默計時。
+  - 因 AWAY 逾時而 ENDED 後，同一個人一直待著不會立刻開始新的 session（rules 和 hmm 都適用；hmm 以前會這樣不斷重開）。要說話，或離開後再出現。
+  - 新的時間（有人在場但沉默，預設值）：balanced rules 7.5 s MAYBE／15 s AWAY／20 s ENDED；audio rules 15／30／35 s；balanced hmm 約 14.5／20.5／25.5 s；audio hmm 約 11.5／16.5／21.5 s。
+  - vision 模式行為不變。
+- 新增 `tests/test_away_return.py`：3 種 priority × 2 種在場模型的回歸測試，加上 score 意圖模式。
+
 ## 未發布（文件）
 
 - `docs/ALGORITHM.md` 改寫成演算法架構總文件（v0.8.1）：端到端資料流、各層的公式和預設值、priority_mode 的影響、模式矩陣與建議預設、時間表、效能／隱私／授權、已知限制。所有數字都已經和程式碼預設值核對，時間表用模擬實測。

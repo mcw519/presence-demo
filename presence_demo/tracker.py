@@ -404,6 +404,13 @@ class PresenceTracker:
         self.p_tracks: float | None = None
         self.timeout = self.cfg.base_timeout
         self.session = getattr(self, "session", 0) + (0 if initial else 1)
+        # AWAY bookkeeping (balanced/audio): a return needs *new* evidence, not continued presence
+        self._away_ids: set[int] = set()
+        self._away_absent_seen = False
+        if initial:
+            # after an away-timeout ENDED (balanced/audio), continued presence must not restart a session
+            self._restart_needs_fresh = False
+            self._restart_absent_seen = False
 
     def _event(self, now, kind, reason, **extra):
         e = {"t": round(now, 3), "event": kind, "reason": reason, **extra}
@@ -411,17 +418,25 @@ class PresenceTracker:
         self.log = self.log[-200:]
 
     def _set_state(self, now, new, reason):
+        if new == State.AWAY and self.state != State.AWAY:
+            self._away_ids = {t.id for t in self.tracks.values() if t.visible}
+            self._away_absent_seen = not self.present
         if new != self.state:
             self._event(now, "transition", reason, frm=self.state.value, to=new.value)
             self.state = new
             self.state_since = now
 
-    def _end(self, now, reason):
+    def _end(self, now, reason, away_timeout: bool = False):
+        # balanced/audio: a session that timed out while people may still be in view must not restart from
+        # that same continued presence; a restart then needs speech or a vision re-entry (seen absent first)
+        self._restart_needs_fresh = away_timeout and self.cfg.priority_mode != "vision"
+        self._restart_absent_seen = not self.present
         self._set_state(now, State.ENDED, reason)
         self.tracks.clear()  # drop embeddings
         self.present, self.empty = False, True
 
     def _start(self, now, reason):
+        self._restart_needs_fresh = False
         speaking = self.speaking
         self._reset_session(now)
         self.speaking = speaking
@@ -473,8 +488,11 @@ class PresenceTracker:
         starters = [d for d in confident if not self._det_far(d)]
 
         score = self.cfg.intent_model == "score"
+        if self.state == State.ENDED and self._restart_needs_fresh and not starters:
+            self._restart_absent_seen = True  # ROI seen without anyone confident: a later arrival is new
+        vision_start_ok = not self._restart_needs_fresh or self._restart_absent_seen
         if self.state == State.ENDED and (
-            (starters and not score) or (self.speaking and self.cfg.priority_mode != "vision")
+            (starters and not score and vision_start_ok) or (self.speaking and self.cfg.priority_mode != "vision")
         ):
             self._start(now, "person in ROI" if starters and not score else "speech detected")
 
@@ -485,7 +503,7 @@ class PresenceTracker:
         else:
             self._match(confident, now)
         _t1 = time.perf_counter()
-        if self.state == State.ENDED and score and any(t.participant for t in self.tracks.values()):
+        if self.state == State.ENDED and score and vision_start_ok and any(t.participant for t in self.tracks.values()):
             # score mode: a session starts only when somebody shows interaction intent (not any passer-by)
             keep = dict(self.tracks)
             self._start(now, "intent from #" + ",".join(str(t.id) for t in keep.values() if t.participant))
@@ -1015,7 +1033,7 @@ class PresenceTracker:
             if p_ret >= c.p_active:
                 self._set_state(now, State.ACTIVE, "user returned (P=%.2f)" % p_ret)
             elif now - self.state_since >= c.end_after_away:
-                self._end(now, f"away for {c.end_after_away:.0f}s")
+                self._end(now, f"away for {c.end_after_away:.0f}s", away_timeout=True)
             return
         capped = c.priority_mode == "vision" and c.present_max_silence > 0 and silence >= c.present_max_silence
         if capped:
@@ -1065,12 +1083,35 @@ class PresenceTracker:
             self.timeout, elapsed, why = c.base_timeout, silence, "silence %.0fs (vision uncertain)"
         self.elapsed = elapsed
         # vision mode: only a confident person brings the conversation back (speech alone never does)
-        returned = self.present if mode == "vision" else (self.speaking or self.present)
         if self.state == State.AWAY:
+            if mode == "vision":
+                returned, why_ret = self.present, "user returned"
+            else:
+                # balanced/audio: only NEW evidence brings the conversation back. Speech now (AWAY is only
+                # entered after silence, so this is a speech onset), or a vision re-entry: present again after
+                # the ROI was seen without anyone, or a person who was not visible when AWAY began.
+                if not self.present:
+                    self._away_absent_seen = True
+                newcomer = any(
+                    t.visible and t.visible_kind == "detected" and not t.far and t.id not in self._away_ids
+                    for t in self.tracks.values()
+                )
+                returned = self.speaking or (self.present and (self._away_absent_seen or newcomer))
+                why_ret = (
+                    "speech onset"
+                    if self.speaking
+                    else "new person in view"
+                    if newcomer and not self._away_absent_seen
+                    else "user returned"
+                )
             if returned:
-                self._set_state(now, State.ACTIVE, "user returned")
+                if mode != "vision":
+                    # the return is fresh engagement: restart the silence clock, otherwise the same silence
+                    # would send the session straight back to AWAY on the next evaluation
+                    self.last_speech = now
+                self._set_state(now, State.ACTIVE, why_ret)
             elif now - self.state_since >= c.end_after_away:
-                self._end(now, f"away for {c.end_after_away:.0f}s")
+                self._end(now, f"away for {c.end_after_away:.0f}s", away_timeout=True)
             return
         early = (
             self._away_cue_since is not None

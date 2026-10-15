@@ -1,4 +1,4 @@
-# 演算法架構總覽（v0.8.1）
+# 演算法架構總覽（v0.8.2）
 
 > 這份是**總文件**：完整說明目前程式碼實作的演算法，從瀏覽器擷取畫面到最後的狀態輸出。內容依據 `presence_demo/` 下的 `tracker.py`、`optimizer.py`、`vision.py`、`embed_backends.py`、`body.py`、`appearance.py`、`kalman.py`、`intent.py`、`presence_model.py`、`server.py` 和 `static/index.html` 整理，所有預設值都已經和 `Config` 核對過。
 >
@@ -382,7 +382,7 @@ stateDiagram-v2
   ACTIVE --> AWAY: timeout ＞ 0 且 elapsed ≥ timeout
   IDLE --> AWAY: 同上
   MAYBE_AWAY --> AWAY: 同上
-  AWAY --> ACTIVE: vision：present；balanced／audio：present 或說話
+  AWAY --> ACTIVE: vision：present；balanced／audio：新的證據（說話開始、離開後再出現、新的人）
   AWAY --> ENDED: 在 AWAY ≥ end_after_away（5 s）
   ACTIVE --> ACTIVE: NEW_GROUP → 新 session
 ```
@@ -391,7 +391,14 @@ stateDiagram-v2
 
 1. 狀態是 ENDED → 不做任何事。
 2. 依照 §2.5 的表決定 timeout 和 elapsed。
-3. 狀態是 AWAY：回來了就切到 ACTIVE；否則在 AWAY 已經 $\ge$ 5 s 就切到 ENDED。然後結束這次評估。
+3. 狀態是 AWAY：回來了就切到 ACTIVE；否則在 AWAY 已經 $\ge$ 5 s 就切到 ENDED。然後結束這次評估。「回來」的條件：
+   - vision：`present`（和以前相同）。
+   - balanced／audio（v0.8.2 起）：必須是**新的證據**，人一直待著不算：
+     - 正在說話（AWAY 只會在靜默後進入，所以這代表重新開始說話）；
+     - 進入 AWAY 時或之後曾經確認沒人，現在又 `present`；
+     - 出現進入 AWAY 時不在畫面上的新 track（這一幀有偵測到、非 far）。
+     
+     回來時把靜默計時歸零（`last_speech = now`），否則同樣的靜默會在下一次評估又把狀態送回 AWAY。
 4. timeout $>0$ 而且 elapsed $\ge$ timeout → AWAY。
 5. 轉身提早成立 → MAYBE_AWAY。
 6. elapsed $\ge 0.5\times$timeout（vision、present、靜默 $<3$ s 的情況除外）→ MAYBE_AWAY。
@@ -424,6 +431,7 @@ stateDiagram-v2
 - 0.6 和 0.8 之間是遲滯區：進入 MAYBE_AWAY 之後，要回到 0.8 以上才算恢復。
 - vision 模式下，`present_max_silence > 0` 而且靜默達到上限時會直接進入 AWAY。
 - **進入 ENDED**：清空所有 track 和 embedding。下一個 session 的編號 +1，計時全部重設。
+- **逾時 ENDED 之後的重新開始**（v0.8.2 起，rules 和 hmm 都適用）：balanced／audio 模式下，如果是因為 AWAY 滿 `end_after_away` 而 ENDED，同一個人一直待在畫面上**不會**立刻開始新的 session。要開始新的 session，必須先確認 ROI 裡沒有有信心的人，之後再有人出現；或者有人說話（balanced／audio 本來就允許說話開始）。vision 模式不受影響。
 
 ### 2.8 自適應 fps 和輸出
 
@@ -452,7 +460,8 @@ stateDiagram-v2
 | rules：有人在場時 | 不會因靜默離開 | 靜默 15 s 進入 AWAY | 靜默 30 s 進入 AWAY |
 | rules：ROI 空時 | 空 5 s 進入 AWAY，不管聲音 | min(靜默, 空的時間) 達 5 s | 靜默 10 s |
 | rules：不確定時 | 靜默 20 s | 靜默 20 s | 靜默 20 s |
-| 從 AWAY 回來 | 只有 present／$P_\text{影像}$ | present 或說話／$P_g$ | 同 balanced |
+| 從 AWAY 回來 | 只有 present／$P_\text{影像}$ | rules：新的證據（說話開始、離開後再出現、新的人）；hmm：$P_g\ge$ `p_active` | 同 balanced |
+| AWAY 逾時 ENDED 後 | 人在就立刻重新開始 | 人一直待著不會重新開始；要先離開再出現，或說話 | 同 balanced |
 | hmm 聲音偏移 $A$ | 說話 +0.25，靜默 0 | 說話 +4.0，靜默最低 −4.8 | 說話 +5.0，靜默最低 −6.0 |
 | hmm 完全沒有 track 時的 $P$ | 0.02 | 0.5 | 0.5 |
 | `present_max_silence` 靜默上限 | 有效 | 不使用 | 不使用 |
@@ -503,8 +512,10 @@ stateDiagram-v2
 | priority | rules | hmm |
 |---|---|---|
 | vision | 不會離開（3 s 後變 IDLE） | 不會離開 |
-| balanced | 7.5 s MAYBE，15 s AWAY，**之後在 AWAY 和 ACTIVE 之間來回跳**（見 §7 第 1 點） | 約 14.5 s MAYBE，約 20.5 s AWAY，約 25.5 s ENDED，接著因為人還在而立刻開始新的 session |
-| audio | 15 s MAYBE，30 s AWAY，之後同樣來回跳 | 約 11.5 s MAYBE，約 16.5 s AWAY，約 21.5 s ENDED，接著重新開始 |
+| balanced | 7.5 s MAYBE，15 s AWAY，20 s ENDED；之後保持 ENDED，直到有人說話或離開後再出現 | 約 14.5 s MAYBE，約 20.5 s AWAY，約 25.5 s ENDED；之後同左 |
+| audio | 15 s MAYBE，30 s AWAY，35 s ENDED；之後同上 | 約 11.5 s MAYBE，約 16.5 s AWAY，約 21.5 s ENDED；之後同上 |
+
+（v0.8.1 以前：rules 在 AWAY 後每 0.5 s 在 AWAY 和 ACTIVE 之間來回跳、永遠不會結束；hmm 在 ENDED 後因為人還在而立刻開始新的 session。v0.8.2 已修正，見 §7。）
 
 **其他時間**：
 
@@ -557,12 +568,7 @@ stateDiagram-v2
 
 ### 演算法行為
 
-1. **balanced／audio + rules 模式下，在場但沉默的人會讓狀態在 AWAY 和 ACTIVE 之間來回跳**：
-   - 靜默達到 timeout（balanced 15 s、audio 30 s）就進入 AWAY；
-   - 但在這兩個模式下 `returned = speaking or present`，人還在畫面裡，所以下一次評估（約 0.5 s 後）又回到 ACTIVE；接著又因為靜默超過 timeout 再次進入 AWAY。
-   - 這會持續到有人說話或離開，而且永遠不會進入 ENDED。
-   - vision 模式和 hmm 模型沒有這個問題。hmm 在這兩個模式下會走 AWAY → ENDED，然後因為人還在，立刻開始新的 session。
-   - 需要修正，例如在 AWAY 時只有「新的證據」才算回來。程式碼這次沒有改。
+1. **（v0.8.2 已修正）balanced／audio + rules 模式下，在場但沉默的人讓狀態在 AWAY 和 ACTIVE 之間來回跳**：以前 `returned = speaking or present`，人一直在畫面裡，所以每 0.5 s 就回到 ACTIVE，然後又因為靜默逾時回到 AWAY，永遠不會 ENDED。現在回來必須是新的證據，回來時重設靜默計時；逾時 ENDED 之後，同一個人一直待著也不會重新開始 session（hmm 原本有這個「ENDED 後立刻重新開始」的問題，一起修正）。vision 模式的行為不變。`tests/test_away_return.py` 涵蓋 3 種 priority × 2 種在場模型。
 2. **balanced 模式下 `present_timeout`（15 s）比 `base_timeout`（20 s）短**：有人在場時反而比影像不確定時更快離開，和 audio 模式（有人時 ×1.5）方向相反。
 3. **移動閘門沿用的結果仍然算「有偵測到」**：人離開時的動作很小（$\Delta<0.015$）的話，最多要等 3 s 的強制偵測才會發現。hmm 的 $L$ 在這段時間也會維持在高點。
 4. **hmm 只在收到幀時積分**：fps 很低或網路中斷時，$P$ 不會下降，狀態會停在最後的判斷。

@@ -10,6 +10,6 @@ stateDiagram-v2
   ACTIVE --> AWAY: timeout ＞ 0 且 elapsed ≥ timeout
   IDLE --> AWAY: 同上
   MAYBE_AWAY --> AWAY: 同上
-  AWAY --> ACTIVE: 回來<br/>vision：present（說話不算）<br/>balanced／audio：present 或說話
+  AWAY --> ACTIVE: 回來<br/>vision：present（說話不算）<br/>balanced／audio：新的證據<br/>（說話開始、離開後再出現、新的人）
   AWAY --> ENDED: 在 AWAY ≥ end_after_away（5 s）<br/>清空所有 track 與 embedding
   ACTIVE --> ACTIVE: NEW_GROUP（舊組消失 + 新人待滿 join_seconds，持續 3 s）→ 新 session
