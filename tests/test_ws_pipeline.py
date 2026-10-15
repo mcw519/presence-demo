@@ -27,7 +27,7 @@ def test_ws_frame_and_vad_roundtrip():
         ws.send_json({"type": "config", "config": {"priority_mode": "balanced"}})
         ws.send_json({"type": "start"})
         ws.send_json({"type": "vad", "speech": True})
-        for _ in range(5):
+        for _ in range(30):
             s = ws.receive_json()
             if s.get("speaking"):
                 break

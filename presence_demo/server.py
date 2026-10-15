@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import collections
 import concurrent.futures
 import contextlib
+import faulthandler
 import json
 import logging
 import os
@@ -20,6 +22,7 @@ from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, PlainTextResponse
 
 from . import asr as asrmod
+from . import diag
 from .audio import AudioStream, puresound_available
 from .body import calibration_factor
 from .optimizer import FrameProcessor, recommend_fps
@@ -27,7 +30,6 @@ from .stats import ConnStats, build_stats
 from .tracker import RANGES, Config, PresenceTracker
 from .vision import VisionPipeline, decode_jpeg, load_pose_detector
 
-logging.basicConfig(level=logging.INFO)
 STATIC = Path(__file__).parent / "static"
 app = FastAPI(title="Presence demo")
 _pipeline: VisionPipeline | None = None
@@ -42,13 +44,25 @@ async def require_token(request: Request, call_next):
 
 
 _pose_cache: dict = {}
+_PIPE_LOCK = threading.Lock()
 
 
 def pose_detector():
     """Load the pose detector once per process (downloads MoveNet MultiPose Lightning on first use)."""
     if "det" not in _pose_cache:
-        _pose_cache["det"] = load_pose_detector()
-        logging.info("pose detector: %s", _pose_cache["det"].name if _pose_cache["det"] else "unavailable")
+        t = time.perf_counter()
+        try:
+            _pose_cache["det"] = load_pose_detector()
+        except Exception as e:  # noqa: BLE001
+            _pose_cache["det"] = None
+            diag.event("pose_load_failed", "error", error=f"{type(e).__name__}: {e}")
+        det = _pose_cache["det"]
+        diag.event(
+            "module_init",
+            module="pose",
+            name=det.name if det else "unavailable",
+            ms=round((time.perf_counter() - t) * 1000, 1),
+        )
     return _pose_cache["det"]
 
 
@@ -76,21 +90,38 @@ VISION_LOCK = threading.Lock()
 AUDIO_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="audio")
 
 
-def _vision_job(proc: FrameProcessor, data: bytes, cfg, stable: bool):
+class VisionBusy(RuntimeError):
+    """The shared vision lock could not be acquired in time (another inference is hung or very slow)."""
+
+
+def _vision_job(proc: FrameProcessor, data: bytes, cfg, stable: bool, conn: str | None = None):
     img, dec_ms = decode_jpeg(data)  # in memory only
     if img is None:
         return None
-    with VISION_LOCK:
+    t0 = time.perf_counter()
+    if not VISION_LOCK.acquire(timeout=VISION_LOCK_TIMEOUT):
+        diag.event("vision_lock_timeout", "error", conn, waited_s=VISION_LOCK_TIMEOUT)
+        diag.log.error("stack dump (vision_lock_timeout)\n%s", diag.dump_stacks())
+        raise VisionBusy(f"vision lock not acquired within {VISION_LOCK_TIMEOUT} s")
+    try:
+        wait_ms = (time.perf_counter() - t0) * 1000
         dets, tm = proc.process(img, cfg, stable)
+    finally:
+        VISION_LOCK.release()
+    tm["lock_wait"] = wait_ms
     tm.update(decode=dec_ms, w=img.shape[1], h=img.shape[0])
     return dets, tm
 
 
 def pipeline() -> VisionPipeline:
     global _pipeline
-    if _pipeline is None:
-        _pipeline = VisionPipeline()
-        logging.info("vision pipeline: %s", _pipeline.name)
+    with _PIPE_LOCK:  # two connections opening at once must not build two pipelines
+        if _pipeline is None:
+            t = time.perf_counter()
+            _pipeline = VisionPipeline()
+            diag.event(
+                "module_init", module="vision", name=_pipeline.name, ms=round((time.perf_counter() - t) * 1000, 1)
+            )
     return _pipeline
 
 
@@ -126,12 +157,82 @@ async def asr_key(request: Request):
     return asrmod.set_key(str(body.get("key") or "")[:256])
 
 
+@app.get("/debug/events")
+def debug_events(n: int = 200, conn: str | None = None):
+    """Recent structured events (token-protected by the middleware; no media, keys or transcript text)."""
+    return {"events": diag.recent(max(1, min(n, 2000)), conn)}
+
+
+VISION_LOCK_TIMEOUT = float(os.environ.get("PRESENCE_VISION_LOCK_TIMEOUT", "10"))
+WARN_FRAME_MS = float(os.environ.get("PRESENCE_WARN_FRAME_MS", "500"))
+HEARTBEAT_S = float(os.environ.get("PRESENCE_HEARTBEAT_S", "10"))
+STALL_S = float(os.environ.get("PRESENCE_STALL_S", "5"))
+SEND_AUDIO_MAX = 50  # queued outbound audio messages (~1 s); more -> new audio is dropped (slow client)
+SEND_AUDIO_STALE = 0.3  # an audio message waiting longer than this is skipped if newer audio is queued
+SEND_JSON_MAX = 60  # queued droppable JSON messages; more -> drop (state/meta are superseded by the next one)
+
+
+class Outbox:
+    """Non-blocking outbound queue for one WebSocket: processing never awaits the network (a slow client used to
+    block the vision/audio workers on ``send``). Audio and droppable JSON are dropped when the backlog grows."""
+
+    def __init__(self, sock: WebSocket):
+        self.sock, self.q = sock, collections.deque()
+        self.ev = asyncio.Event()
+        self.n_audio = self.n_json = 0
+        self.sent = self.dropped_audio = self.dropped_json = 0
+        self.send_ms_max = 0.0
+        self.last_send = time.monotonic()
+
+    def post(self, item, *, audio: bool = False, droppable: bool = False) -> None:
+        if audio and self.n_audio >= SEND_AUDIO_MAX:
+            self.dropped_audio += 1
+            return
+        if droppable and self.n_json >= SEND_JSON_MAX:
+            self.dropped_json += 1
+            return
+        self.n_audio += audio
+        self.n_json += droppable
+        self.q.append((item, audio, droppable, time.monotonic()))
+        self.ev.set()
+
+    def backlog(self) -> int:
+        return len(self.q)
+
+    async def run(self) -> None:
+        while True:
+            if not self.q:
+                self.ev.clear()
+                await self.ev.wait()
+                continue
+            item, audio, droppable, t_post = self.q.popleft()
+            self.n_audio -= audio
+            self.n_json -= droppable
+            if audio and self.n_audio and time.monotonic() - t_post > SEND_AUDIO_STALE:
+                self.dropped_audio += 1  # catch up: playback latency matters more than completeness
+                continue
+            t0 = time.perf_counter()
+            if isinstance(item, bytes):
+                await self.sock.send_bytes(item)
+            else:
+                await self.sock.send_text(json.dumps(item, separators=(",", ":")))
+            ms = (time.perf_counter() - t0) * 1000
+            self.send_ms_max = max(self.send_ms_max, ms)
+            self.sent += 1
+            self.last_send = time.monotonic()
+
+
 @app.websocket("/ws")
 async def ws(sock: WebSocket):
     if TOKEN and not secrets.compare_digest(sock.query_params.get("token", ""), TOKEN):
         await sock.close(code=1008)
         return
     await sock.accept()
+    cid = secrets.token_hex(3)
+    peer = sock.client.host if sock.client else "?"
+    diag.event("conn_open", conn=cid, peer=peer)
+    t_open = time.monotonic()
+    t = time.perf_counter()
     pipe = await asyncio.to_thread(pipeline)
     st = {"tr": PresenceTracker(Config()), "running": False}
     stats = ConnStats()
@@ -141,6 +242,7 @@ async def ws(sock: WebSocket):
     lock = asyncio.Lock()
     slot: dict = {"frame": None}
     wake = asyncio.Event()
+    out = Outbox(sock)
     # audio (audio_pipeline=puresound): binary PCM16 chunks in, clean PCM16 + "audio" meta out; memory only
     aud: dict = {
         "stream": None,
@@ -158,27 +260,85 @@ async def ws(sock: WebSocket):
         "sess": None,
         "sess_t0": 0.0,
         "rec": False,  # browser-side recording requested: also stream aligned vi + raw (server stores nothing)
+        "recv": 0,
+        "processed": 0,
+        "rtf": None,
     }
+    mon = {
+        "frame_rx_t": 0.0,  # last frame received (monotonic)
+        "frame_done_t": time.monotonic(),
+        "frames_done": 0,
+        "audio_rx_t": 0.0,
+        "audio_done_t": time.monotonic(),
+        "loop_lag_ms": 0.0,
+        "loop_lag_max": 0.0,
+        "state": None,
+        "session": None,
+        "warn_t": {},
+    }
+    diag.event("conn_ready", conn=cid, vision_ms=round((time.perf_counter() - t) * 1000, 1), pipeline=pipe.name)
+
+    def warn(name: str, every: float = 30.0, level: str = "warning", **kv) -> None:  # rate-limited warnings
+        now = time.monotonic()
+        if now - mon["warn_t"].get(name, -1e9) >= every:
+            mon["warn_t"][name] = now
+            diag.event(name, level, cid, **kv)
+
+    def notify_ui(rec: dict) -> None:  # this connection's events (and global ones) -> UI 事件紀錄
+        if rec.get("conn") in (cid, None):
+            out.post({"type": "event", **rec}, droppable=rec.get("level") == "info")
+
+    unsub = diag.subscribe(notify_ui)
+
+    def on_crash(task: str, err: str) -> None:
+        out.post({"type": "error", "where": task, "error": err})
 
     def clean_active() -> bool:
         return aud["stream"] is not None and time.monotonic() - aud["last_rx"] < 1.0
 
-    async def send(snap, extra=None):
-        snap.update({"type": "state", "running": st["running"], "pipeline": pipe.name, "config": asdict(st["tr"].cfg)})
+    def track_state(snap: dict) -> None:
+        s, sess = snap.get("state"), snap.get("session")
+        if s != mon["state"] or sess != mon["session"]:
+            diag.event(
+                "state",
+                conn=cid,
+                frm=mon["state"],
+                to=s,
+                session=sess,
+                participants=sum(1 for x in snap.get("tracks", []) if x.get("participant")),
+                p_group=snap.get("p_group"),
+            )
+            mon["state"], mon["session"] = s, sess
+        for e in snap.get("events") or []:
+            name = e.get("event") if isinstance(e, dict) else str(e)
+            if name in ("NEW_GROUP", "ENDED", "SESSION_START", "JOIN", "LEAVE"):
+                diag.event("session_event", conn=cid, kind=name, session=sess)
+
+    def send(snap, extra=None, droppable=True):
+        track_state(snap)
+        snap.update({"type": "state", "running": st["running"], "pipeline": pipe.name})
         if extra:
             snap.update(extra)
-        await sock.send_json(snap)
+            if extra.get("config_ack"):
+                snap["config"] = asdict(st["tr"].cfg)
+        out.post(snap, droppable=droppable)
 
-    async def ticker():  # keep timers moving; stats ~1/s while running
+    async def ticker():  # keep timers moving; stats ~1/s while running; loop-lag probe
         n = 0
         while True:
+            t0 = time.monotonic()
             await asyncio.sleep(0.5)
+            lag = (time.monotonic() - t0 - 0.5) * 1000
+            mon["loop_lag_ms"] = lag
+            mon["loop_lag_max"] = max(mon["loop_lag_max"], lag)
+            if lag > 250:
+                warn("loop_lag", 10, lag_ms=round(lag))
             n += 1
             async with lock:
                 tr = st["tr"]
-                await send(tr.tick() if st["running"] else tr.snapshot())
+                send(tr.tick() if st["running"] else tr.snapshot())
                 if st["running"] and n % 2 == 0:
-                    await sock.send_json(
+                    out.post(
                         build_stats(
                             stats,
                             {
@@ -189,7 +349,8 @@ async def ws(sock: WebSocket):
                                     else ("unavailable" if "det" in _pose_cache else "not loaded")
                                 ),
                             },
-                        )
+                        ),
+                        droppable=True,
                     )
 
     async def worker():  # processes only the latest frame; older queued frames are dropped
@@ -203,7 +364,7 @@ async def ws(sock: WebSocket):
             t0 = time.perf_counter()
             data = base64.b64decode(msg["data"].split(",")[-1])
             stable = st["tr"].state.value not in ("MAYBE_AWAY", "AWAY")
-            r = await asyncio.to_thread(_vision_job, proc, data, st["tr"].cfg, stable)
+            r = await asyncio.to_thread(_vision_job, proc, data, st["tr"].cfg, stable, cid)
             del data
             if r is None:
                 continue
@@ -226,7 +387,18 @@ async def ws(sock: WebSocket):
                 fpsstate["rec"] = recommend_fps(snap, tr.cfg, now - fpsstate["changed_at"] < 3.0)
                 stats.on_processed(tm)
                 stats.recommended_fps = fpsstate["rec"]
-                await send(
+                mon["frame_done_t"] = now
+                mon["frames_done"] += 1
+                if tm["total"] > WARN_FRAME_MS:
+                    warn(
+                        "slow_frame",
+                        10,
+                        total_ms=round(tm["total"]),
+                        detect_ms=round(tm.get("detect", 0)),
+                        pose_ms=round(tm.get("pose", 0)),
+                        embed_ms=round(tm.get("embed", 0)),
+                    )
+                send(
                     snap,
                     {
                         "detections": [{"bbox": d.bbox, "conf": d.conf} for d in dets],
@@ -240,7 +412,16 @@ async def ws(sock: WebSocket):
         for k in ("start_ms", "end_ms"):
             if t0 is not None and ev.get(k) is not None:
                 ev[k.replace("_ms", "_s")] = round(t0 - sess_t0 + ev[k] / 1000, 2)
-        asyncio.create_task(sock.send_json({"type": "asr", "session": session, **ev}))
+        if ev.get("kind") in ("status", "error"):  # never the transcript text
+            diag.event(
+                "asr",
+                "warning" if ev.get("kind") == "error" else "info",
+                cid,
+                status=ev.get("status"),
+                error=ev.get("error"),
+                session=session,
+            )
+        out.post({"type": "asr", "session": session, **ev})
 
     async def asr_close():
         if aud["asr"] is not None:
@@ -279,6 +460,8 @@ async def ws(sock: WebSocket):
             while not aud["q"].empty() and len(batch) < 25:  # catch up after a stall: one thread hop for the backlog
                 batch.append(aud["q"].get_nowait())
             aud["backlog_max"] = max(aud.get("backlog_max", 0), len(batch))
+            if len(batch) > 10:
+                warn("audio_backlog", 10, backlog_ms=len(batch) * 20)
             tr = st["tr"]
             if tr.cfg.audio_pipeline != "puresound":
                 aud["stream"] = None
@@ -288,10 +471,12 @@ async def ws(sock: WebSocket):
                 if not ok:
                     if aud["err"] != why:
                         aud["err"] = why
-                        logging.warning("audio_pipeline=puresound unavailable: %s", why)
-                        await sock.send_json({"type": "audio", "available": False, "error": why})
+                        diag.event("audio_unavailable", "warning", cid, reason=why)
+                        out.post({"type": "audio", "available": False, "error": why})
                     continue
+                t_init = time.perf_counter()
                 aud["stream"] = await asyncio.to_thread(AudioStream, tr.cfg)
+                diag.event("audio_init", conn=cid, ms=round((time.perf_counter() - t_init) * 1000, 1))
                 aud["err"] = None
             a = aud["stream"]
             a.cfg = tr.cfg
@@ -305,35 +490,40 @@ async def ws(sock: WebSocket):
             def job(a=a, snap=snap, now=now, vis_age=vis_age, batch=batch, rec=rec):
                 if snap is not None:
                     a.on_vision(snap, now)
-                out = []
+                res = []
                 for _, pcm in batch:
                     o, sp = a.process(pcm, snap, now, vis_age)
-                    out.append((o, sp, a.recording_tracks() if rec else None))
-                return out
+                    res.append((o, sp, a.recording_tracks() if rec else None))
+                return res
 
             t0 = time.perf_counter()
             res = await loop.run_in_executor(AUDIO_POOL, job)
             proc_ms = (time.perf_counter() - t0) * 1000 / len(batch)
             aud["last_rx"] = time.monotonic()
-            for (t_client, pcm), (out, speech, tracks) in zip(batch, res, strict=True):
-                if out:
-                    await sock.send_bytes(b"\x02" + struct.pack("<d", t_client) + out)
-                if out and tracks is not None:  # 0x03: t, n, out, vi, raw (same n samples each, aligned)
+            aud["processed"] += len(batch)
+            mon["audio_done_t"] = time.monotonic()
+            for (t_client, pcm), (o, speech, tracks) in zip(batch, res, strict=True):
+                if o:
+                    out.post(b"\x02" + struct.pack("<d", t_client) + o, audio=True)
+                if o and tracks is not None:  # 0x03: t, n, out, vi, raw (same n samples each, aligned)
                     vi, rw = tracks
-                    await sock.send_bytes(b"\x03" + struct.pack("<dI", t_client, len(out) // 2) + out + vi + rw)
-                await asr_step(tr, pcm, out, speech, now)
+                    out.post(b"\x03" + struct.pack("<dI", t_client, len(o) // 2) + o + vi + rw)
+                await asr_step(tr, pcm, o, speech, now)
             async with lock:
                 tr = st["tr"]
                 tr.speech_source = "clean"
                 if st["running"] and (speech != tr.speaking):
-                    await send(tr.set_speech(speech))
+                    send(tr.set_speech(speech), droppable=False)
             if now - aud["meta_t"] >= 0.1:
                 aud["meta_t"] = now
-                await sock.send_json(
+                meta = a.meta()
+                aud["rtf"] = meta.get("rtf")
+                aud["counts"] = meta.get("counts")
+                out.post(
                     {
                         "type": "audio",
                         "available": True,
-                        **a.meta(),
+                        **meta,
                         "p_group": tr.snapshot().get("p_group"),
                         "state": tr.state.value,
                         "t_server": time.time(),
@@ -349,10 +539,100 @@ async def ws(sock: WebSocket):
                         "dropped": aud["dropped"],
                         "queue": aud["q"].qsize(),
                         "backlog_max": aud.get("backlog_max", 0),
-                    }
+                        "send_dropped": out.dropped_audio,
+                    },
+                    droppable=True,
                 )
 
-    tasks = [asyncio.create_task(ticker()), asyncio.create_task(worker()), asyncio.create_task(audio_worker())]
+    tasks: dict[str, asyncio.Task] = {}
+    factories = {"ticker": ticker, "vision": worker, "audio": audio_worker, "sender": out.run}
+
+    def spawn(name: str) -> None:
+        tasks[name] = asyncio.create_task(diag.supervise(name, factories[name], cid, on_crash))
+
+    async def watchdog():  # heartbeat + stall detection (+ recovery) every HEARTBEAT_S / 1 s
+        last_hb = time.monotonic()
+        last_frames = last_audio = 0
+        while True:
+            await asyncio.sleep(1.0)
+            now = time.monotonic()
+            run = st["running"]
+            ps = aud["stream"] is not None and st["tr"].cfg.audio_pipeline == "puresound"
+            # vision: frames arrive but none finished for STALL_S
+            if run and mon["frame_rx_t"] > mon["frame_done_t"] + STALL_S:
+                warn(
+                    "vision_stalled",
+                    30,
+                    "error",
+                    since_s=round(now - mon["frame_done_t"], 1),
+                    lock_held=VISION_LOCK.locked(),
+                )
+                diag.log.error("stack dump (vision_stalled conn=%s)\n%s", cid, diag.dump_stacks())
+                out.post({"type": "error", "where": "vision", "error": "影像處理停滯，正在重新啟動"})
+                tasks["vision"].cancel()
+                proc.reset()
+                spawn("vision")
+                mon["frame_done_t"] = now
+                wake.set()
+            if run and ps and mon["audio_rx_t"] > mon["audio_done_t"] + STALL_S:
+                warn("audio_stalled", 30, "error", since_s=round(now - mon["audio_done_t"], 1), queue=aud["q"].qsize())
+                diag.log.error("stack dump (audio_stalled conn=%s)\n%s", cid, diag.dump_stacks())
+                out.post({"type": "error", "where": "audio", "error": "音訊處理停滯，正在重新啟動"})
+                tasks["audio"].cancel()
+                aud["stream"] = None
+                spawn("audio")
+                mon["audio_done_t"] = now
+            if run and now - mon["frame_rx_t"] > 3 and now - t_open > 5:
+                warn("no_frames", 30, since_s=round(now - mon["frame_rx_t"], 1) if mon["frame_rx_t"] else None)
+            if run and st["tr"].cfg.audio_pipeline == "puresound" and now - mon["audio_rx_t"] > 1 and now - t_open > 5:
+                warn("no_audio", 30, since_s=round(now - mon["audio_rx_t"], 1) if mon["audio_rx_t"] else None)
+            if out.backlog() > 50 or now - out.last_send > 5 and out.backlog():
+                warn(
+                    "send_backlog",
+                    10,
+                    backlog=out.backlog(),
+                    dropped_audio=out.dropped_audio,
+                    dropped_json=out.dropped_json,
+                    last_send_s=round(now - out.last_send, 1),
+                )
+            if now - last_hb >= HEARTBEAT_S:
+                fr = {"received": stats.received, "processed": stats.processed, "dropped": stats.dropped}
+                c = proc.counts
+                snap = st["tr"].snapshot()
+                diag.event(
+                    "heartbeat",
+                    conn=cid,
+                    running=run,
+                    frames_rx=fr.get("received"),
+                    frames_done=fr.get("processed"),
+                    frames_dropped=fr.get("dropped"),
+                    fps=round((mon["frames_done"] - last_frames) / (now - last_hb), 2),
+                    detect_calls=c.get("detect_calls"),
+                    detect_hits=c.get("detect_hits"),
+                    tracks=len(snap.get("tracks", [])),
+                    state=snap.get("state"),
+                    p_group=snap.get("p_group"),
+                    audio_rx=aud["recv"],
+                    audio_done=aud["processed"],
+                    audio_dropped=aud["dropped"],
+                    audio_rate=round((aud["processed"] - last_audio) / (now - last_hb), 1),
+                    audio_queue=aud["q"].qsize(),
+                    rtf=aud["rtf"],
+                    xcheck=aud.get("counts"),
+                    send_backlog=out.backlog(),
+                    send_dropped=out.dropped_audio + out.dropped_json,
+                    send_ms_max=round(out.send_ms_max, 1),
+                    loop_lag_ms=round(mon["loop_lag_max"], 1),
+                    vision_lock_held=VISION_LOCK.locked(),
+                )
+                mon["loop_lag_max"] = 0.0
+                out.send_ms_max = 0.0
+                last_hb, last_frames, last_audio = now, mon["frames_done"], aud["processed"]
+
+    for name in factories:
+        spawn(name)
+    tasks["watchdog"] = asyncio.create_task(diag.supervise("watchdog", watchdog, cid))
+    reason = "client"
     try:
         while True:
             raw = await sock.receive()
@@ -362,6 +642,8 @@ async def ws(sock: WebSocket):
                 # PRIVACY: PCM audio lives in memory only (queue -> isolation -> socket), never logged/written.
                 b = raw["bytes"]
                 if len(b) > 9 and b[0] == 1 and st["tr"].cfg.audio_pipeline == "puresound":
+                    aud["recv"] += 1
+                    mon["audio_rx_t"] = time.monotonic()
                     if aud["q"].full():
                         aud["q"].get_nowait()
                         aud["dropped"] += 1
@@ -374,6 +656,7 @@ async def ws(sock: WebSocket):
                 if not st["running"]:
                     continue
                 stats.on_received(len(msg.get("data", "")))
+                mon["frame_rx_t"] = time.monotonic()
                 if slot["frame"] is not None:
                     stats.dropped += 1
                 slot["frame"] = msg
@@ -384,50 +667,63 @@ async def ws(sock: WebSocket):
                 if kind == "ping":
                     if msg.get("rtt") is not None:
                         stats.rtt.append(float(msg["rtt"]))
-                    await sock.send_json({"type": "pong", "t": msg.get("t")})
+                    out.post({"type": "pong", "t": msg.get("t")})
                 elif kind == "vad":
                     if st["running"] and not clean_active():  # puresound: the clean VAD drives speech
-                        await send(tr.set_speech(bool(msg.get("speech"))))
+                        send(tr.set_speech(bool(msg.get("speech"))), droppable=False)
                 elif kind == "config":
-                    warns = tr.cfg.update(msg.get("config", {}))
-                    await send(tr.tick() if st["running"] else tr.snapshot(), {"config_ack": True, "warnings": warns})
+                    new = msg.get("config", {})
+                    before = asdict(tr.cfg)
+                    warns = tr.cfg.update(new)
+                    after = asdict(tr.cfg)
+                    changed = {k: after[k] for k in after if after[k] != before.get(k)}
+                    if changed:
+                        diag.event("config", conn=cid, **changed)
+                    if warns:
+                        diag.event("config_warnings", "warning", cid, warnings="; ".join(warns)[:300])
+                    send(tr.tick() if st["running"] else tr.snapshot(), {"config_ack": True, "warnings": warns}, False)
                 elif kind == "calibrate":
                     warns = calibrate(tr, msg.get("meters"))
                     aud["calibrated"] = aud["calibrated"] or any(w.startswith("calibrated") for w in warns)
-                    await send(tr.tick() if st["running"] else tr.snapshot(), {"config_ack": True, "warnings": warns})
+                    diag.event("calibrate", conn=cid, result="; ".join(warns)[:200])
+                    send(tr.tick() if st["running"] else tr.snapshot(), {"config_ack": True, "warnings": warns}, False)
                 elif kind == "record":  # client-side recording on/off (PRIVACY: the server never writes audio)
                     aud["rec"] = bool(msg.get("on"))
+                    diag.event("record_stream", conn=cid, on=aud["rec"])
                 elif kind == "start":
                     st["running"] = True
-                    await send(tr.snapshot())
+                    diag.event("start", conn=cid)
+                    send(tr.snapshot(), droppable=False)
                 elif kind in ("stop", "reset"):
                     proc.reset()
                     stats.counts = proc.counts
                     st["running"] = kind == "reset" and st["running"]
                     if kind == "stop":
                         aud["rec"] = False
+                    diag.event(kind, conn=cid)
                     st["tr"] = PresenceTracker(tr.cfg)  # clears tracks + embeddings
                     slot["frame"] = None
-                    await send(st["tr"].snapshot(), {"detections": []})
-    except WebSocketDisconnect:
-        pass
+                    send(st["tr"].snapshot(), {"detections": []}, False)
+    except WebSocketDisconnect as e:
+        reason = f"disconnect code={e.code}"
+    except Exception as e:  # noqa: BLE001
+        reason = f"error {type(e).__name__}: {e}"
+        diag.log.exception("receive loop failed conn=%s", cid)
     finally:
-        for t in tasks:
+        unsub()
+        for t in tasks.values():
             t.cancel()
         with contextlib.suppress(Exception):
             await asr_close()
-
-
-class _RedactToken(logging.Filter):
-    """uvicorn logs WebSocket handshakes as '"WebSocket /ws?token=..." [accepted]': mask the token."""
-
-    _re = __import__("re").compile(r"(token=)[^&\s\"']+")
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        msg = record.getMessage()
-        if "token=" in msg:
-            record.msg, record.args = self._re.sub(r"\1***", msg), ()
-        return True
+        diag.event(
+            "conn_close",
+            conn=cid,
+            reason=reason,
+            duration_s=round(time.monotonic() - t_open, 1),
+            frames=mon["frames_done"],
+            audio_chunks=aud["processed"],
+            send_dropped=out.dropped_audio + out.dropped_json,
+        )
 
 
 def main():
@@ -439,11 +735,22 @@ def main():
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8000)
     a = ap.parse_args()
+    diag.setup_logging()
+    faulthandler.enable()  # hard crashes (segfault) still print all thread stacks to stderr
     # access_log=False: request lines would contain the ?token= query string. Frames travel over the
-    # WebSocket and are never logged; only startup/model messages are written to the log.
-    logging.getLogger("uvicorn.error").addFilter(_RedactToken())
-    uvicorn.run(app, host=a.host, port=a.port, access_log=False, log_level="info", ws_max_size=8 * 1024 * 1024)
+    # WebSocket and are never logged. log_config=None: uvicorn logs go through our handler (rotation, redaction).
+    diag.event("server_start", host=a.host, port=a.port, log_level=logging.getLevelName(logging.getLogger().level))
+    uvicorn.run(
+        app,
+        host=a.host,
+        port=a.port,
+        access_log=False,
+        log_config=None,
+        ws_max_size=8 * 1024 * 1024,
+    )
 
 
 if __name__ == "__main__":
     main()
+
+_RedactToken = diag.Redact

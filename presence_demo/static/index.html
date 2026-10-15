@@ -85,7 +85,15 @@ button.stop{background:var(--bad);border-color:var(--bad);color:var(--on-status)
 .presets button.on{background:var(--acc);color:var(--on-accent);border-color:var(--acc)}
 #recInd{display:none;color:#fff;background:var(--rec);font-family:var(--font-mono);border-radius:999px;padding:3px 10px;font-size:12px;font-weight:600}#recInd.on{display:inline-block;animation:recp 1.2s infinite}
 @keyframes recp{50%{opacity:.55}}
+#errBanner{position:fixed;top:0;left:0;right:0;z-index:99;padding:8px 14px;background:var(--danger,#b42318);color:#fff;font:14px system-ui;display:none}
+#errBanner button{float:right;background:none;border:1px solid #fff;color:#fff;border-radius:4px;cursor:pointer}
+#evPanel{position:fixed;right:12px;bottom:12px;z-index:90;width:min(460px,92vw);font:12px ui-monospace,monospace;background:var(--surface,#1b1d21);color:var(--text,#e6e6e6);border:1px solid var(--border,#444);border-radius:8px}
+#evPanel summary{cursor:pointer;padding:6px 10px;font:600 13px system-ui}
+#evList{max-height:240px;overflow:auto;margin:0;padding:4px 10px 8px;list-style:none}
+#evList li.warning,#evList li.error{color:var(--danger,#f97066)}
 </style></head><body>
+<div id="errBanner" role="alert"><button id="errClose" aria-label="關閉">✕</button><span id="errText"></span></div>
+<details id="evPanel"><summary>事件紀錄 <span id="evCount">0</span></summary><ul id="evList" aria-live="polite"></ul></details>
 <header><span class="dot" id="conn"></span><h1>Presence Demo · 離開偵測</h1>
 <span id="recInd">● 錄音中</span><span class="pill" id="cam">鏡頭/麥克風 關</span><button class="pri" id="start">▶ 開始</button><button id="theme" title="切換深色／淺色">☀ 淺色</button><button id="openSet">⚙ 設定</button></header>
 <main>
@@ -415,6 +423,8 @@ function connect(){ws=new WebSocket((location.protocol==='https:'?'wss://':'ws:/
  ws.onopen=()=>{if(rec)setTimeout(()=>wsSend({type:'record',on:true}),0);$('conn').classList.add('on');sendCfg();if(running)ws.send(JSON.stringify({type:'start'}))};
  ws.onclose=()=>{$('conn').classList.remove('on');setTimeout(connect,1500)};
  ws.onmessage=e=>{if(typeof e.data!=='string')return onClean(e.data);const s=JSON.parse(e.data);
+  if(s.type==='event')return addEv(s);
+  if(s.type==='error'){addEv(Object.assign({level:'error'},s));return showErr((s.where?s.where+': ':'')+(s.error||s.message||'error'))}
   if(s.type==='asr')return onAsr(s);
   if(rec&&(s.type==='audio'||s.type==='state'))recMeta(s);
   if(s.type==='audio'){aMeta=s;if(s.available!==false)TLH.push({t:performance.now(),raw:s.raw_vad,clean:s.clean_vad,sp:s.speech,dec:s.decision,st:s.state,p:s.p_group});while(TLH.length&&performance.now()-TLH[0].t>31000)TLH.shift();return renderAudio()}
@@ -719,4 +729,10 @@ function addAsrKey(){const det=$('mod_asr');if(!det)return;
  $('keySet').onclick=()=>{const v=$('keyIn').value;$('keyIn').value='';post(v).then(()=>toast('已設定 API key'))};$('keyClr').onclick=()=>post('');
  fetch('/api/asr_status'+location.search).then(r=>r.json()).then(st).catch(()=>{})}
 setTheme(document.documentElement.dataset.theme);$('theme').onclick=()=>setTheme(document.documentElement.dataset.theme==='dark'?'light':'dark');buildUI();addCalib();addAsrKey();setMonitor('off');new ResizeObserver(fit).observe(cv);connect();
+
+const EVL=[];function addEv(s){EVL.push(s);if(EVL.length>200)EVL.shift();const ul=document.getElementById('evList');const li=document.createElement('li');li.className=s.level||'info';
+const kv=Object.entries(s).filter(([k])=>!['type','level','event','ts','t'].includes(k)).map(([k,v])=>k+'='+(typeof v==='object'?JSON.stringify(v):v)).join(' ');
+li.textContent=new Date().toLocaleTimeString()+' '+(s.event||s.type)+' '+kv;ul.prepend(li);while(ul.children.length>200)ul.lastChild.remove();document.getElementById('evCount').textContent=EVL.length}
+function showErr(m){document.getElementById('errText').textContent='⚠ '+m+'（已自動恢復，詳見事件紀錄）';document.getElementById('errBanner').style.display='block'}
+document.getElementById('errClose').onclick=()=>document.getElementById('errBanner').style.display='none';
 </script></body></html>
