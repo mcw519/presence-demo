@@ -157,6 +157,7 @@ async def ws(sock: WebSocket):
         "asr_sess": None,
         "sess": None,
         "sess_t0": 0.0,
+        "rec": False,  # browser-side recording requested: also stream aligned vi + raw (server stores nothing)
     }
 
     def clean_active() -> bool:
@@ -299,18 +300,27 @@ async def ws(sock: WebSocket):
             a.calibrated = aud["calibrated"]
             vis_age = now - aud["vis_t"]
 
-            def job(a=a, snap=snap, now=now, vis_age=vis_age, batch=batch):
+            rec = aud["rec"]
+
+            def job(a=a, snap=snap, now=now, vis_age=vis_age, batch=batch, rec=rec):
                 if snap is not None:
                     a.on_vision(snap, now)
-                return [a.process(pcm, snap, now, vis_age) for _, pcm in batch]
+                out = []
+                for _, pcm in batch:
+                    o, sp = a.process(pcm, snap, now, vis_age)
+                    out.append((o, sp, a.recording_tracks() if rec else None))
+                return out
 
             t0 = time.perf_counter()
             res = await loop.run_in_executor(AUDIO_POOL, job)
             proc_ms = (time.perf_counter() - t0) * 1000 / len(batch)
             aud["last_rx"] = time.monotonic()
-            for (t_client, pcm), (out, speech) in zip(batch, res, strict=True):
+            for (t_client, pcm), (out, speech, tracks) in zip(batch, res, strict=True):
                 if out:
                     await sock.send_bytes(b"\x02" + struct.pack("<d", t_client) + out)
+                if out and tracks is not None:  # 0x03: t, n, out, vi, raw (same n samples each, aligned)
+                    vi, rw = tracks
+                    await sock.send_bytes(b"\x03" + struct.pack("<dI", t_client, len(out) // 2) + out + vi + rw)
                 await asr_step(tr, pcm, out, speech, now)
             async with lock:
                 tr = st["tr"]
@@ -385,6 +395,8 @@ async def ws(sock: WebSocket):
                     warns = calibrate(tr, msg.get("meters"))
                     aud["calibrated"] = aud["calibrated"] or any(w.startswith("calibrated") for w in warns)
                     await send(tr.tick() if st["running"] else tr.snapshot(), {"config_ack": True, "warnings": warns})
+                elif kind == "record":  # client-side recording on/off (PRIVACY: the server never writes audio)
+                    aud["rec"] = bool(msg.get("on"))
                 elif kind == "start":
                     st["running"] = True
                     await send(tr.snapshot())
@@ -392,6 +404,8 @@ async def ws(sock: WebSocket):
                     proc.reset()
                     stats.counts = proc.counts
                     st["running"] = kind == "reset" and st["running"]
+                    if kind == "stop":
+                        aud["rec"] = False
                     st["tr"] = PresenceTracker(tr.cfg)  # clears tracks + embeddings
                     slot["frame"] = None
                     await send(st["tr"].snapshot(), {"detections": []})

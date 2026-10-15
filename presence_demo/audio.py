@@ -90,6 +90,7 @@ class Isolator:
         self._dry = np.zeros(0, np.float32)
         self._dry_start = 0  # absolute input index of _dry[0]
         self._emitted = 0
+        self.last_vi = self.last_ref = np.zeros(0, np.float32)
         self.resets = getattr(self, "resets", -1) + 1
 
     def process(self, x: np.ndarray, mix: float) -> np.ndarray:
@@ -100,11 +101,13 @@ class Isolator:
         start = self._emitted - self.delay  # input index carried by y[0]
         self._emitted += n
         a = min(1.0, max(0.0, mix / self.base_mix))
+        # input aligned to y (same samples, PureSound delay compensated); also kept for optional client recording
+        ref = np.zeros(n, np.float32)
+        lo, hi = max(start, self._dry_start), min(start + n, self._dry_start + self._dry.size)
+        if hi > lo:
+            ref[lo - start : hi - start] = self._dry[lo - self._dry_start : hi - self._dry_start]
+        self.last_vi, self.last_ref = y, ref  # in memory only
         if n and a < 1.0:
-            ref = np.zeros(n, np.float32)
-            lo, hi = max(start, self._dry_start), min(start + n, self._dry_start + self._dry.size)
-            if hi > lo:
-                ref[lo - start : hi - start] = self._dry[lo - self._dry_start : hi - self._dry_start]
             y = np.clip(a * y + (1.0 - a) * ref, -1.0, 1.0).astype(np.float32)
         keep = max(0, self._emitted - self.delay - self._dry_start)
         if keep:
@@ -335,6 +338,15 @@ class AudioStream:
         self.compute_s += time.perf_counter() - t0
         self.audio_s += x.size / SR
         return (np.clip(y, -1, 1) * 32767).astype("<i2").tobytes(), adj.speech
+
+    def recording_tracks(self) -> tuple[bytes, bytes]:
+        """(vi, raw) PCM16 of the last block, sample-aligned with the returned output (PureSound delay
+        compensated). Only sent to the browser when the user records there; never stored on the server."""
+
+        def q(a):
+            return (np.clip(a, -1, 1) * 32767).astype("<i2").tobytes()
+
+        return q(self.iso.last_vi), q(self.iso.last_ref)
 
     def meta(self) -> dict:
         a = self.adj
