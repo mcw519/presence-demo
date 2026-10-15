@@ -4,8 +4,9 @@ version = "0.9.0"
 description = "Detect when conversing users leave: audio VAD + face tracking fusion, with a live web demo"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "Proprietary - All rights reserved" }
-authors = [{ name = "mcw519" }]
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "presence-demo contributors" }]
 dependencies = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
@@ -16,7 +17,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# PureSound streaming voice isolation (audio_pipeline=puresound). Private repo: needs git auth.
+# PureSound streaming voice isolation (audio_pipeline=puresound), public repo github.com/mcw519/puresound.
 puresound = ["puresound-streaming[cpu]; python_version >= '3.12'"]
 
 [project.scripts]

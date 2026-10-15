@@ -17,12 +17,13 @@ PureSound 不是 vendored 的程式碼，而是**選用相依套件**：PureSoun
 Apache-2.0，只依賴 numpy + onnxruntime），用 uv git 來源，固定在 commit `121bf62`。
 
 ```bash
-uv sync --extra puresound          # 需要讀取私有 repo mcw519/puresound 的 git 權限（gh auth login 或 git credential）
-uv run python scripts/fetch_puresound_model.py --from /path/to/puresound   # 或 --clone（同樣需要權限）
+uv sync --extra puresound          # 從公開 repo github.com/mcw519/puresound 安裝（需要 git 與網路）
+uv run python scripts/fetch_puresound_model.py --clone   # 或 --from /path/to/puresound（已有 clone 時）
 ```
 
 - 模型（`dpcrn_curriculum_v2.onnx` 4.9 MB + `.json` manifest）複製到 gitignored 的 `models/`，sha256 和 PureSound
   `model_zoo/catalog.yaml` 一致才會放進去。SDK 本身沒有模型下載功能，所以用這個腳本。
+- PureSound 是公開的開源專案（Apache-2.0）：https://github.com/mcw519/puresound 。
 - 需要 Python ≥ 3.12（SDK 的要求）。更舊的 Python 只能用 `energy_vad`。
 - 注意：`uv sync`（不帶 `--extra puresound`）會把 SDK 移除；`uv run` 不會。
 - 沒裝或沒模型時，選 `puresound` 會在面板顯示原因，狀態機繼續用瀏覽器 VAD。
@@ -33,7 +34,7 @@ uv run python scripts/fetch_puresound_model.py --from /path/to/puresound   # 或
 |---|---|
 | 瀏覽器 → 伺服器 | WS binary：`0x01` + float64 LE（`performance.now()` ms）+ PCM16 LE，16 kHz mono，320 樣本（20 ms） |
 | 伺服器 → 瀏覽器 | WS binary：`0x02` + 回傳最近一塊輸入的時間戳 + 修正後 PCM16 |
-| 伺服器 → 瀏覽器 | JSON `{"type":"audio"}` 每 100 ms：`decision`、`why`、`counts`、`speech`、`clean_vad`、`raw_vad`、`gain`、`mix`、`target_track`、`distance`、`p_group`、`state`、`rtf`、`proc_ms`、`queue`、`dropped`、`resets`、`algo_latency_ms`、`t_server`、`t_client` |
+| 伺服器 → 瀏覽器 | JSON `{"type":"audio"}` 每 100 ms：`t_vision_client`（決策所用畫面的瀏覽器時間，畫面訊息帶 `t`＝`performance.now()`，與音訊同一時間基準）、`asr` 狀態、`decision`、`why`、`counts`、`speech`、`clean_vad`、`raw_vad`、`gain`、`mix`、`target_track`、`distance`、`p_group`、`state`、`rtf`、`proc_ms`、`queue`、`dropped`、`resets`、`algo_latency_ms`、`t_server`、`t_client` |
 
 - 瀏覽器：`AudioWorklet` 取原生取樣率（例如 48 kHz），線性內插重取樣到 16 kHz（降取樣時先做 2 點平均低通），每 320 樣本送出一塊。
 - 伺服器：每個連線一個佇列（最多 50 塊 = 1 s，滿了丟最舊的並計數），依序處理；ONNX session 全程序共用（單執行緒），
@@ -46,8 +47,8 @@ uv run python scripts/fetch_puresound_model.py --from /path/to/puresound   # 或
 manifest 的 `dry_blend = 0.9`（`0.9 × 增強 + 0.1 × 時間對齊的原聲`），可選 onset guard（`iso_onset_guard`，預設關，
 和上游 catalog 一樣）。演算法延遲 52–62 ms（manifest `algorithmic_latency`）。
 
-驗證（box，合成類語音訊號 6 s，記憶體內）：
-- 我們的 glue（mix = 0.9）vs SDK `PureSoundStreamingRuntime`：最大絕對差 **0.0**；20 ms vs 517 樣本分塊：**0.0**。
+驗證（x86 測試伺服器，合成類語音訊號 6 s，記憶體內）：
+- 本專案的 glue（mix = 0.9）vs SDK `PureSoundStreamingRuntime`：最大絕對差 **0.0**；20 ms vs 517 樣本分塊：**0.0**。
 - SDK vs PureSound 自己的 `puresound.streaming.StreamingOrt`（另一個 venv）：**0.0**；開 onset guard 時也是 **0.0**。
 
 v2 匯出**沒有 VAD 輸出頭**（`extra_output_names = []`），所以「乾淨 VAD」是分離後訊號的能量 VAD：
@@ -92,7 +93,7 @@ v2 匯出**沒有 VAD 輸出頭**（`extra_output_names = []`），所以「乾�
 NEW_GROUP、session 改變、或參與者集合換成另一組人時（`iso_reset_on_change`，預設開），重置 PureSound 串流狀態
 （SDK `reset()`，也會重新啟動 onset guard）。重置後約 32 ms 沒有輸出（重新填滿分析視窗）。
 
-## 7. 效能（box，x86，單執行緒 ORT）
+## 7. 效能（x86 測試伺服器，單執行緒 ORT）
 
 | 項目 | 數值 |
 |---|---|
@@ -116,8 +117,12 @@ NEW_GROUP、session 改變、或參與者集合換成另一組人時（`iso_rese
 1. **執行時可調的 `dry_blend`**（例如 `set_dry_blend()`）：現在 glue 用 `a·SDK輸出 + (1−a)·對齊原聲` 模擬較低比例（數學上等價，但重複保存一份原聲）。
 2. **VAD／語音機率輸出頭**（`extra_output_names`），取代分離後能量 VAD。
 3. **公開的 `streaming_delay` / 對齊原聲取用介面**，glue 不必自己維護原聲緩衝。
-4. **模型取得**：SDK 沒有模型下載／校驗功能（現在用 `scripts/fetch_puresound_model.py`）；或發布到公開位置（release asset）。
+4. **模型取得**：SDK 沒有模型下載／校驗功能（現在用 `scripts/fetch_puresound_model.py`）；建議上游提供下載＋校驗（例如 release asset + sha256）。
 5. **Python 3.10/3.11 支援**（SDK 目前要求 ≥ 3.12）。
+
+## 9b. 雲端語音辨識（選用）
+
+修正後的乾淨音軌可以再送到 AssemblyAI 做即時語音辨識（`asr_provider = assemblyai`），只在 session 進行中、預設只送「算說話」的片段。詳見 [ASR.md](ASR.md)。
 
 ## 10. 授權
 

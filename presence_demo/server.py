@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import json
 import logging
 import os
@@ -16,6 +17,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, PlainTextResponse
 
+from . import asr as asrmod
 from .audio import AudioStream, puresound_available
 from .body import calibration_factor
 from .optimizer import FrameProcessor, recommend_fps
@@ -81,9 +83,27 @@ def index():
 def default_config():
     return {
         "defaults": asdict(Config()),
-        "ranges": {k: [lo, hi, t.__name__ if t else "choice"] for k, (lo, hi, t) in RANGES.items()},
+        "ranges": {
+            k: [lo, hi, t if isinstance(t, str) else (t.__name__ if t else "choice")]
+            for k, (lo, hi, t) in RANGES.items()
+        },
         "puresound": dict(zip(("available", "reason"), puresound_available(), strict=True)),
     }
+
+
+@app.get("/api/asr_status")
+def asr_status():
+    return asrmod.key_status()  # never the key itself
+
+
+@app.post("/api/asr_key")
+async def asr_key(request: Request):
+    """Set/clear the AssemblyAI key in server memory (token-protected by the middleware). Not logged/stored."""
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    return asrmod.set_key(str(body.get("key") or "")[:256])
 
 
 @app.websocket("/ws")
@@ -112,6 +132,11 @@ async def ws(sock: WebSocket):
         "lat": None,
         "vis_t": -1e9,  # monotonic time of the last processed frame (vision freshness for the cross-check)
         "calibrated": False,
+        "vis_tc": None,  # browser performance.now() of the last processed frame (shared audio/video timebase)
+        "asr": None,  # AssemblyAIStream while a session is active (asr_provider=assemblyai)
+        "asr_sess": None,
+        "sess": None,
+        "sess_t0": 0.0,
     }
 
     def clean_active() -> bool:
@@ -173,6 +198,7 @@ async def ws(sock: WebSocket):
                 snap = tr.update(dets, speaking=None if clean_active() else msg.get("speech"))
                 tm["tracker"] = (time.perf_counter() - t1) * 1000
                 aud["vis_t"] = time.monotonic()
+                aud["vis_tc"] = msg.get("t")
                 tm["total"] = (time.perf_counter() - t0) * 1000
                 sig = tuple(sorted((t["id"], t["participant"], t["visible"]) for t in snap["tracks"]))
                 now = time.monotonic()
@@ -188,6 +214,44 @@ async def ws(sock: WebSocket):
                         "skipped": tm.get("skipped", False),
                     },
                 )
+
+    def asr_event(ev: dict, sess_t0: float, session: int):
+        # session-relative turn times: stream start (monotonic) - session start + word offset
+        t0 = ev.pop("t0", None)
+        for k in ("start_ms", "end_ms"):
+            if t0 is not None and ev.get(k) is not None:
+                ev[k.replace("_ms", "_s")] = round(t0 - sess_t0 + ev[k] / 1000, 2)
+        asyncio.create_task(sock.send_json({"type": "asr", "session": session, **ev}))
+
+    async def asr_close():
+        if aud["asr"] is not None:
+            s_, aud["asr"] = aud["asr"], None
+            await s_.close()
+
+    async def asr_step(tr, raw: bytes, clean: bytes, speech: bool, now: float):
+        """Cloud ASR gate: only during an active session, only if selected and a key is set."""
+        c = tr.cfg
+        if tr.session != aud["sess"]:
+            aud["sess"], aud["sess_t0"] = tr.session, now
+        want = (
+            c.asr_provider == "assemblyai"
+            and asrmod.key_status()["set"]
+            and st["running"]
+            and tr.state.value != "ENDED"
+        )
+        if aud["asr"] is not None and (not want or aud["asr_sess"] != tr.session):
+            await asr_close()
+        if not want:
+            return
+        if aud["asr"] is None:
+            sess, t0 = tr.session, aud["sess_t0"]
+            aud["asr"] = asrmod.AssemblyAIStream(c, lambda ev: asr_event(ev, t0, sess), url=asrmod.URL_OVERRIDE)
+            aud["asr_sess"] = sess
+            aud["asr"].start()
+        src = clean if c.asr_source == "clean" else raw
+        if c.asr_feed == "speech" and not speech:
+            src = bytes(len(src))  # keep real-time pacing; no content leaves the device
+        aud["asr"].feed(src)
 
     async def audio_worker():  # one chunk at a time, in order; isolation runs in a thread
         while True:
@@ -219,6 +283,7 @@ async def ws(sock: WebSocket):
             aud["last_rx"] = time.monotonic()
             if out:
                 await sock.send_bytes(b"\x02" + struct.pack("<d", t_client) + out)
+            await asr_step(tr, pcm, out, speech, now)
             async with lock:
                 tr = st["tr"]
                 tr.speech_source = "clean"
@@ -236,6 +301,13 @@ async def ws(sock: WebSocket):
                         "t_server": time.time(),
                         "t_client": t_client,
                         "proc_ms": round(proc_ms, 2),
+                        "t_vision_client": aud["vis_tc"],
+                        "asr": {
+                            "provider": tr.cfg.asr_provider,
+                            "key_set": asrmod.key_status()["set"],
+                            "connected": bool(aud["asr"] and aud["asr"].connected),
+                            "sent_s": round(aud["asr"].sent_ms / 1000, 1) if aud["asr"] else 0,
+                        },
                         "dropped": aud["dropped"],
                         "queue": aud["q"].qsize(),
                     }
@@ -299,6 +371,8 @@ async def ws(sock: WebSocket):
     finally:
         for t in tasks:
             t.cancel()
+        with contextlib.suppress(Exception):
+            await asr_close()
 
 
 def main():

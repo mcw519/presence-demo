@@ -1,0 +1,12 @@
+presence-demo
+Copyright 2026 presence-demo contributors
+
+This product is licensed under the Apache License, Version 2.0. See LICENSE for the terms.
+
+Third-party components keep their own licenses and are NOT covered by this grant:
+- Model weights downloaded at runtime (YuNet, SFace, MoveNet, PureSound dpcrn_curriculum_v2, ...):
+  see docs/LICENSES.md for each license, source and known caveats (e.g. training-data terms).
+- PureSound (https://github.com/mcw519/puresound), an optional dependency, is
+  Copyright 2026 Milo Wu and PureSound contributors, Apache-2.0; see its own NOTICE.
+  Its NOTICE states that datasets and audio recordings are excluded from its Apache-2.0 grant.
+- Python dependencies: see docs/LICENSES.md.

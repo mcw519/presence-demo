@@ -19,7 +19,7 @@ uv run python scripts/benchmark.py            # --repeat 3 --fps 1
 
 情境是模擬 60 秒：0–15 s 有人靜止、15–30 s 有人左右移動、30–45 s ROI 空、45–60 s 有人回來（靜止），每張加上輕微的感光雜訊。畫面在記憶體中由 `tests/data/face.jpg` 合成，並在記憶體中做 JPEG 編碼和解碼，**不寫入任何影像檔**。關閉自適應 fps 時固定 1 fps。CPU 時間只計算解碼、影像處理和 tracker，不含畫面合成；每組跑 3 次，取 CPU 最低的一次。
 
-量測環境：本機 box，8 核 x86_64 CPU，OpenCV 4.14.0，YuNet + SFace（OpenCV DNN、CPU、8 threads）。
+量測環境：x86 測試伺服器，8 核 x86_64 CPU，OpenCV 4.14.0，YuNet + SFace（OpenCV DNN、CPU、8 threads）。
 
 | 設定 | 處理張數 | 每張 avg (ms) | 每張 p95 (ms) | 總 CPU (s) | Δ CPU | detect 次數 | embed 計算/重用 | 姿勢次數 | 跳過 | AWAY |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -58,7 +58,7 @@ uv run python scripts/benchmark.py            # --repeat 3 --fps 1
   - Intel Xeon（虛擬機，型號未顯示）、8 vCPU、AVX2；
   - Python 3.13.5、OpenCV 4.14.0；
   - 管線：YuNet + SFace，姿勢模型 MoveNet MultiPose（TFLite XNNPACK）。
-- **和 Kebbi 的差異**：Kebbi 用的是 MTK Helio G520（大約是 ARM Cortex-A75／A55 等級），單核比這台 Xeon 慢很多。這裡的數字只能拿來比較不同設定之間的差異，不能當作機器人上的實際延遲（預估要乘上好幾倍，需要在實機上量）。
+- **和 Kebbi 的差異**：Kebbi 用的是 MTK Helio G520（大約是 ARM Cortex-A75／A55 等級），單核比測試用的 Xeon 慢很多。這裡的數字只能拿來比較不同設定之間的差異，不能當作機器人上的實際延遲（預估要乘上好幾倍，需要在實機上量）。
 - **重現指令**：
   ```bash
   uv run python scripts/benchmark.py --latency --frames 60
@@ -148,10 +148,10 @@ uv run python scripts/benchmark.py            # --repeat 3 --fps 1
 | fp16 TFLite · LiteRT CPU 4 執行緒 | 2.81 | 3.23 | 3.73 |
 | fp16 TFLite · LiteRT CPU 1 執行緒 | 8.58 | 10.53 | 11.86 |
 
-- **這台 x86 上**：最快的是 fp16 TFLite（LiteRT XNNPACK，4 個執行緒），整張約 8 ms；fp32 約 15 ms。官方 int8 ONNX 反而比較慢。
+- **x86 測試伺服器上**：最快的是 fp16 TFLite（LiteRT XNNPACK，4 個執行緒），整張約 8 ms；fp32 約 15 ms。官方 int8 ONNX 反而比較慢。
 - **ARM 和 NPU**：要在實機上測試，方法見 [NPU.md](NPU.md)。
 
-## 音訊：PureSound 人聲分離（v0.9.0，2026-10-15，box x86，單執行緒 ORT）
+## 音訊：PureSound 人聲分離（v0.9.0，2026-10-15，x86 測試伺服器，單執行緒 ORT）
 
 | 項目 | 數值 |
 |---|---|
@@ -162,7 +162,7 @@ uv run python scripts/benchmark.py            # --repeat 3 --fps 1
 | 伺服器 CPU（同時 2 fps 影像、1 張臉） | 只有影像 3.8 % → 影像 + 音訊 31.4 %（一顆核心 = 100 %） |
 | 輸出一致性 | glue vs SDK、SDK vs PureSound `StreamingOrt`：最大差 0.0（開／關 onset guard） |
 
-音訊比影像貴得多：Kebbi 上 1 顆核心約 1/3 的負擔要先在裝置上量。詳見 [AUDIO.md](AUDIO.md)。
+音訊比影像貴得多：目標裝置（例如 ARM 機器人）上約 1/3 顆核心的負擔要先在裝置上量。詳見 [AUDIO.md](AUDIO.md)。
 
 ## 注意事項
 

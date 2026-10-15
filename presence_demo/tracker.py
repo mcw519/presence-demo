@@ -139,6 +139,18 @@ class Config:
     xcheck_recover_mix: float = 0.3  # false_reject: enhanced share (rest = latency-aligned raw input)
     xcheck_attack: float = 0.01  # s: gain ramp up
     xcheck_release: float = 0.05  # s: gain ramp down
+    # --- cloud ASR (optional, external service; docs/ASR.md) ---
+    asr_provider: str = "none"  # none | assemblyai
+    asr_source: str = "clean"  # clean (corrected PureSound output) | raw
+    asr_feed: str = "speech"  # speech: only corrected-speech blocks (silence otherwise) | session: all audio
+    asr_region: str = "global"  # global | us | eu (AssemblyAI data residency endpoints)
+    asr_speech_model: str = "universal-3-6-pro"
+    asr_language_codes: str = "zh,en"  # Universal-3.x Pro only; empty = native code-switching
+    asr_keyterms: str = ""  # comma-separated, max 100
+    asr_format_turns: bool = True  # Universal-Streaming only
+    asr_eot_confidence: float = 0.4  # Universal-Streaming only
+    asr_min_turn_silence: int = 400  # ms
+    asr_max_turn_silence: int = 1280  # ms
 
     @property
     def match_cos(self) -> float:
@@ -168,6 +180,11 @@ class Config:
                 continue
             lo, hi, typ = RANGES[k]
             try:
+                if typ == "text":
+                    if not isinstance(v, str):
+                        raise ValueError
+                    setattr(self, k, v[:hi])
+                    continue
                 if typ is str:
                     if v not in lo:
                         raise ValueError
@@ -318,6 +335,21 @@ RANGES = {
     "xcheck_recover_mix": (0.0, 0.9, float),
     "xcheck_attack": (0.001, 0.5, float),
     "xcheck_release": (0.005, 2.0, float),
+    "asr_provider": (("none", "assemblyai"), None, str),
+    "asr_source": (("clean", "raw"), None, str),
+    "asr_feed": (("speech", "session"), None, str),
+    "asr_region": (("global", "us", "eu"), None, str),
+    "asr_speech_model": (
+        ("universal-3-6-pro", "universal-3-5-pro", "universal-streaming-english", "universal-streaming-multilingual"),
+        None,
+        str,
+    ),
+    "asr_language_codes": (None, 200, "text"),
+    "asr_keyterms": (None, 2000, "text"),
+    "asr_format_turns": (False, True, bool),
+    "asr_eot_confidence": (0.0, 1.0, float),
+    "asr_min_turn_silence": (50, 10000, int),
+    "asr_max_turn_silence": (100, 10000, int),
 }
 
 

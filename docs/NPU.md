@@ -6,7 +6,7 @@
 |---|---|---|---|
 | `fp32`（預設） | `face_recognition_sface_2021dec.onnx`（opencv_zoo） | OpenCV DNN，CPU | 參考基準，最準 |
 | `int8` | `face_recognition_sface_2021dec_int8.onnx`（opencv_zoo **官方**量化版） | OpenCV DNN，CPU | 檔案小 4 倍；ARM CPU 上通常比較快 |
-| `npu` | 我們轉出的 TFLite：`..._int8.tflite`（全整數）或 `..._fp16.tflite` | LiteRT（ai-edge-litert），可以掛外部 delegate | Android NPU／GPU；伺服器上用 CPU XNNPACK |
+| `npu` | 本專案匯出的 TFLite：`..._int8.tflite`（全整數）或 `..._fp16.tflite` | LiteRT（ai-edge-litert），可以掛外部 delegate | Android NPU／GPU；伺服器上用 CPU XNNPACK |
 
 ## 怎麼取得模型
 
@@ -14,16 +14,16 @@
 - **TFLite**：不會放進 git（10 MB 和 19 MB，而且 SFace 有授權疑慮，見 LICENSES.md），請用下面的腳本重新產生。
 
   ```bash
-  uv venv -p 3.12 /workspace/.venv-sface-export
-  VIRTUAL_ENV=/workspace/.venv-sface-export uv pip install onnx2tf tensorflow tf-keras onnx onnxruntime \
+  uv venv -p 3.12 /tmp/.venv-sface-export
+  VIRTUAL_ENV=/tmp/.venv-sface-export uv pip install onnx2tf tensorflow tf-keras onnx onnxruntime \
       onnx-graphsurgeon onnxsim sng4onnx psutil ai-edge-litert opencv-python-headless
-  /workspace/.venv-sface-export/bin/python scripts/export_sface_tflite.py
+  /tmp/.venv-sface-export/bin/python scripts/export_sface_tflite.py
   ```
 
 ### 匯出流程（`scripts/export_sface_tflite.py`）
 
 1. 確認 fp32 ONNX 的 sha256。
-2. 把 ONNX **複製一份**再交給 onnx2tf 轉換。onnx2tf 會直接改寫輸入檔，曾經把我們的 fp32 模型改壞，所以一定要用複本。
+2. 把 ONNX **複製一份**再交給 onnx2tf 轉換。onnx2tf 會直接改寫輸入檔，曾經把 fp32 模型改壞，所以一定要用複本。
 3. 轉成 TF SavedModel（NHWC、batch 固定為 1）。
 4. PReLU 改用 Keras 的寫法 `relu(x) + (-a)·relu(-x)`，TFLite 轉換器才會把它合併成**單一 PRELU op**。
    - onnx2tf 預設的 ABS 拆解，會變成 27 組 ABS／SUB／MUL 元素運算。
@@ -69,7 +69,7 @@ TF 轉換不保證每次產生完全相同的位元組；如果 sha 不同，以
 
 ## 在 Kebbi／Android 上使用
 
-> 以下步驟**都沒有在實機上驗證過**。這台伺服器沒有 ARM，也沒有 NPU。
+> 以下步驟**都沒有在實機上驗證過**。x86 測試伺服器沒有 ARM，也沒有 NPU。
 
 Kebbi 上比較實際的做法，是在 Android App（Kotlin／Java）裡用同一個 `.tflite`，Python 伺服器的邏輯則移植過去或繼續在伺服器上執行。
 
@@ -146,7 +146,7 @@ uv run python scripts/eval_embed_backends.py
 | npu fp16 (TFLite) | 1.0000 | 1.0000 | 0.962 | 0.940 | 100.0% | 1.29% | 100.00% |
 
 - **int8 ONNX**：和 fp32 的平均 cosine 0.972（最低 0.934），判定一致率 99.85%（651 對中只有 1 對不同）。
-- **我們的 TFLite INT8**：比官方 int8 更接近 fp32（平均 0.991），判定和 fp32 **完全一致**。
+- **本專案匯出的 TFLite INT8**：比官方 int8 更接近 fp32（平均 0.991），判定和 fp32 **完全一致**。
 - **fp16**：和 fp32 相同。
 - **門檻**：各後端的最佳門檻只差約 0.01–0.02，所以 `cos_match_int8` 預設和 fp32 相同（0.40），**不需要調整**；需要時可以另外設定。
 - **不同人誤配率**：fp32 也有 1.29%（6 對）。這些多半是博物館收藏中同一位被攝者的不同照片或不同印樣，沒有逐一確認。
@@ -180,5 +180,5 @@ uv run python scripts/eval_embed_backends.py
 | fp16 TFLite · LiteRT CPU 4 執行緒 | 2.81 | 3.23 | 3.73 |
 | fp16 TFLite · LiteRT CPU 1 執行緒 | 8.58 | 10.53 | 11.86 |
 
-- **這台 x86**：官方 int8 ONNX 在 OpenCV DNN 上比 fp32 **慢**（約 12.5 ms 和 7.5 ms）。我們的 INT8 TFLite 在 LiteRT CPU 上也很慢（約 33 ms），可能是 XNNPACK 沒有涵蓋這個 int8 圖的部分 op（推測），所以 npu 後端在沒有 delegate 時會改用 fp16。fp16 TFLite 用 4 個執行緒最快（約 2.8 ms）。
+- **x86 測試伺服器**：官方 int8 ONNX 在 OpenCV DNN 上比 fp32 **慢**（約 12.5 ms 和 7.5 ms）。本專案匯出的 INT8 TFLite 在 LiteRT CPU 上也很慢（約 33 ms），可能是 XNNPACK 沒有涵蓋這個 int8 圖的部分 op（推測），所以 npu 後端在沒有 delegate 時會改用 fp16。fp16 TFLite 用 4 個執行緒最快（約 2.8 ms）。
 - **ARM 和 NPU**：情況會不同。INT8 在 ARM NEON 和 NPU 上通常比較快，但**要在 Kebbi 上實測**。

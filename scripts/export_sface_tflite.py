@@ -9,10 +9,10 @@ Toolchain (all permissive licences; see docs/LICENSES.md): onnx2tf (MIT), Tensor
 onnx / onnxruntime (Apache-2.0 / MIT), onnx-graphsurgeon & onnxsim (Apache-2.0), sng4onnx (MIT).
 TensorFlow is heavy and not a runtime dependency, so use a separate environment:
 
-    uv venv -p 3.12 /workspace/.venv-sface-export
-    VIRTUAL_ENV=/workspace/.venv-sface-export uv pip install onnx2tf tensorflow tf-keras onnx onnxruntime \
+    uv venv -p 3.12 /tmp/.venv-sface-export
+    VIRTUAL_ENV=/tmp/.venv-sface-export uv pip install onnx2tf tensorflow tf-keras onnx onnxruntime \
         onnx-graphsurgeon onnxsim sng4onnx psutil ai-edge-litert opencv-python-headless
-    /workspace/.venv-sface-export/bin/python scripts/export_sface_tflite.py
+    /tmp/.venv-sface-export/bin/python scripts/export_sface_tflite.py
 
 INT8 calibration uses CC0 face crops fetched into memory (scripts/faces_cc0.py) plus in-memory
 augmentations; no image is ever written to disk. The script validates both outputs against the

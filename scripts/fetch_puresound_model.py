@@ -1,12 +1,12 @@
 """Copy the PureSound voice-isolation model (dpcrn_curriculum_v2: per-frame ONNX + manifest) into models/.
 
-The model lives in the PureSound repository (https://github.com/mcw519/puresound, private, Apache-2.0),
+The model lives in the PureSound repository (https://github.com/mcw519/puresound, public, Apache-2.0),
 under ``egs/voice_isolate/pretrained_ckpt/streaming/``. presence-demo never installs PureSound at runtime;
 this script only copies the two files and verifies their sha256 (models/ is gitignored, nothing is committed).
 
     # from an existing clone
     uv run python scripts/fetch_puresound_model.py --from /path/to/puresound
-    # or let the script clone it (needs read access to the private repo: gh auth / git credentials)
+    # or let the script shallow-clone the public repository
     uv run python scripts/fetch_puresound_model.py --clone
 """
 
@@ -58,7 +58,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--from", dest="src", type=Path, help="path to a PureSound clone")
-    g.add_argument("--clone", action="store_true", help="shallow-clone the (private) repo to a temp dir")
+    g.add_argument("--clone", action="store_true", help="shallow-clone the public PureSound repo to a temp dir")
     ap.add_argument("--dest", type=Path, default=ROOT / "models")
     a = ap.parse_args()
     if a.src:

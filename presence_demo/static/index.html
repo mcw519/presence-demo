@@ -80,7 +80,13 @@ button.stop{background:var(--bad);border-color:var(--bad);color:#fff}
    <div class="hint" style="color:var(--warn)">⚠ 監聽請戴耳機，否則喇叭聲音會被麥克風收進去（回授）。每次開啟頁面都是靜音。</div>
    <div class="hint">原始（瀏覽器麥克風，16 kHz）</div><canvas id="wRaw" style="width:100%;height:40px;display:block"></canvas>
    <div class="hint">乾淨（PureSound 輸出）</div><canvas id="wClean" style="width:100%;height:40px;display:block"></canvas>
+   <div class="hint">頻譜（原始 / 乾淨）</div><div style="display:flex;gap:4px"><canvas id="sgRaw" width="250" height="64" style="width:50%;height:64px"></canvas><canvas id="sgClean" width="250" height="64" style="width:50%;height:64px"></canvas></div>
+   <div class="hint">時間軸（最近 30 秒）：原始 VAD／乾淨 VAD／算說話／判斷／狀態，藍線＝P(group)</div><canvas id="tl" style="width:100%;height:84px;display:block"></canvas>
+   <div class="hint" id="tlLeg"></div>
    <div class="kv" id="aKv"></div></div>
+  <div class="card" id="asrCard"><h3>語音辨識 <span id="asrSt" style="font-weight:400">（關閉）</span></h3>
+   <div class="hint">⚠ 雲端服務：開啟後聲音會送到 AssemblyAI。文字只顯示在這裡，不會儲存。</div>
+   <div id="asrList" style="max-height:220px;overflow:auto;font-size:13px"></div></div>
   <div class="card" id="pCard" style="display:none"><h3>在場機率 <span id="pVal" style="font-weight:400"></span></h3>
    <canvas id="pSpark" style="width:100%;height:60px;display:block" title="群組在場機率（最近 2 分鐘）。綠線＝回到 ACTIVE 門檻、黃線＝MAYBE_AWAY 門檻、紅線＝AWAY 門檻"></canvas>
    <div class="hint" id="pHint"></div></div>
@@ -120,7 +126,7 @@ const DEF={face_roi:[0.2,0.05,0.8,0.95],mirror_view:true,show_face_roi:true,pose
  distance_calib:1,distance_ema:0.3,zone_min:0.4,zone_max:2,leave_distance:2.5,min_conf:0.6,embed_backend:'fp32',npu_precision:'int8',cos_match_int8:0.4,cos_match:0.4,cos_weak:0.2,iou_match:0.3,embed_ema:0.15,join_seconds:2,grace_seconds:15,
  present_frames:2,absent_frames:3,idle_after:3,present_timeout:15,empty_timeout:5,base_timeout:20,maybe_away_frac:0.5,end_after_away:5,new_group_seconds:3,
  priority_mode:'vision',speech_join:'auto',presence_model:'rules',intent_model:'rules',intent_tau:1,join_threshold:0.6,drop_threshold:0.35,drop_seconds:8,intent_weighted_presence:false,w_facing:0.45,w_distance:0.1,w_dwell:0.1,w_approach:0.05,w_still:0.15,w_center:0.15,leave_halflife:0.6,detect_gain:4,lowconf_factor:0.15,p_active:0.8,p_maybe:0.6,p_away:0.3,away_hold_seconds:1,tracker_mode:'legacy',coast_seconds:2,coast_present_conf:0.4,gate_mahalanobis:9.21,appearance_min_sim:0.6,appearance_ema:0.2,body_min_conf:0.4,present_max_silence:0,motion_gate:true,motion_threshold:0.015,force_detect_seconds:3,embed_throttle:true,embed_interval:3,embed_move_thresh:0.15,adaptive_fps:true,fps_low:0.5,fps_high:2,roi_crop:true,crop_margin:0.1,max_width:320,fps:1,vad_k:2.5,vad_min:0.005,vad_hang:400,
- audio_pipeline:'energy_vad',iso_onset_guard:false,iso_reset_on_change:true,onset_needs_vision:true,onset_entry_only:true,clean_vad_margin_db:10,clean_vad_min_db:-50,clean_vad_hang:0.3,xcheck_enabled:true,near_range:1,xcheck_hold:0.75,xcheck_stale:2,xcheck_require_calib:false,xcheck_floor_db:-40,xcheck_recover_mix:0.3,xcheck_attack:0.01,xcheck_release:0.05,monitor:'off'};
+ audio_pipeline:'energy_vad',iso_onset_guard:false,iso_reset_on_change:true,onset_needs_vision:true,onset_entry_only:true,clean_vad_margin_db:10,clean_vad_min_db:-50,clean_vad_hang:0.3,xcheck_enabled:true,near_range:1,xcheck_hold:0.75,xcheck_stale:2,xcheck_require_calib:false,xcheck_floor_db:-40,xcheck_recover_mix:0.3,xcheck_attack:0.01,xcheck_release:0.05,asr_provider:'none',asr_source:'clean',asr_feed:'speech',asr_region:'global',asr_speech_model:'universal-3-6-pro',asr_language_codes:'zh,en',asr_keyterms:'',asr_format_turns:true,asr_eot_confidence:0.4,asr_min_turn_silence:400,asr_max_turn_silence:1280,monitor:'off'};
 const CLIENT=['monitor','mirror_view','fps','vad_k','vad_min','vad_hang','show_face_roi','show_pose_roi'];
 const BOXES=['face_roi','pose_roi'];
 const S=(l,h,min,max,step,u='')=>({l,h,min,max,step,u});
@@ -233,6 +239,18 @@ GROUPS.push(['乾淨音軌（PureSound）',{audio_pipeline:{l:'音訊管線',h:'
    xcheck_recover_mix:S('漏收時的增強比例','聲學誤判-漏收時，輸出中分離後聲音的比例；其餘是（時間對齊的）原始聲音。越小保留越多原聲。',0,0.9,0.05),
    xcheck_attack:S('音量上升時間','壓低解除時的淡入時間常數。',0.001,0.5,0.001,'s'),
    xcheck_release:S('音量下降時間','開始壓低時的淡出時間常數。',0.005,2,0.005,'s')}]);
+const T=(l,h)=>({l,h,text:true});
+GROUPS.push(['語音辨識（雲端，選用）',{asr_provider:{l:'語音辨識服務',h:'無：不做語音辨識（預設）。AssemblyAI：把聲音即時送到 AssemblyAI 雲端（Universal-Streaming v3）轉成文字。⚠ 這是外部雲端服務，聲音會離開這台裝置；請確認使用者同意與當地法規。需要 PureSound 管線與 API key。',opts:{none:'無',assemblyai:'AssemblyAI（雲端）'}},
+   asr_source:{l:'送出的聲音',h:'乾淨：送出經過 PureSound 與影像確認後的乾淨音軌（預設）。原始：送出麥克風原始聲音。',opts:{clean:'乾淨音軌',raw:'原始'}},
+   asr_feed:{l:'送出時機',h:'只在說話時：只有「校正後算說話」的片段送出聲音，其餘送靜音（保持時間對齊，內容不離開裝置）。整個對話：對話進行中的聲音全部送出。對話結束（ENDED）一律斷線。',opts:{speech:'只在說話時',session:'整個對話'}},
+   asr_region:{l:'資料區域',h:'AssemblyAI 端點：全球（最近的區域）、美國或歐盟（資料不離開該區域）。',opts:{global:'全球',us:'美國',eu:'歐盟'}},
+   asr_speech_model:{l:'模型',h:'Universal-3.6 Pro：32 種語言（含中文 zh、粵語 yue），可混用語言（預設）。Universal-3.5 Pro：19 種語言（含 zh，不含 yue）。Universal-Streaming English：只有英文。Universal-Streaming Multilingual：英、西、德、法、葡、義，不含中文。',opts:{'universal-3-6-pro':'Universal-3.6 Pro','universal-3-5-pro':'Universal-3.5 Pro','universal-streaming-english':'Universal-Streaming English','universal-streaming-multilingual':'Universal-Streaming Multilingual'}},
+   asr_language_codes:T('語言','逗號分隔的語言代碼（例如 zh,en），偏向這些語言但仍可混用；留空＝不限制。只適用 Universal-3.x Pro。'),
+   asr_keyterms:T('關鍵詞','逗號分隔，最多 100 個，提高這些詞的辨識率（例如人名、產品名）。'),
+   asr_format_turns:B('格式化結果','句子加標點與大小寫。只適用 Universal-Streaming 模型（3.x Pro 一律格式化）。'),
+   asr_eot_confidence:S('句尾信心門檻','判斷一句話結束的信心門檻。只適用 Universal-Streaming 模型。',0,1,0.05),
+   asr_min_turn_silence:S('最短句尾靜默','靜默多久開始檢查是否句尾。',50,10000,50,'ms'),
+   asr_max_turn_silence:S('最長句尾靜默','靜默這麼久一定結束這句話。',100,10000,50,'ms')}]);
 const META=Object.assign({},...GROUPS.map(g=>g[1]));
 const PRESETS={
  single:{face_roi:[0.25,0.05,0.75,0.95],join_seconds:1.5,grace_seconds:10,present_timeout:45,empty_timeout:5,new_group_seconds:3,absent_frames:3},
@@ -243,18 +261,19 @@ const migrate=o=>{o={...o};if(o.roi&&!o.face_roi)o.face_roi=o.roi;delete o.roi;r
 let cfg=Object.assign(structuredClone(DEF),migrate(JSON.parse(localStorage.getItem(KEY)||'{}')));cfg.monitor='off';// 監聽每次都預設關閉（避免回授）
 const save=()=>localStorage.setItem(KEY,JSON.stringify(cfg));
 const toast=t=>{const e=$('toast');e.textContent=t;e.classList.add('show');clearTimeout(e._t);e._t=setTimeout(()=>e.classList.remove('show'),2200)};
-const clamp=(k,v)=>{const m=META[k];if(m.bool)return v===true||v==='true'||v===1;if(m.opts)return m.opts[v]?v:DEF[k];return Math.min(m.max,Math.max(m.min,Number(v)))};
+const clamp=(k,v)=>{const m=META[k];if(m.text)return String(v).slice(0,2000);if(m.bool)return v===true||v==='true'||v===1;if(m.opts)return m.opts[v]?v:DEF[k];return Math.min(m.max,Math.max(m.min,Number(v)))};
 // ---------- build settings UI ----------
 function buildUI(){
  $('groups').innerHTML=GROUPS.map(([g,items],i)=>`<details ${i<1?'open':''}><summary>${g}</summary>`+Object.entries(items).map(([k,m])=>{
   const d=Array.isArray(DEF[k])?DEF[k].join(', '):DEF[k];
-  const ctl=m.box?`<div class="roi4">${['x0','y0','x1','y1'].map((n,j)=>`<input type="number" data-k="${k}" data-i="${j}" min="0" max="1" step="0.01" title="${n}">`).join('')}</div>`:m.bool?'':m.opts?`<select data-k="${k}" style="width:100%;margin-top:6px;background:var(--bg);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:7px">${Object.entries(m.opts).map(([o,t])=>`<option value="${o}">${t}</option>`).join('')}</select>`:k==='roi'?`<div class="roi4">${['x0','y0','x1','y1'].map((n,j)=>`<input type="number" data-k="roi" data-i="${j}" min="0" max="1" step="0.01" title="${n}">`).join('')}</div>`
+  const ctl=m.text?`<input type="text" data-k="${k}" style="width:100%;margin-top:6px;background:var(--bg);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:7px">`:m.box?`<div class="roi4">${['x0','y0','x1','y1'].map((n,j)=>`<input type="number" data-k="${k}" data-i="${j}" min="0" max="1" step="0.01" title="${n}">`).join('')}</div>`:m.bool?'':m.opts?`<select data-k="${k}" style="width:100%;margin-top:6px;background:var(--bg);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:7px">${Object.entries(m.opts).map(([o,t])=>`<option value="${o}">${t}</option>`).join('')}</select>`:k==='roi'?`<div class="roi4">${['x0','y0','x1','y1'].map((n,j)=>`<input type="number" data-k="roi" data-i="${j}" min="0" max="1" step="0.01" title="${n}">`).join('')}</div>`
    :`<input type="range" data-k="${k}" min="${m.min}" max="${m.max}" step="${m.step}">`;
-  return `<div class="row" id="row_${k}"><div class="top"><label title="${m.h}">${m.l}</label>${m.bool?`<input type="checkbox" data-k="${k}" style="width:20px;height:20px;accent-color:var(--acc)">`:m.box||m.opts?'':`<input type="number" data-k="${k}" min="${m.min}" max="${m.max}" step="${m.step}"><span class="def">${m.u}</span>`}</div>
+  return `<div class="row" id="row_${k}"><div class="top"><label title="${m.h}">${m.l}</label>${m.text?'':m.bool?`<input type="checkbox" data-k="${k}" style="width:20px;height:20px;accent-color:var(--acc)">`:m.box||m.opts?'':`<input type="number" data-k="${k}" min="${m.min}" max="${m.max}" step="${m.step}"><span class="def">${m.u}</span>`}</div>
    ${ctl}<div class="tip">${m.h}　<span class="def">預設 ${m.bool?(d?'開':'關'):m.opts?m.opts[d]:d}${m.u?' '+m.u:''}</span></div></div>`}).join('')+'</details>').join('');
  $('groups').querySelectorAll('input,select').forEach(inp=>{
   const ev=inp.type==='range'?'input':'change';
   if(inp.type==='checkbox'){inp.addEventListener('change',()=>setCfg({[inp.dataset.k]:inp.checked}));return}
+  if(inp.type==='text'){inp.addEventListener('change',()=>setCfg({[inp.dataset.k]:inp.value}));return}
   if(inp.tagName==='SELECT'){inp.addEventListener('change',()=>setCfg({[inp.dataset.k]:inp.value}));return}
   inp.addEventListener(ev,()=>{const k=inp.dataset.k;
    if(BOXES.includes(k)){const r=[...cfg[k]];r[+inp.dataset.i]=Math.min(1,Math.max(0,+inp.value));setCfg({[k]:r})}
@@ -290,7 +309,8 @@ function connect(){ws=new WebSocket((location.protocol==='https:'?'wss://':'ws:/
  ws.onopen=()=>{$('conn').classList.add('on');sendCfg();if(running)ws.send(JSON.stringify({type:'start'}))};
  ws.onclose=()=>{$('conn').classList.remove('on');setTimeout(connect,1500)};
  ws.onmessage=e=>{if(typeof e.data!=='string')return onClean(e.data);const s=JSON.parse(e.data);
-  if(s.type==='audio'){aMeta=s;return renderAudio()}
+  if(s.type==='asr')return onAsr(s);
+  if(s.type==='audio'){aMeta=s;if(s.available!==false)TLH.push({t:performance.now(),raw:s.raw_vad,clean:s.clean_vad,sp:s.speech,dec:s.decision,st:s.state,p:s.p_group});while(TLH.length&&performance.now()-TLH[0].t>31000)TLH.shift();return renderAudio()}
   if(s.type==='stats')return renderStats(s);
   if(s.type==='pong'){lastRtt=performance.now()-s.t;return}
   if(s.type==='state'&&(s.recommended_fps||0)!==recFps){recFps=s.recommended_fps||0;if(cfg.adaptive_fps)restartFrames()}
@@ -387,7 +407,7 @@ let speech=false,frameTimer,vadTimer,pingTimer,stream=null,ac=null,running=false
 const wsSend=o=>{if(ws&&ws.readyState===1)ws.send(JSON.stringify(o))};
 function restartFrames(){clearInterval(frameTimer);if(!running)return;
  frameTimer=setInterval(()=>{if(!ws||ws.readyState!==1||!v.videoWidth)return;const s=480/v.videoHeight;off.width=Math.round(v.videoWidth*s);off.height=480;
-  og.drawImage(v,0,0,off.width,off.height);wsSend({type:'frame',speech,data:off.toDataURL('image/jpeg',0.7)})},1000/curFps())}
+  og.drawImage(v,0,0,off.width,off.height);wsSend({type:'frame',speech,t:performance.now(),data:off.toDataURL('image/jpeg',0.7)})},1000/curFps())}
 const curFps=()=>cfg.adaptive_fps&&recFps>0?recFps:cfg.fps;let recFps=0;
 function setUI(){$('start').textContent=running?'■ 停止':'▶ 開始';$('start').className=running?'stop':'pri';
  $('cam').textContent=running?'鏡頭/麥克風 開':autoPaused?'已自動暫停':'鏡頭/麥克風 關';$('cam').classList.toggle('live',running);
@@ -413,7 +433,7 @@ async function start(){
 function stop(auto){
  [frameTimer,vadTimer,pingTimer].forEach(clearInterval);
  if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;v.srcObject=null;
- if(ac){ac.close().catch(()=>{});ac=null}player=rawMon=null;
+ if(ac){ac.close().catch(()=>{});ac=null}player=rawMon=cleanMon=anRaw=anClean=null;
  speech=false;$('lvl').style.width='0';
  if(running)wsSend({type:'stop'});running=false;autoPaused=!!auto;setUI();last=null;draw();
 }
@@ -444,6 +464,7 @@ function renderStats(s){const y=s.system,c=s.conn,L=c.latency_ms,i=s.info;
   '模型':i.pipeline,'Embedding':i.embed_backend?`${i.embed_backend.active}（要求 ${i.embed_backend.requested}）· ${i.embed_backend.model} · ${i.embed_backend.accelerator}${i.embed_backend.note?' · '+i.embed_backend.note:''}`:'—','OpenCV':`${i.opencv} · ${i.dnn_backend} / ${i.dnn_target} · ${i.cv_threads} threads`,'程序':`${y.proc_threads} threads · ${i.cpu_count} cores`,
   '效能':c.optim?`跳過 ${c.optim.skipped_pct}%（${c.optim.skipped} 張）· embedding 計算 ${c.optim.embed_computed} / 重用 ${c.optim.embed_reused}（${c.optim.embed_reused_pct}%）`:'—',
   '姿勢':`${i.pose_model||'—'} · 呼叫 ${c.optim?c.optim.pose_calls:0} 次 · avg ${L.pose?L.pose.avg:0} ms`,
+  '人聲分離':aMeta&&aMeta.available?`RTF ${aMeta.rtf} · 每塊 ${aMeta.proc_ms} ms · 約 ${(aMeta.rtf*100).toFixed(0)}% 單核 · 延遲 ${aMeta.algo_latency_ms}+${lastLat!=null?lastLat.toFixed(0):'—'} ms`:'未啟用',
   '送幀 fps':`${curFps()}${cfg.adaptive_fps?`（自適應，伺服器建議 ${c.optim?c.optim.recommended_fps:'—'}）`:'（固定）'}`};
 
  $('mKv').innerHTML=Object.entries(kv).map(([k,v])=>`<span>${k}</span><span>${v}</span>`).join('');
@@ -466,21 +487,23 @@ class Play extends AudioWorkletProcessor{constructor(){super();this.q=[];this.cu
  process(_,o){const out=o[0][0];for(let j=0;j<out.length;j++){if(!this.cur||this.i>=this.cur.length){this.cur=this.q.shift()||null;this.i=0}
   out[j]=this.cur?this.cur[Math.floor(this.i)]:0;if(this.cur)this.i+=this.r}return true}}
 registerProcessor('play',Play);`;
-let player=null,rawMon=null;const WR=[],WC=[];
+let player=null,rawMon=null,cleanMon=null;const WR=[],WC=[];
 async function startAudio(ac){await ac.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET],{type:'application/javascript'})));
  const src=ac.createMediaStreamSource(stream),cap=new AudioWorkletNode(ac,'cap');src.connect(cap);
  const sink=ac.createGain();sink.gain.value=0;cap.connect(sink).connect(ac.destination);// keep the graph pulling, silent
  rawMon=ac.createGain();rawMon.gain.value=0;src.connect(rawMon).connect(ac.destination);
- player=new AudioWorkletNode(ac,'play',{outputChannelCount:[1]});player.connect(ac.destination);setMonitor(cfg.monitor);
+ anRaw=ac.createAnalyser();anRaw.fftSize=256;src.connect(anRaw);
+ player=new AudioWorkletNode(ac,'play',{outputChannelCount:[1]});cleanMon=ac.createGain();cleanMon.gain.value=0;player.connect(cleanMon).connect(ac.destination);
+ anClean=ac.createAnalyser();anClean.fftSize=256;player.connect(anClean);setMonitor(cfg.monitor);
  cap.port.onmessage=e=>{const pcm=e.data;meterPush(WR,pcm);
   if(cfg.audio_pipeline!=='puresound'||!ws||ws.readyState!==1)return;
   const b=new ArrayBuffer(9+pcm.byteLength),dv=new DataView(b);dv.setUint8(0,1);dv.setFloat64(1,performance.now(),true);new Uint8Array(b,9).set(new Uint8Array(pcm.buffer,pcm.byteOffset,pcm.byteLength));ws.send(b)}}
-function setMonitor(m){cfg.monitor=m;if(rawMon)rawMon.gain.value=m==='raw'?1:0;document.querySelectorAll('#monBtns button').forEach(b=>b.classList.toggle('on',b.dataset.m===m))}
+function setMonitor(m){cfg.monitor=m;if(rawMon)rawMon.gain.value=m==='raw'?1:0;if(cleanMon)cleanMon.gain.value=m==='clean'?1:0;document.querySelectorAll('#monBtns button').forEach(b=>b.classList.toggle('on',b.dataset.m===m))}
 document.querySelectorAll('#monBtns button').forEach(b=>b.onclick=()=>{setMonitor(b.dataset.m);if(b.dataset.m!=='off')toast('監聽中：請戴耳機')});
 let lastLat=null;
 function onClean(buf){const dv=new DataView(buf);if(dv.getUint8(0)!==2)return;lastLat=performance.now()-dv.getFloat64(1,true);
  const pcm=new Int16Array(buf.slice(9));meterPush(WC,pcm);
- if(player&&cfg.monitor==='clean'){const f=new Float32Array(pcm.length);for(let i=0;i<pcm.length;i++)f[i]=pcm[i]/32768;player.port.postMessage(f,[f.buffer])}}
+ if(player){const f=new Float32Array(pcm.length);for(let i=0;i<pcm.length;i++)f[i]=pcm[i]/32768;player.port.postMessage(f,[f.buffer])}}
 function meterPush(arr,pcm){let mx=0;for(let i=0;i<pcm.length;i+=4)mx=Math.max(mx,Math.abs(pcm[i]));arr.push(mx/32768);if(arr.length>250)arr.shift()}
 function wave(id,arr,col){const c=$(id),d=devicePixelRatio||1,r=c.getBoundingClientRect();if(!r.width)return;c.width=r.width*d;c.height=r.height*d;const x=c.getContext('2d'),W=c.width,H=c.height;
  x.fillStyle=col;arr.forEach((v,i)=>{const h=Math.max(1,Math.sqrt(v)*H);x.fillRect(i/250*W,(H-h)/2,Math.max(1,W/250),h)})}
@@ -493,10 +516,41 @@ function renderAudio(){const a=aMeta;if(!a)return;
  const kv={'判斷':`${LB[a.decision]||a.decision}${a.why?'（'+a.why+'）':''}`,
   '次數':`漏音 ${a.counts.leak} · 聲學誤判-漏收 ${a.counts.false_reject} · 聲學誤判-超出範圍 ${a.counts.false_accept} · 一致 ${a.counts.agree}`,'VAD 乾淨 / 原始':`${a.clean_vad?'說話':'—'} / ${a.raw_vad?'說話':'—'} · 乾淨開頭 ${a.onsets} 次 · ${a.vad_source==='energy_on_enhanced'?'分離後能量':'模型 VAD'}`,
   '電平 原始 / 乾淨':`${a.raw_db} / ${a.clean_db} dBFS（波形峰值 ${db(WR)} / ${db(WC)}）`,
+  '閘門':a.gain<0.5?`🔇 壓低（${(20*Math.log10(Math.max(a.gain,1e-4))).toFixed(0)} dB）`:'🔊 通過',
   '混合 / 增益':`增強 ${(a.mix*100).toFixed(0)}% · 原聲 ${(100-a.mix*100).toFixed(0)}% · 增益 ${a.gain}`,
+  '影像對齊':a.t_vision_client!=null?`決策用的畫面比音訊早 ${((a.t_client-a.t_vision_client)/1000).toFixed(2)} s`:'—',
+  '語音辨識':a.asr?`${a.asr.provider==='none'?'關閉':a.asr.provider} · key ${a.asr.key_set?'已設定':'未設定'} · ${a.asr.connected?'連線中':'未連線'} · 已送 ${a.asr.sent_s} s`:'—',
   '目標':a.target_track!=null?`#${a.target_track}${a.distance!=null?' · '+a.distance+' m':''}`:'—','P(group)':a.p_group??'—',
   'RTF（單執行緒）':a.rtf??'—','處理 / 佇列':`${a.proc_ms} ms · 佇列 ${a.queue} · 丟棄 ${a.dropped} · 重置 ${a.resets}`,
   '延遲':`演算法 ${a.algo_latency_ms} ms + 傳輸/處理 ${lastLat!=null?lastLat.toFixed(0):'—'} ms + 擷取 20 ms`};
  $('aKv').innerHTML=Object.entries(kv).map(([k,v])=>`<span>${k}</span><span>${v}</span>`).join('')}
-buildUI();addCalib();setMonitor('off');new ResizeObserver(fit).observe(cv);connect();
+const DC={agree:'#3fb950',leak:'#f85149',false_reject:'#d29922',false_accept:'#bc8cff',silence:'#30363d',acoustic_only:'#8b949e'};
+const SC={ACTIVE:'#3fb950',IDLE:'#58a6ff',MAYBE_AWAY:'#d29922',AWAY:'#f85149',ENDED:'#30363d'};
+const TLH=[];
+$('tlLeg').innerHTML=Object.entries({agree:'一致',leak:'漏音',false_reject:'聲學誤判-漏收',false_accept:'聲學誤判-超出範圍',silence:'安靜',acoustic_only:'只看聲音'}).map(([k,v])=>`<span style="color:${DC[k]}">■</span>${v}`).join(' ');
+function drawTL(){const c=$('tl'),d=devicePixelRatio||1,r=c.getBoundingClientRect();if(!r.width)return;c.width=r.width*d;c.height=r.height*d;const g=c.getContext('2d'),W=c.width,H=c.height,now=performance.now(),rows=5,rh=H/rows;
+ g.clearRect(0,0,W,H);TLH.forEach((e,i)=>{const n=TLH[i+1];const x0=(e.t-now+30000)/30000*W,x1=((n?n.t:now)-now+30000)/30000*W,w=Math.max(1,x1-x0);
+  if(e.raw){g.fillStyle='#8b949e';g.fillRect(x0,0,w,rh-1)}if(e.clean){g.fillStyle='#58a6ff';g.fillRect(x0,rh,w,rh-1)}if(e.sp){g.fillStyle='#3fb950';g.fillRect(x0,2*rh,w,rh-1)}
+  g.fillStyle=DC[e.dec]||'#000';g.fillRect(x0,3*rh,w,rh-1);g.fillStyle=SC[e.st]||'#000';g.fillRect(x0,4*rh,w,rh-1)});
+ g.strokeStyle='#58a6ff';g.lineWidth=1.5*d;g.beginPath();let on=false;TLH.forEach(e=>{if(e.p==null){on=false;return}const x=(e.t-now+30000)/30000*W,y=H-e.p*H;on?g.lineTo(x,y):g.moveTo(x,y);on=true});g.stroke();
+ g.fillStyle='#e6edf3';g.font=`${9*d}px sans-serif`;['原始','乾淨','說話','判斷','狀態'].forEach((t,i)=>g.fillText(t,2*d,i*rh+rh*0.75))}
+let anRaw=null,anClean=null;const SGB=new Uint8Array(128);
+function sg(id,an){if(!an)return;const c=$(id),g=c.getContext('2d');const img=g.getImageData(1,0,c.width-1,c.height);g.putImageData(img,0,0);an.getByteFrequencyData(SGB);
+ for(let y=0;y<c.height;y++){const v=SGB[Math.floor((1-y/c.height)*SGB.length*0.5)];g.fillStyle=`hsl(${240-v*0.9},80%,${v/5.5}%)`;g.fillRect(c.width-1,y,1,1)}}
+setInterval(()=>{if(!running)return;sg('sgRaw',anRaw);sg('sgClean',anClean);drawTL()},100);
+const ASR=[];
+function onAsr(m){if(m.kind==='status'){$('asrSt').textContent={connected:'（連線中）',begin:'（辨識中'+(m.model?' · '+m.model:'')+'）',terminated:'（已結束）'}[m.status]||'';return}
+ if(m.kind==='error'){$('asrSt').textContent='（錯誤：'+m.error+'）';return}
+ const key=m.session+':'+m.turn_order;let e=ASR.find(x=>x.key===key);if(!e){e={key};ASR.push(e);if(ASR.length>100)ASR.shift()}Object.assign(e,m);
+ $('asrList').innerHTML=ASR.slice().reverse().map(x=>`<div style="padding:3px 0;border-bottom:1px solid var(--line);${x.kind==='partial'?'color:var(--mut)':''}"><small style="color:var(--mut)">#${x.session} · ${x.start_s!=null?x.start_s.toFixed(1)+'–'+(x.end_s??0).toFixed(1)+' s':''}${x.language?' · '+x.language:''}</small> ${x.text.replace(/[<&]/g,c=>c==='<'?'&lt;':'&amp;')}</div>`).join('')}
+function addAsrKey(){const det=[...document.querySelectorAll('#groups details')].find(x=>x.querySelector('summary').textContent.startsWith('語音辨識'));if(!det)return;
+ det.insertAdjacentHTML('beforeend',`<div class="row"><div class="top"><label>AssemblyAI API key</label><span id="keySt" class="def">—</span></div>
+  <input type="password" id="keyIn" autocomplete="off" placeholder="貼上 API key" style="width:100%;margin-top:6px;background:var(--bg);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:7px">
+  <div style="margin-top:6px;display:flex;gap:6px"><button id="keySet">設定</button><button id="keyClr">清除</button></div>
+  <div class="tip">key 只存在伺服器記憶體（重啟就消失），不寫檔、不寫 log、不會傳回瀏覽器，這裡只顯示「已設定」。也可以在伺服器設定環境變數 ASSEMBLYAI_API_KEY。</div></div>`);
+ const st=j=>{$('keySt').textContent=j.set?('已設定'+(j.source==='env'?'（環境變數）':'')):'未設定'};
+ const post=k=>fetch('/api/asr_key'+location.search,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:k})}).then(r=>r.json()).then(st);
+ $('keySet').onclick=()=>{const v=$('keyIn').value;$('keyIn').value='';post(v).then(()=>toast('已設定 API key'))};$('keyClr').onclick=()=>post('');
+ fetch('/api/asr_status'+location.search).then(r=>r.json()).then(st).catch(()=>{})}
+buildUI();addCalib();addAsrKey();setMonitor('off');new ResizeObserver(fit).observe(cv);connect();
 </script></body></html>

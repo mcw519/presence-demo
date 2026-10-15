@@ -1,8 +1,8 @@
 # Presence Demo：偵測對話中的使用者是否離開
 
-> 私人專案 · All rights reserved（未授權任何使用、複製或散布）
+> 授權：Apache-2.0（見 [LICENSE](LICENSE) 與 [NOTICE](NOTICE)）
 
-結合**影像**（人臉偵測、人臉 embedding、群組追蹤，可選的姿勢與距離）和**聲音**（瀏覽器端 VAD），判斷正在跟機器人對話的人（或一群人）是不是已經離開。包含 Python 核心模組（純邏輯、可單元測試）和 FastAPI + WebSocket 網頁 demo。
+結合**影像**（人臉偵測、人臉 embedding、群組追蹤，可選的姿勢與距離）和**聲音**（瀏覽器端 VAD），判斷正在跟裝置（例如對話機器人）對話的人（或一群人）是不是已經離開。包含 Python 核心模組（純邏輯、可單元測試）和 FastAPI + WebSocket 網頁 demo。
 
 ![demo](docs/screenshot.png)
 
@@ -72,6 +72,7 @@ docs/            文件
 ## 文件
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)：架構、資料流、狀態機
+- [docs/ASR.md](docs/ASR.md)：選用的雲端語音辨識（AssemblyAI Universal-Streaming v3；聲音會離開裝置）
 - [docs/AUDIO.md](docs/AUDIO.md)：PureSound 人聲分離 + 影像交叉確認（`audio_pipeline=puresound`，選用：`uv sync --extra puresound` + `scripts/fetch_puresound_model.py`）
 - [docs/ALGORITHM.md](docs/ALGORITHM.md)：演算法架構總文件（資料流、各層公式與預設值、模式矩陣、時間表、已知限制）
 - [docs/CONFIGURATION.md](docs/CONFIGURATION.md)：所有參數、範圍、預設值、預設組合
@@ -88,4 +89,4 @@ docs/            文件
 
 - 第三方元件的授權與商用風險見 [docs/LICENSES.md](docs/LICENSES.md)（不是法律意見）。
 - **SFace 的權重標示 Apache-2.0，但訓練資料可能有非商業限制**，商用前請先確認，或用 `PRESENCE_FACE_EMBEDDER=hist` 停用。
-- 本專案：私人專案，All rights reserved。未經作者書面同意，不得使用、複製、修改或散布。
+- 本專案：[Apache License 2.0](LICENSE)，另見 [NOTICE](NOTICE)。模型權重與第三方套件不在此授權範圍內，各自的授權見 [docs/LICENSES.md](docs/LICENSES.md)。

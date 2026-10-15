@@ -187,6 +187,20 @@
 | `xcheck_attack` | 0.01 | 0.001–0.5 s | 增益上升時間常數 |
 | `xcheck_release` | 0.05 | 0.005–2 s | 增益下降時間常數 |
 
+| `asr_provider` | `none` | `none` / `assemblyai` | 雲端語音辨識（**聲音會離開裝置**），詳見 [ASR.md](ASR.md) |
+| `asr_source` | `clean` | `clean` / `raw` | 送出乾淨音軌或原始聲音 |
+| `asr_feed` | `speech` | `speech` / `session` | 只送算說話的片段（其餘送靜音），或 session 中全部 |
+| `asr_region` | `global` | `global` / `us` / `eu` | AssemblyAI 端點（資料區域） |
+| `asr_speech_model` | `universal-3-6-pro` | 4 種 | 見 ASR.md |
+| `asr_language_codes` | `zh,en` | 文字 | 逗號分隔；Universal-3.x Pro 才有效 |
+| `asr_keyterms` | 空 | 文字 | 逗號分隔，最多 100 個 |
+| `asr_format_turns` | 開 | 開/關 | Universal-Streaming 才有效 |
+| `asr_eot_confidence` | 0.4 | 0–1 | Universal-Streaming 才有效 |
+| `asr_min_turn_silence` | 400 | 50–10000 ms | |
+| `asr_max_turn_silence` | 1280 | 100–10000 ms | |
+
+API key 不是設定值：用環境變數 `ASSEMBLYAI_API_KEY` 或 UI 的密碼欄位（只存在伺服器記憶體）。
+
 瀏覽器端另有 `monitor`（監聽：不監聽／原始／乾淨），每次開啟頁面都重設為不監聽，不存 localStorage 以外的地方也不送到伺服器。
 
 ## 瀏覽器端（不送到伺服器）

@@ -488,7 +488,7 @@ stateDiagram-v2
   - 額外成本 < 0.5 ms／幀（見 §6）。
   
   代價是開始 session 要等意圖達標 2 s（rules 是第一張幀就開始）。真正改成預設之前，請先在實際場景用網頁切換觀察意圖分數的分布。
-- `pose_enabled` 在 kalman 模式下可以提高「只看得到身體」時的身分維持，但每次完整偵測多約 6 ms（box）。
+- `pose_enabled` 在 kalman 模式下可以提高「只看得到身體」時的身分維持，但每次完整偵測多約 6 ms（x86 測試伺服器）。
 
 ---
 
@@ -543,12 +543,14 @@ stateDiagram-v2
 | 其他 | | | silence | 不變 | 否 |
 | 任何 | | 不確定／過期 2 s | acoustic_only | PureSound 原樣 | = 乾淨 VAD |
 
+選用：修正後的乾淨音軌可在 session 進行中送到 AssemblyAI 雲端做即時語音辨識（見 [ASR.md](ASR.md)，聲音會離開裝置）。
+
 進場規則（`onset_entry_only`）：乾淨音源下，session **只**在「修正後說話開頭」且「1.5 s 內 ROI 有一位信心足夠、
 不在 leave_distance 外的人」時開始；只有人或只有聲音都不會開始。NEW_GROUP／換人時重置分離串流狀態。
 
 ## 6. 效能、隱私與授權
 
-### 效能（box：Intel Xeon 8 vCPU，x86，**不是 Kebbi**；詳見 [PERFORMANCE.md](PERFORMANCE.md)）
+### 效能（x86 測試伺服器：Intel Xeon 8 vCPU，x86，**不是 Kebbi**；詳見 [PERFORMANCE.md](PERFORMANCE.md)）
 
 | 項目 | p50 |
 |---|---|
@@ -598,7 +600,7 @@ stateDiagram-v2
 8. **嵌入後端是整個行程共用的**：兩個連線設定不同的 `embed_backend` 時，每一幀都會切換後端（功能正確，但會互相影響效能）。embedding 節流的 `self_sim` 門檻固定用 `cos_match`，不會因為量化後端改用 `cos_match_int8`（預設值兩者相同，所以目前沒有影響）。
 9. **距離估計**用的是平均臉寬和肩寬，沒有校正時誤差可能很大（沒有量測過），而且小孩的臉比較小，會被估得比較遠。
 
-### 只在 box 上驗證過、需要在實機（Kebbi，MTK Helio G520）測試的項目
+### 只在 x86 測試伺服器上驗證過、需要在實機（Kebbi，MTK Helio G520）測試的項目
 
 - **延遲**：所有延遲數字都是 x86 Xeon 量到的。ARM 上預估慢好幾倍，必須在實機上重新量測（方法見 [NPU.md](NPU.md)、[PERFORMANCE.md](PERFORMANCE.md)）。
 - **NPU**：NNAPI／NeuroPilot delegate 能不能載入、哪些運算子會交給 NPU 執行、int8 在 NPU 上的精度和速度，都**還沒驗證**。box 上只驗證了 LiteRT CPU 和「delegate 載入失敗就退回 CPU」的流程。
