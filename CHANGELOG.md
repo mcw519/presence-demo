@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.3 — 2026-10-15
+
+- **真正貼齊 PureSound playground 的設計，不只是字體與色票。** HTML 改用 vendored 的 PureSound 元件 class（`.button` / `.button-primary` / `.panel.panel-pad` / `.panel-title` / `.metric` / `.segmented` / `.chip` / `.stat` / `.table` / `.toast` / `.toggle-row` / `.control` / `.range` / `.inspector` / `.eyebrow` / `.empty-state` / `.status-dot`），並載入完整的 `shell.css` 與 `screens-shared.css`。自訂樣式收到 `app.css`，只留相機、狀態機、倒數、scope 底色、追蹤名單、設定模組手風琴等 presence 專用佈局，不再重寫 button/panel/token。
+- 版面：playground 式 page-header（標題＋說明＋actions）、workbench（相機 panel ＋右側 panel 堆疊）、設定改為 Inspector 抽屜（eyebrow 分節、segmented 預設、toggle 進階、field/control/range）。監聽改 segmented；指標改 metric；連線改 status-dot；toast / 錯誤橫幅用 playground toast 樣式。
+- `docs/DESIGN.md` 改寫為元件對照表。測試確認 index 使用共用 class、且 `app.css` 不重新定義上游 token／component。
+
 ## 0.10.2 — 2026-10-15
 
 - **UI 改用 PureSound playground 的設計系統**：直接載入 PureSound web 的 `tokens.css`、`base.css`、`components.css` 與 IBM Plex 字型（釘在與 `puresound-streaming` 相同的 revision `121bf62`，放在 `presence_demo/static/vendor/puresound/`，Apache-2.0／OFL，授權檔一併附上），不再維護自己的一份色票。App 自己的 CSS 只把 presence 的角色對應到上游 token。

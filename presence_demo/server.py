@@ -19,7 +19,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import asr as asrmod
@@ -40,7 +40,7 @@ TOKEN = os.environ.get("PRESENCE_TOKEN", "")  # empty = no auth (local use)
 @app.middleware("http")
 async def require_token(request: Request, call_next):
     # vendored design-system assets (public CSS + fonts, no data) load without the token
-    public = request.url.path.startswith("/static/vendor/")
+    public = request.url.path.startswith("/static/vendor/") or request.url.path == "/static/app.css"
     if TOKEN and not public and not secrets.compare_digest(request.query_params.get("token", ""), TOKEN):
         return PlainTextResponse("forbidden", status_code=403)
     return await call_next(request)
@@ -129,6 +129,11 @@ def pipeline() -> VisionPipeline:
 
 
 app.mount("/static/vendor", StaticFiles(directory=STATIC / "vendor"), name="vendor")
+
+
+@app.get("/static/app.css")
+def app_css():
+    return FileResponse(STATIC / "app.css", media_type="text/css", headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/")

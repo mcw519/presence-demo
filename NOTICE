@@ -10,7 +10,7 @@ Third-party components keep their own licenses and are NOT covered by this grant
   Copyright 2026 Milo Wu and PureSound contributors, Apache-2.0; see its own NOTICE.
   Its NOTICE states that datasets and audio recordings are excluded from its Apache-2.0 grant.
 - Python dependencies: see docs/LICENSES.md.
-- presence_demo/static/vendor/puresound/: CSS design system (tokens.css, base.css, components.css) from
+- presence_demo/static/vendor/puresound/: CSS design system (tokens.css, base.css, components.css, shell.css, screens-shared.css) from
   PureSound (https://github.com/mcw519/puresound, puresound/web/static, revision 121bf62), Apache-2.0,
   Copyright 2026 Milo Wu and PureSound contributors; base.css font URLs changed to relative paths.
   Includes IBM Plex Sans / IBM Plex Mono fonts (SIL Open Font License 1.1, fonts/LICENSE.txt).

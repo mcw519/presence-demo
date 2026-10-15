@@ -14,6 +14,8 @@ PureSound playground share one set of tokens instead of divergent copies.
 | `components.css` | `css/components.css` | none |
 | `base.css` | `css/base.css` | font URLs made relative (`/fonts/` → `fonts/`) |
 | `fonts/*` | `fonts/*` | none |
+| `shell.css` | `css/shell.css` | none |
+| `screens-shared.css` | subset of `css/screens.css` (panel title + metric) | extracted |
 
 The PureSound Python package (`puresound-streaming`) does not ship these web assets, so they
 cannot be loaded from the installed dependency; `tests/test_design_tokens.py` checks the copy

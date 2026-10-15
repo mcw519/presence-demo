@@ -12,6 +12,7 @@ VENDOR = Path(server.STATIC) / "vendor" / "puresound"
 PINNED = {
     "tokens.css": "d788571678a05894d084e8bda54f4445b8d1c3072ff6e1ecf3718c8934c3822b",
     "components.css": "cbb5a2580dd69b3451e7e77f2b2794bf86a4559835aa2addd1cadd87b0a590e3",
+    "shell.css": "de94af088d54e9fca0beda35be7d8338cd40fca6d68aa48605d647ec78919399",
 }
 
 
@@ -28,13 +29,20 @@ def test_pin_matches_puresound_dependency():
     assert rev in (Path(server.__file__).parents[1] / "pyproject.toml").read_text()
 
 
-def test_index_uses_shared_tokens_and_no_own_palette():
+def test_index_uses_shared_tokens_and_component_classes():
     html = (Path(server.STATIC) / "index.html").read_text()
-    assert "/static/vendor/puresound/tokens.css" in html
-    style = html[html.index("<style>") : html.index("</style>")]
-    # no redefinition of upstream roles in the app's own CSS
+    for href in ("tokens.css", "base.css", "components.css", "shell.css", "screens-shared.css"):
+        assert f"/static/vendor/puresound/{href}" in html
+    assert 'class="button button-primary"' in html
+    assert 'class="panel panel-pad"' in html
+    assert 'class="inspector"' in html and 'inspector-section' in html
+    assert 'class="segmented"' in html and 'class="toast"' in html
+    assert 'class="toggle-row"' in html or "toggle-row" in html  # built in rowHTML
+    css = (Path(server.STATIC) / "app.css").read_text()
     for role in ("--page:", "--canvas:", "--ink:", "--accent:", "--good:", "--bad:", "--font-sans:"):
-        assert role not in style, role
+        assert role not in css, role
+    # presence must use PureSound button/panel classes, not reinvent them
+    assert ".button {" not in css and ".panel {" not in css
 
 
 def test_vendor_assets_public_but_app_still_protected(monkeypatch):
@@ -43,6 +51,7 @@ def test_vendor_assets_public_but_app_still_protected(monkeypatch):
     r = c.get("/static/vendor/puresound/tokens.css")
     assert r.status_code == 200 and "--accent" in r.text
     assert c.get("/static/vendor/puresound/fonts/IBMPlexSans-400.woff2").status_code == 200
+    assert c.get("/static/app.css").status_code == 200
     assert c.get("/").status_code == 403
     r = c.get("/?token=tok")
     assert r.status_code == 200 and "__VERSION__" not in r.text
