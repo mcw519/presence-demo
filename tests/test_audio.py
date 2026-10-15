@@ -283,7 +283,8 @@ def test_ws_audio_round_trip_writes_no_files():
         ws.send_json({"type": "start"})
         for i in range(0, x.size, 320):
             ws.send_bytes(b"\x01" + struct.pack("<d", float(i)) + x[i : i + 320].tobytes())
-        while got < x.size - 1200:
+        # the server keeps <= 500 ms of backlog (drops the oldest while the model warms up), so expect >= 0.5 s back
+        while got < 8000 - 1200:
             m = ws.receive()
             if m.get("bytes"):
                 assert m["bytes"][0] == 2

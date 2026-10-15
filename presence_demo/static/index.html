@@ -125,7 +125,7 @@ const DEF={face_roi:[0.2,0.05,0.8,0.95],mirror_view:true,show_face_roi:true,pose
  turned_away_early:true,turned_away_seconds:2,recede_ratio:0.1,distance_enabled:false,camera_hfov:60,face_width_m:0.15,shoulder_width_m:0.38,
  distance_calib:1,distance_ema:0.3,zone_min:0.4,zone_max:2,leave_distance:2.5,min_conf:0.6,embed_backend:'fp32',npu_precision:'int8',cos_match_int8:0.4,cos_match:0.4,cos_weak:0.2,iou_match:0.3,embed_ema:0.15,join_seconds:2,grace_seconds:15,
  present_frames:2,absent_frames:3,idle_after:3,present_timeout:15,empty_timeout:5,base_timeout:20,maybe_away_frac:0.5,end_after_away:5,new_group_seconds:3,
- priority_mode:'vision',speech_join:'auto',presence_model:'rules',intent_model:'rules',intent_tau:1,join_threshold:0.6,drop_threshold:0.35,drop_seconds:8,intent_weighted_presence:false,w_facing:0.45,w_distance:0.1,w_dwell:0.1,w_approach:0.05,w_still:0.15,w_center:0.15,leave_halflife:0.6,detect_gain:4,lowconf_factor:0.15,p_active:0.8,p_maybe:0.6,p_away:0.3,away_hold_seconds:1,tracker_mode:'legacy',coast_seconds:2,coast_present_conf:0.4,gate_mahalanobis:9.21,appearance_min_sim:0.6,appearance_ema:0.2,body_min_conf:0.4,present_max_silence:0,motion_gate:true,motion_threshold:0.015,force_detect_seconds:3,embed_throttle:true,embed_interval:3,embed_move_thresh:0.15,adaptive_fps:true,fps_low:0.5,fps_high:2,roi_crop:true,crop_margin:0.1,max_width:320,fps:1,vad_k:2.5,vad_min:0.005,vad_hang:400,
+ priority_mode:'vision',speech_join:'auto',presence_model:'rules',intent_model:'rules',intent_tau:1,join_threshold:0.6,drop_threshold:0.35,drop_seconds:8,intent_weighted_presence:false,w_facing:0.45,w_distance:0.1,w_dwell:0.1,w_approach:0.05,w_still:0.15,w_center:0.15,leave_halflife:0.6,detect_gain:4,lowconf_factor:0.15,p_active:0.8,p_maybe:0.6,p_away:0.3,away_hold_seconds:1,tracker_mode:'legacy',coast_seconds:2,coast_present_conf:0.4,gate_mahalanobis:9.21,appearance_min_sim:0.6,appearance_ema:0.2,body_min_conf:0.4,present_max_silence:0,motion_gate:true,motion_threshold:0.015,force_detect_seconds:3,embed_throttle:true,embed_interval:3,embed_move_thresh:0.15,adaptive_fps:true,fps_low:0.5,fps_high:2,roi_crop:true,crop_margin:0.1,max_width:640,fps:1,vad_k:2.5,vad_min:0.005,vad_hang:400,
  audio_pipeline:'energy_vad',iso_onset_guard:false,iso_reset_on_change:true,onset_needs_vision:true,onset_entry_only:true,clean_vad_margin_db:10,clean_vad_min_db:-50,clean_vad_hang:0.3,xcheck_enabled:true,near_range:1,xcheck_hold:0.75,xcheck_stale:2,xcheck_require_calib:false,xcheck_floor_db:-40,xcheck_recover_mix:0.3,xcheck_attack:0.01,xcheck_release:0.05,asr_provider:'none',asr_source:'clean',asr_feed:'speech',asr_region:'global',asr_speech_model:'universal-3-6-pro',asr_language_codes:'zh,en',asr_keyterms:'',asr_format_turns:true,asr_eot_confidence:0.4,asr_min_turn_silence:400,asr_max_turn_silence:1280,monitor:'off'};
 const CLIENT=['monitor','mirror_view','fps','vad_k','vad_min','vad_hang','show_face_roi','show_pose_roi'];
 const BOXES=['face_roi','pose_roi'];
@@ -257,8 +257,8 @@ const PRESETS={
  group:{face_roi:[0.08,0.02,0.92,0.98],join_seconds:3,grace_seconds:20,present_frames:2,absent_frames:4,present_timeout:90,empty_timeout:8,new_group_seconds:5,cos_match:0.42,fps:2},
  noisy:{priority_mode:'vision',vad_k:3.5,vad_min:0.02,vad_hang:300,min_conf:0.7,base_timeout:15,present_timeout:45,empty_timeout:5}};
 const KEY='presence-cfg-v1';
-const migrate=o=>{o={...o};if(o.roi&&!o.face_roi)o.face_roi=o.roi;delete o.roi;return o};
-let cfg=Object.assign(structuredClone(DEF),migrate(JSON.parse(localStorage.getItem(KEY)||'{}')));cfg.monitor='off';// 監聽每次都預設關閉（避免回授）
+const migrate=o=>{o={...o};if(!o._v091){if(o.max_width===320)o.max_width=640;o._v091=1}if(o.roi&&!o.face_roi)o.face_roi=o.roi;delete o.roi;return o};
+let cfg=Object.assign(structuredClone({...DEF,_v091:1}),migrate(JSON.parse(localStorage.getItem(KEY)||'{}')));cfg.monitor='off';// 監聽每次都預設關閉（避免回授）
 const save=()=>localStorage.setItem(KEY,JSON.stringify(cfg));
 const toast=t=>{const e=$('toast');e.textContent=t;e.classList.add('show');clearTimeout(e._t);e._t=setTimeout(()=>e.classList.remove('show'),2200)};
 const clamp=(k,v)=>{const m=META[k];if(m.text)return String(v).slice(0,2000);if(m.bool)return v===true||v==='true'||v===1;if(m.opts)return m.opts[v]?v:DEF[k];return Math.min(m.max,Math.max(m.min,Number(v)))};
@@ -416,7 +416,7 @@ async function start(){
  if(running)return;
  stream=await navigator.mediaDevices.getUserMedia({video:{width:{ideal:640},height:{ideal:480},facingMode:'user'},audio:{echoCancellation:true,noiseSuppression:true}});
  v.srcObject=stream;running=true;autoPaused=false;setUI();wsSend({type:'start'});
- ac=new (window.AudioContext||window.webkitAudioContext)();await ac.resume();
+ ac=new (window.AudioContext||window.webkitAudioContext)({latencyHint:'interactive'});await ac.resume();
  const an=ac.createAnalyser();an.fftSize=1024;ac.createMediaStreamSource(stream).connect(an);
  const buf=new Float32Array(an.fftSize);let floor=0.01,until=0,prev=false;
  vadTimer=setInterval(()=>{an.getFloatTimeDomainData(buf);let e=0;for(const x of buf)e+=x*x;const rms=Math.sqrt(e/buf.length),now=performance.now();
@@ -462,6 +462,7 @@ function renderStats(s){const y=s.system,c=s.conn,L=c.latency_ms,i=s.info;
  const kv={'Load avg':y.load?y.load.join(' / '):'—','畫面張數':`收 ${c.frames.received} · 處理 ${c.frames.processed} · 丟棄 ${c.frames.dropped}`,
   '畫面大小':`${c.frame_size.join('×')} · 平均 ${fmtB(c.frame_bytes_avg)}`,'WS 往返':c.rtt_ms!=null?c.rtt_ms+' ms':(lastRtt?lastRtt.toFixed(0)+' ms':'—'),
   '模型':i.pipeline,'Embedding':i.embed_backend?`${i.embed_backend.active}（要求 ${i.embed_backend.requested}）· ${i.embed_backend.model} · ${i.embed_backend.accelerator}${i.embed_backend.note?' · '+i.embed_backend.note:''}`:'—','OpenCV':`${i.opencv} · ${i.dnn_backend} / ${i.dnn_target} · ${i.cv_threads} threads`,'程序':`${y.proc_threads} threads · ${i.cpu_count} cores`,
+  '偵測率':c.optim&&c.optim.detect_calls!=null?`有臉 ${c.optim.detect_hits} / 偵測 ${c.optim.detect_calls} 次（${c.optim.detect_calls?Math.round(100*c.optim.detect_hits/c.optim.detect_calls):0}%）`:'—',
   '效能':c.optim?`跳過 ${c.optim.skipped_pct}%（${c.optim.skipped} 張）· embedding 計算 ${c.optim.embed_computed} / 重用 ${c.optim.embed_reused}（${c.optim.embed_reused_pct}%）`:'—',
   '姿勢':`${i.pose_model||'—'} · 呼叫 ${c.optim?c.optim.pose_calls:0} 次 · avg ${L.pose?L.pose.avg:0} ms`,
   '人聲分離':aMeta&&aMeta.available?`RTF ${aMeta.rtf} · 每塊 ${aMeta.proc_ms} ms · 約 ${(aMeta.rtf*100).toFixed(0)}% 單核 · 延遲 ${aMeta.algo_latency_ms}+${lastLat!=null?lastLat.toFixed(0):'—'} ms`:'未啟用',
@@ -483,9 +484,22 @@ const WORKLET=`class Cap extends AudioWorkletProcessor{constructor(){super();thi
    if(this.n===320){this.port.postMessage(this.buf.slice(0));this.n=0}}
   this.p=p-x.length;this.prev=x[x.length-1];return true}}
 registerProcessor('cap',Cap);
-class Play extends AudioWorkletProcessor{constructor(){super();this.q=[];this.cur=null;this.i=0;this.r=16000/sampleRate;this.port.onmessage=e=>{this.q.push(e.data);if(this.q.length>25)this.q.splice(0,this.q.length-5)}}
- process(_,o){const out=o[0][0];for(let j=0;j<out.length;j++){if(!this.cur||this.i>=this.cur.length){this.cur=this.q.shift()||null;this.i=0}
-  out[j]=this.cur?this.cur[Math.floor(this.i)]:0;if(this.cur)this.i+=this.r}return true}}
+// Low-latency player: small fixed jitter buffer (start at 60 ms, target 80 ms). Above 160 ms the oldest audio is
+// dropped back to the target, so bursts after network stalls never turn into permanent delay (and clock drift
+// between mic and speaker cannot accumulate). Underrun -> silence + re-prebuffer.
+class Play extends AudioWorkletProcessor{constructor(){super();this.q=[];this.n=0;this.cur=null;this.i=0;this.r=16000/sampleRate;this.play=false;
+  this.START=960;this.TGT=1280;this.MAX=2560;this.under=0;this.drop=0;this.k=0;this.hi=0;
+  this.port.onmessage=e=>{this.q.push(e.data);this.n+=e.data.length;
+   if(this.n>this.MAX){while(this.n>this.TGT&&this.q.length>1){this.drop+=this.q[0].length;this.n-=this.q.shift().length}}}}
+ depth(){return this.n+(this.cur?this.cur.length-this.i:0)}
+ process(_,o){const out=o[0][0];if(!this.play&&this.n>=this.START)this.play=true;
+  for(let j=0;j<out.length;j++){if(!this.play){out[j]=0;continue}
+   if(!this.cur||this.i>=this.cur.length){const rest=this.cur?this.i-this.cur.length:0;this.cur=this.q.shift()||null;if(this.cur)this.n-=this.cur.length;this.i=Math.max(0,rest)}
+   if(!this.cur){this.play=false;this.under++;out[j]=0;continue}
+   const k=Math.floor(this.i),f=this.i-k,a=this.cur[k],b=k+1<this.cur.length?this.cur[k+1]:(this.q.length?this.q[0][0]:a);out[j]=a+(b-a)*f;this.i+=this.r}
+  // slow drain: buffer above target+20 ms for 0.5 s -> drop one chunk (keeps latency near the target after bursts)
+  if(this.play&&this.depth()>this.TGT+320){if(++this.hi*out.length>sampleRate/2&&this.q.length){this.drop+=this.q[0].length;this.n-=this.q.shift().length;this.hi=0}}else this.hi=0;
+  if(++this.k%40===0)this.port.postMessage({buf_ms:this.depth()/16,under:this.under,drop_ms:this.drop/16,playing:this.play});return true}}
 registerProcessor('play',Play);`;
 let player=null,rawMon=null,cleanMon=null;const WR=[],WC=[];
 async function startAudio(ac){await ac.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET],{type:'application/javascript'})));
@@ -493,15 +507,16 @@ async function startAudio(ac){await ac.audioWorklet.addModule(URL.createObjectUR
  const sink=ac.createGain();sink.gain.value=0;cap.connect(sink).connect(ac.destination);// keep the graph pulling, silent
  rawMon=ac.createGain();rawMon.gain.value=0;src.connect(rawMon).connect(ac.destination);
  anRaw=ac.createAnalyser();anRaw.fftSize=256;src.connect(anRaw);
- player=new AudioWorkletNode(ac,'play',{outputChannelCount:[1]});cleanMon=ac.createGain();cleanMon.gain.value=0;player.connect(cleanMon).connect(ac.destination);
+ player=new AudioWorkletNode(ac,'play',{outputChannelCount:[1]});player.port.onmessage=e=>{pst=e.data};cleanMon=ac.createGain();cleanMon.gain.value=0;player.connect(cleanMon).connect(ac.destination);
  anClean=ac.createAnalyser();anClean.fftSize=256;player.connect(anClean);setMonitor(cfg.monitor);
  cap.port.onmessage=e=>{const pcm=e.data;meterPush(WR,pcm);
   if(cfg.audio_pipeline!=='puresound'||!ws||ws.readyState!==1)return;
   const b=new ArrayBuffer(9+pcm.byteLength),dv=new DataView(b);dv.setUint8(0,1);dv.setFloat64(1,performance.now(),true);new Uint8Array(b,9).set(new Uint8Array(pcm.buffer,pcm.byteOffset,pcm.byteLength));ws.send(b)}}
 function setMonitor(m){cfg.monitor=m;if(rawMon)rawMon.gain.value=m==='raw'?1:0;if(cleanMon)cleanMon.gain.value=m==='clean'?1:0;document.querySelectorAll('#monBtns button').forEach(b=>b.classList.toggle('on',b.dataset.m===m))}
 document.querySelectorAll('#monBtns button').forEach(b=>b.onclick=()=>{setMonitor(b.dataset.m);if(b.dataset.m!=='off')toast('監聽中：請戴耳機')});
-let lastLat=null;
-function onClean(buf){const dv=new DataView(buf);if(dv.getUint8(0)!==2)return;lastLat=performance.now()-dv.getFloat64(1,true);
+let lastLat=null,pst=null;const LATS=[];
+const outLat=()=>ac?((ac.baseLatency||0)+(ac.outputLatency||0))*1000:0;
+function onClean(buf){const dv=new DataView(buf);if(dv.getUint8(0)!==2)return;lastLat=performance.now()-dv.getFloat64(1,true);LATS.push(lastLat);if(LATS.length>200)LATS.shift();
  const pcm=new Int16Array(buf.slice(9));meterPush(WC,pcm);
  if(player){const f=new Float32Array(pcm.length);for(let i=0;i<pcm.length;i++)f[i]=pcm[i]/32768;player.port.postMessage(f,[f.buffer])}}
 function meterPush(arr,pcm){let mx=0;for(let i=0;i<pcm.length;i+=4)mx=Math.max(mx,Math.abs(pcm[i]));arr.push(mx/32768);if(arr.length>250)arr.shift()}
@@ -509,6 +524,9 @@ function wave(id,arr,col){const c=$(id),d=devicePixelRatio||1,r=c.getBoundingCli
  x.fillStyle=col;arr.forEach((v,i)=>{const h=Math.max(1,Math.sqrt(v)*H);x.fillRect(i/250*W,(H-h)/2,Math.max(1,W/250),h)})}
 const db=a=>{const v=a.length?a[a.length-1]:0;return v>0?(20*Math.log10(v)).toFixed(0)+' dBFS':'—'};
 setInterval(()=>{if(!running)return;wave('wRaw',WR,'#8b949e');wave('wClean',WC,aMeta&&aMeta.clean_vad?'#3fb950':'#58a6ff')},100);
+function monLat(){if(lastLat==null)return'—';const s=[...LATS].sort((x,y)=>x-y),p=q=>s[Math.min(s.length-1,Math.floor(q*s.length))];
+ const buf=pst?pst.buf_ms:0,tot=20+aMeta.algo_latency_ms+p(0.5)+buf+outLat();
+ return `約 ${tot.toFixed(0)} ms ＝ 擷取 20 + 演算法 ${aMeta.algo_latency_ms} + 往返 ${p(0.5).toFixed(0)}（p95 ${p(0.95).toFixed(0)}）+ 緩衝 ${buf.toFixed(0)} + 輸出 ${outLat().toFixed(0)} ms`+(pst?` · 斷音 ${pst.under} 次 · 追趕丟棄 ${pst.drop_ms.toFixed(0)} ms`:'')+` · 伺服器佇列 ${aMeta.queue}（最多 ${aMeta.backlog_max??0}）`}
 function renderAudio(){const a=aMeta;if(!a)return;
  if(a.available===false){$('aSt').textContent='（無法使用）';$('aKv').innerHTML=`<span>原因</span><span>${a.error}</span>`;return}
  const LB={agree:'✅ 一致',leak:'漏音',false_reject:'聲學誤判-漏收',false_accept:'聲學誤判-超出範圍',silence:'安靜',acoustic_only:'只看聲音'};
@@ -522,7 +540,8 @@ function renderAudio(){const a=aMeta;if(!a)return;
   '語音辨識':a.asr?`${a.asr.provider==='none'?'關閉':a.asr.provider} · key ${a.asr.key_set?'已設定':'未設定'} · ${a.asr.connected?'連線中':'未連線'} · 已送 ${a.asr.sent_s} s`:'—',
   '目標':a.target_track!=null?`#${a.target_track}${a.distance!=null?' · '+a.distance+' m':''}`:'—','P(group)':a.p_group??'—',
   'RTF（單執行緒）':a.rtf??'—','處理 / 佇列':`${a.proc_ms} ms · 佇列 ${a.queue} · 丟棄 ${a.dropped} · 重置 ${a.resets}`,
-  '延遲':`演算法 ${a.algo_latency_ms} ms + 傳輸/處理 ${lastLat!=null?lastLat.toFixed(0):'—'} ms + 擷取 20 ms`};
+  '延遲':`演算法 ${a.algo_latency_ms} ms + 傳輸/處理 ${lastLat!=null?lastLat.toFixed(0):'—'} ms + 擷取 20 ms`,
+  '監聽延遲（擷取→播放）':monLat()};
  $('aKv').innerHTML=Object.entries(kv).map(([k,v])=>`<span>${k}</span><span>${v}</span>`).join('')}
 const DC={agree:'#3fb950',leak:'#f85149',false_reject:'#d29922',false_accept:'#bc8cff',silence:'#30363d',acoustic_only:'#8b949e'};
 const SC={ACTIVE:'#3fb950',IDLE:'#58a6ff',MAYBE_AWAY:'#d29922',AWAY:'#f85149',ENDED:'#30363d'};

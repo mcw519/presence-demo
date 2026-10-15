@@ -161,6 +161,7 @@ class FrameProcessor:
             "embed_computed": 0,
             "embed_reused": 0,
             "pose_calls": 0,
+            "detect_hits": 0,  # detector runs that found >= 1 face (in-memory diagnostic)
         }
 
     def process(self, img: np.ndarray, cfg: Config, stable: bool = True) -> tuple[list[Detection], dict]:
@@ -178,7 +179,7 @@ class FrameProcessor:
         if (
             cfg.motion_gate
             and stable
-            and self.last_dets is not None
+            and self.last_dets  # never reuse a "no face" result: a small/slow face barely changes the thumbnail
             and diff < cfg.motion_threshold
             and now - self.last_full < cfg.force_detect_seconds
         ):
@@ -199,6 +200,7 @@ class FrameProcessor:
         t1 = time.perf_counter()
         raws = self.pipe.detector.detect(sub)
         self.counts["detect_calls"] += 1
+        self.counts["detect_hits"] += bool(raws)
         self.last_full = now
         t2 = time.perf_counter()
         tm["detect"] = (t2 - t1) * 1000

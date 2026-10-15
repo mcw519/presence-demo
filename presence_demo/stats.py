@@ -67,6 +67,7 @@ class ConnStats:
             "embed_reused_pct": round(100 * c.get("embed_reused", 0) / emb, 1) if emb else 0.0,
             "recommended_fps": self.recommended_fps,
             "pose_calls": c.get("pose_calls", 0),
+            "detect_hits": c.get("detect_hits", 0),
         }
 
     def snapshot(self) -> dict:

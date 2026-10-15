@@ -120,6 +120,12 @@ NEW_GROUP、session 改變、或參與者集合換成另一組人時（`iso_rese
 4. **模型取得**：SDK 沒有模型下載／校驗功能（現在用 `scripts/fetch_puresound_model.py`）；建議上游提供下載＋校驗（例如 release asset + sha256）。
 5. **Python 3.10/3.11 支援**（SDK 目前要求 ≥ 3.12）。
 
+## 9a. 監聽延遲
+
+擷取→播放 ≈ 擷取 20 ms + 演算法 52–62 ms + 網路往返（Tailscale：同一區域直連約 10–40 ms，經 DERP relay 可能 100 ms 以上）+ 伺服器處理約 5 ms + 播放緩衝 60–100 ms + 輸出裝置延遲（瀏覽器回報的 `baseLatency + outputLatency`，Mac 內建喇叭／有線耳機約 10–30 ms，藍牙耳機 150–250 ms）。
+因此遠端監聽的實際下限大約是 **150–250 ms**（有線耳機、直連）；這是監聽用的延遲，不影響 VAD／判斷（判斷在伺服器上，不經過播放緩衝）。
+播放器用固定的小 jitter buffer（目標 80 ms），網路卡頓後多出來的聲音會被丟掉，不會累積。UI「監聽延遲」會列出各段。
+
 ## 9b. 雲端語音辨識（選用）
 
 修正後的乾淨音軌可以再送到 AssemblyAI 做即時語音辨識（`asr_provider = assemblyai`），只在 session 進行中、預設只送「算說話」的片段。詳見 [ASR.md](ASR.md)。

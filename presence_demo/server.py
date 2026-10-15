@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import concurrent.futures
 import contextlib
 import json
 import logging
 import os
 import secrets
 import struct
+import threading
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -64,6 +66,24 @@ def calibrate(tr: PresenceTracker, meters) -> list[str]:
     for x in tr.tracks.values():
         x.distance = None  # restart EMA with the new factor
     return warns + [f"calibrated: factor {tr.cfg.distance_calib:.3f} (track #{t.id})"]
+
+
+# One shared VisionPipeline (OpenCV DNN models) serves every WebSocket connection. cv2.FaceDetectorYN keeps its
+# input size as mutable state and is not thread-safe: two connections detecting at once corrupted results (and
+# could crash the process). All vision inference is therefore serialized through this lock.
+VISION_LOCK = threading.Lock()
+# Audio isolation gets its own single worker thread so it never waits behind vision jobs in the default pool.
+AUDIO_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="audio")
+
+
+def _vision_job(proc: FrameProcessor, data: bytes, cfg, stable: bool):
+    img, dec_ms = decode_jpeg(data)  # in memory only
+    if img is None:
+        return None
+    with VISION_LOCK:
+        dets, tm = proc.process(img, cfg, stable)
+    tm.update(decode=dec_ms, w=img.shape[1], h=img.shape[0])
+    return dets, tm
 
 
 def pipeline() -> VisionPipeline:
@@ -124,7 +144,7 @@ async def ws(sock: WebSocket):
     # audio (audio_pipeline=puresound): binary PCM16 chunks in, clean PCM16 + "audio" meta out; memory only
     aud: dict = {
         "stream": None,
-        "q": asyncio.Queue(maxsize=50),
+        "q": asyncio.Queue(maxsize=25),  # <= 500 ms backlog; older chunks are dropped (latency over completeness)
         "last_rx": 0.0,
         "meta_t": 0.0,
         "err": None,
@@ -182,13 +202,11 @@ async def ws(sock: WebSocket):
             t0 = time.perf_counter()
             data = base64.b64decode(msg["data"].split(",")[-1])
             stable = st["tr"].state.value not in ("MAYBE_AWAY", "AWAY")
-            img, dec_ms = decode_jpeg(data)  # in memory only
+            r = await asyncio.to_thread(_vision_job, proc, data, st["tr"].cfg, stable)
             del data
-            if img is None:
+            if r is None:
                 continue
-            dets, tm = await asyncio.to_thread(proc.process, img, st["tr"].cfg, stable)
-            tm.update(decode=dec_ms, w=img.shape[1], h=img.shape[0])
-            del img
+            dets, tm = r
             async with lock:
                 if not st["running"]:
                     continue
@@ -254,8 +272,12 @@ async def ws(sock: WebSocket):
         aud["asr"].feed(src)
 
     async def audio_worker():  # one chunk at a time, in order; isolation runs in a thread
+        loop = asyncio.get_running_loop()
         while True:
-            t_client, pcm = await aud["q"].get()
+            batch = [await aud["q"].get()]
+            while not aud["q"].empty() and len(batch) < 25:  # catch up after a stall: one thread hop for the backlog
+                batch.append(aud["q"].get_nowait())
+            aud["backlog_max"] = max(aud.get("backlog_max", 0), len(batch))
             tr = st["tr"]
             if tr.cfg.audio_pipeline != "puresound":
                 aud["stream"] = None
@@ -274,16 +296,22 @@ async def ws(sock: WebSocket):
             a.cfg = tr.cfg
             now = time.monotonic()
             snap = tr.snapshot() if st["running"] else None  # None -> acoustic_only (no vision)
-            if snap is not None:
-                await asyncio.to_thread(a.on_vision, snap, now)
-            t0 = time.perf_counter()
             a.calibrated = aud["calibrated"]
-            out, speech = await asyncio.to_thread(a.process, pcm, snap, now, now - aud["vis_t"])
-            proc_ms = (time.perf_counter() - t0) * 1000
+            vis_age = now - aud["vis_t"]
+
+            def job(a=a, snap=snap, now=now, vis_age=vis_age, batch=batch):
+                if snap is not None:
+                    a.on_vision(snap, now)
+                return [a.process(pcm, snap, now, vis_age) for _, pcm in batch]
+
+            t0 = time.perf_counter()
+            res = await loop.run_in_executor(AUDIO_POOL, job)
+            proc_ms = (time.perf_counter() - t0) * 1000 / len(batch)
             aud["last_rx"] = time.monotonic()
-            if out:
-                await sock.send_bytes(b"\x02" + struct.pack("<d", t_client) + out)
-            await asr_step(tr, pcm, out, speech, now)
+            for (t_client, pcm), (out, speech) in zip(batch, res, strict=True):
+                if out:
+                    await sock.send_bytes(b"\x02" + struct.pack("<d", t_client) + out)
+                await asr_step(tr, pcm, out, speech, now)
             async with lock:
                 tr = st["tr"]
                 tr.speech_source = "clean"
@@ -310,6 +338,7 @@ async def ws(sock: WebSocket):
                         },
                         "dropped": aud["dropped"],
                         "queue": aud["q"].qsize(),
+                        "backlog_max": aud.get("backlog_max", 0),
                     }
                 )
 
@@ -375,6 +404,18 @@ async def ws(sock: WebSocket):
             await asr_close()
 
 
+class _RedactToken(logging.Filter):
+    """uvicorn logs WebSocket handshakes as '"WebSocket /ws?token=..." [accepted]': mask the token."""
+
+    _re = __import__("re").compile(r"(token=)[^&\s\"']+")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        if "token=" in msg:
+            record.msg, record.args = self._re.sub(r"\1***", msg), ()
+        return True
+
+
 def main():
     import argparse
 
@@ -386,6 +427,7 @@ def main():
     a = ap.parse_args()
     # access_log=False: request lines would contain the ?token= query string. Frames travel over the
     # WebSocket and are never logged; only startup/model messages are written to the log.
+    logging.getLogger("uvicorn.error").addFilter(_RedactToken())
     uvicorn.run(app, host=a.host, port=a.port, access_log=False, log_level="info", ws_max_size=8 * 1024 * 1024)
 
 

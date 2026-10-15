@@ -70,7 +70,7 @@ class Config:
     fps_high: float = 2.0  # recommended fps when things change / MAYBE_AWAY
     roi_crop: bool = True  # crop ROI (+margin) and downscale before detection
     crop_margin: float = 0.1  # margin around ROI, fraction of frame
-    max_width: int = 320  # max width of the image fed to the detector
+    max_width: int = 640  # max width fed to the detector (320 missed faces < ~80 px tall)
     # --- pose / body (optional) ---
     pose_enabled: bool = False  # run the pose detector (MoveNet MultiPose Lightning)
     pose_conf: float = 0.4  # min pose/person confidence
