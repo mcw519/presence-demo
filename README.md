@@ -72,6 +72,7 @@ docs/            文件
 ## 文件
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)：架構、資料流、狀態機
+- [docs/AUDIO.md](docs/AUDIO.md)：PureSound 人聲分離 + 影像交叉確認（`audio_pipeline=puresound`，選用：`uv sync --extra puresound` + `scripts/fetch_puresound_model.py`）
 - [docs/ALGORITHM.md](docs/ALGORITHM.md)：演算法架構總文件（資料流、各層公式與預設值、模式矩陣、時間表、已知限制）
 - [docs/CONFIGURATION.md](docs/CONFIGURATION.md)：所有參數、範圍、預設值、預設組合
 - [docs/TUNING.md](docs/TUNING.md)：調參方法

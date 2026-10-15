@@ -151,6 +151,19 @@ uv run python scripts/benchmark.py            # --repeat 3 --fps 1
 - **這台 x86 上**：最快的是 fp16 TFLite（LiteRT XNNPACK，4 個執行緒），整張約 8 ms；fp32 約 15 ms。官方 int8 ONNX 反而比較慢。
 - **ARM 和 NPU**：要在實機上測試，方法見 [NPU.md](NPU.md)。
 
+## 音訊：PureSound 人聲分離（v0.9.0，2026-10-15，box x86，單執行緒 ORT）
+
+| 項目 | 數值 |
+|---|---|
+| 分離 RTF（`dpcrn_curriculum_v2`，含 glue） | 0.22–0.27 → 每 20 ms 塊約 5 ms |
+| 演算法延遲（manifest） | 52–62 ms |
+| WS + 佇列 + 計算，localhost p50 / p95 | 6.0 / 7.8 ms（1000 塊） |
+| 端到端估計 | ≈ 85–100 ms（擷取 20 + 演算法 52–62 + 6–8 + 瀏覽器播放緩衝） |
+| 伺服器 CPU（同時 2 fps 影像、1 張臉） | 只有影像 3.8 % → 影像 + 音訊 31.4 %（一顆核心 = 100 %） |
+| 輸出一致性 | glue vs SDK、SDK vs PureSound `StreamingOrt`：最大差 0.0（開／關 onset guard） |
+
+音訊比影像貴得多：Kebbi 上 1 顆核心約 1/3 的負擔要先在裝置上量。詳見 [AUDIO.md](AUDIO.md)。
+
 ## 注意事項
 
 - `max_width` 太小時，遠處的小臉會偵測不到；臉在縮小後的影像中寬度最好至少 40–50 px。

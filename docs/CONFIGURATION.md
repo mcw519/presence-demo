@@ -165,6 +165,30 @@
 
 布林值接受 `true`/`false`、`1`/`0`、`on`/`off`。
 
+## 音訊（v0.9.0，詳見 [AUDIO.md](AUDIO.md)）
+
+| 參數 | 預設 | 範圍 | 說明 |
+|---|---|---|---|
+| `audio_pipeline` | `energy_vad` | `energy_vad` / `puresound` | 瀏覽器音量 VAD，或伺服器 PureSound 人聲分離 + 乾淨 VAD + 影像交叉確認（需 `uv sync --extra puresound` 和模型） |
+| `onset_entry_only` | 開 | 開/關 | 乾淨音源下，只有「說話開頭 + 近距離有人」才開始 session |
+| `onset_needs_vision` | 開 | 開/關 | 乾淨音源下，用說話從 AWAY 回來也需要畫面有人（影像不確定時例外） |
+| `iso_onset_guard` | 關 | 開/關 | PureSound onset guard（每段說話前 1 s 保留原聲） |
+| `iso_reset_on_change` | 開 | 開/關 | NEW_GROUP／新 session／參與者換人時重置分離串流狀態 |
+| `clean_vad_margin_db` | 10 | 3–30 dB | 乾淨（及原始）VAD：高於噪音底多少 dB |
+| `clean_vad_min_db` | -50 | -80 – -10 dBFS | 乾淨（及原始）VAD：最低音量 |
+| `clean_vad_hang` | 0.3 | 0–2 s | 乾淨（及原始）VAD 尾音 |
+| `xcheck_enabled` | 開 | 開/關 | 影像交叉確認（漏音／聲學誤判-漏收／聲學誤判-超出範圍） |
+| `near_range` | 1.0 | 0.2–10 m | PureSound 收音範圍；所有人都比這遠＝超出範圍（需開距離估計） |
+| `xcheck_hold` | 0.75 | 0–5 s | 影像條件保持時間（對齊低 fps 影像與 20 ms 音訊） |
+| `xcheck_stale` | 2.0 | 0.2–30 s | 這麼久沒有新畫面結果 → 只看聲音 |
+| `xcheck_require_calib` | 關 | 開/關 | 要先做距離校正才判斷超出範圍 |
+| `xcheck_floor_db` | -40 | -80–0 dB | 漏音／超出範圍時的輸出音量（≤ -60 靜音） |
+| `xcheck_recover_mix` | 0.3 | 0–0.9 | 漏收時分離聲音的比例（其餘是對齊的原聲） |
+| `xcheck_attack` | 0.01 | 0.001–0.5 s | 增益上升時間常數 |
+| `xcheck_release` | 0.05 | 0.005–2 s | 增益下降時間常數 |
+
+瀏覽器端另有 `monitor`（監聽：不監聽／原始／乾淨），每次開啟頁面都重設為不監聽，不存 localStorage 以外的地方也不送到伺服器。
+
 ## 瀏覽器端（不送到伺服器）
 
 | 參數 | 預設 | 範圍 | 說明 |

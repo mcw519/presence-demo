@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import logging
 import os
 import secrets
+import struct
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -14,6 +16,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, PlainTextResponse
 
+from .audio import AudioStream, puresound_available
 from .body import calibration_factor
 from .optimizer import FrameProcessor, recommend_fps
 from .stats import ConnStats, build_stats
@@ -79,6 +82,7 @@ def default_config():
     return {
         "defaults": asdict(Config()),
         "ranges": {k: [lo, hi, t.__name__ if t else "choice"] for k, (lo, hi, t) in RANGES.items()},
+        "puresound": dict(zip(("available", "reason"), puresound_available(), strict=True)),
     }
 
 
@@ -97,6 +101,21 @@ async def ws(sock: WebSocket):
     lock = asyncio.Lock()
     slot: dict = {"frame": None}
     wake = asyncio.Event()
+    # audio (audio_pipeline=puresound): binary PCM16 chunks in, clean PCM16 + "audio" meta out; memory only
+    aud: dict = {
+        "stream": None,
+        "q": asyncio.Queue(maxsize=50),
+        "last_rx": 0.0,
+        "meta_t": 0.0,
+        "err": None,
+        "dropped": 0,
+        "lat": None,
+        "vis_t": -1e9,  # monotonic time of the last processed frame (vision freshness for the cross-check)
+        "calibrated": False,
+    }
+
+    def clean_active() -> bool:
+        return aud["stream"] is not None and time.monotonic() - aud["last_rx"] < 1.0
 
     async def send(snap, extra=None):
         snap.update({"type": "state", "running": st["running"], "pipeline": pipe.name, "config": asdict(st["tr"].cfg)})
@@ -150,8 +169,10 @@ async def ws(sock: WebSocket):
                     continue
                 t1 = time.perf_counter()
                 tr = st["tr"]
-                snap = tr.update(dets, speaking=msg.get("speech"))
+                tr.speech_source = "clean" if clean_active() else "browser"
+                snap = tr.update(dets, speaking=None if clean_active() else msg.get("speech"))
                 tm["tracker"] = (time.perf_counter() - t1) * 1000
+                aud["vis_t"] = time.monotonic()
                 tm["total"] = (time.perf_counter() - t0) * 1000
                 sig = tuple(sorted((t["id"], t["participant"], t["visible"]) for t in snap["tracks"]))
                 now = time.monotonic()
@@ -168,10 +189,74 @@ async def ws(sock: WebSocket):
                     },
                 )
 
-    tasks = [asyncio.create_task(ticker()), asyncio.create_task(worker())]
+    async def audio_worker():  # one chunk at a time, in order; isolation runs in a thread
+        while True:
+            t_client, pcm = await aud["q"].get()
+            tr = st["tr"]
+            if tr.cfg.audio_pipeline != "puresound":
+                aud["stream"] = None
+                continue
+            if aud["stream"] is None:
+                ok, why = puresound_available()
+                if not ok:
+                    if aud["err"] != why:
+                        aud["err"] = why
+                        logging.warning("audio_pipeline=puresound unavailable: %s", why)
+                        await sock.send_json({"type": "audio", "available": False, "error": why})
+                    continue
+                aud["stream"] = await asyncio.to_thread(AudioStream, tr.cfg)
+                aud["err"] = None
+            a = aud["stream"]
+            a.cfg = tr.cfg
+            now = time.monotonic()
+            snap = tr.snapshot() if st["running"] else None  # None -> acoustic_only (no vision)
+            if snap is not None:
+                await asyncio.to_thread(a.on_vision, snap, now)
+            t0 = time.perf_counter()
+            a.calibrated = aud["calibrated"]
+            out, speech = await asyncio.to_thread(a.process, pcm, snap, now, now - aud["vis_t"])
+            proc_ms = (time.perf_counter() - t0) * 1000
+            aud["last_rx"] = time.monotonic()
+            if out:
+                await sock.send_bytes(b"\x02" + struct.pack("<d", t_client) + out)
+            async with lock:
+                tr = st["tr"]
+                tr.speech_source = "clean"
+                if st["running"] and (speech != tr.speaking):
+                    await send(tr.set_speech(speech))
+            if now - aud["meta_t"] >= 0.1:
+                aud["meta_t"] = now
+                await sock.send_json(
+                    {
+                        "type": "audio",
+                        "available": True,
+                        **a.meta(),
+                        "p_group": tr.snapshot().get("p_group"),
+                        "state": tr.state.value,
+                        "t_server": time.time(),
+                        "t_client": t_client,
+                        "proc_ms": round(proc_ms, 2),
+                        "dropped": aud["dropped"],
+                        "queue": aud["q"].qsize(),
+                    }
+                )
+
+    tasks = [asyncio.create_task(ticker()), asyncio.create_task(worker()), asyncio.create_task(audio_worker())]
     try:
         while True:
-            msg = await sock.receive_json()
+            raw = await sock.receive()
+            if raw.get("type") == "websocket.disconnect":
+                raise WebSocketDisconnect(raw.get("code", 1000))
+            if raw.get("bytes") is not None:
+                # PRIVACY: PCM audio lives in memory only (queue -> isolation -> socket), never logged/written.
+                b = raw["bytes"]
+                if len(b) > 9 and b[0] == 1 and st["tr"].cfg.audio_pipeline == "puresound":
+                    if aud["q"].full():
+                        aud["q"].get_nowait()
+                        aud["dropped"] += 1
+                    aud["q"].put_nowait((struct.unpack("<d", b[1:9])[0], b[9:]))
+                continue
+            msg = json.loads(raw.get("text") or "{}")
             kind = msg.get("type")
             if kind == "frame":
                 # PRIVACY: the frame (base64 JPEG) is kept in memory only, never logged or written to disk.
@@ -190,13 +275,14 @@ async def ws(sock: WebSocket):
                         stats.rtt.append(float(msg["rtt"]))
                     await sock.send_json({"type": "pong", "t": msg.get("t")})
                 elif kind == "vad":
-                    if st["running"]:
+                    if st["running"] and not clean_active():  # puresound: the clean VAD drives speech
                         await send(tr.set_speech(bool(msg.get("speech"))))
                 elif kind == "config":
                     warns = tr.cfg.update(msg.get("config", {}))
                     await send(tr.tick() if st["running"] else tr.snapshot(), {"config_ack": True, "warnings": warns})
                 elif kind == "calibrate":
                     warns = calibrate(tr, msg.get("meters"))
+                    aud["calibrated"] = aud["calibrated"] or any(w.startswith("calibrated") for w in warns)
                     await send(tr.tick() if st["running"] else tr.snapshot(), {"config_ack": True, "warnings": warns})
                 elif kind == "start":
                     st["running"] = True

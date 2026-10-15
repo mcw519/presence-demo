@@ -57,6 +57,7 @@ button.stop{background:var(--bad);border-color:var(--bad);color:#fff}
 .kv{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;font-size:12px;margin-top:8px}.kv span:nth-child(odd){color:var(--mut)}
 .cores{display:flex;gap:2px;height:22px;align-items:flex-end;margin-top:6px}.cores i{flex:1;background:var(--acc);border-radius:2px;min-height:1px;opacity:.8}
 .lat{width:100%;font-size:12px;border-collapse:collapse;margin-top:8px}.lat td,.lat th{padding:3px 4px;text-align:right;border-bottom:1px solid var(--line)}.lat th{color:var(--mut);font-weight:500}.lat td:first-child,.lat th:first-child{text-align:left}
+.presets button.on{background:var(--acc);color:#000}
 </style></head><body>
 <header><span class="dot" id="conn"></span><h1>Presence Demo · 離開偵測</h1>
 <span class="pill" id="cam">鏡頭/麥克風 關</span><button class="pri" id="start">▶ 開始</button><button id="openSet">⚙ 設定</button></header>
@@ -74,6 +75,12 @@ button.stop{background:var(--bad);border-color:var(--bad);color:#fff}
    <div class="stat"><small>ROI</small><b id="roiSt">—</b></div><div class="stat"><small>Session</small><b id="sess">—</b></div></div>
    <div class="meter" title="麥克風音量（黃線＝說話門檻、灰線＝噪音底）"><div class="lvl" id="lvl"></div><div class="flo" id="flo"></div><div class="thr" id="thr"></div></div>
   </div>
+  <div class="card" id="aCard"><h3>乾淨音軌 <span id="aSt" style="font-weight:400"></span></h3>
+   <div class="presets" id="monBtns" style="margin:4px 0"><button data-m="off">🔇 不監聽</button><button data-m="raw">原始</button><button data-m="clean">乾淨</button></div>
+   <div class="hint" style="color:var(--warn)">⚠ 監聽請戴耳機，否則喇叭聲音會被麥克風收進去（回授）。每次開啟頁面都是靜音。</div>
+   <div class="hint">原始（瀏覽器麥克風，16 kHz）</div><canvas id="wRaw" style="width:100%;height:40px;display:block"></canvas>
+   <div class="hint">乾淨（PureSound 輸出）</div><canvas id="wClean" style="width:100%;height:40px;display:block"></canvas>
+   <div class="kv" id="aKv"></div></div>
   <div class="card" id="pCard" style="display:none"><h3>在場機率 <span id="pVal" style="font-weight:400"></span></h3>
    <canvas id="pSpark" style="width:100%;height:60px;display:block" title="群組在場機率（最近 2 分鐘）。綠線＝回到 ACTIVE 門檻、黃線＝MAYBE_AWAY 門檻、紅線＝AWAY 門檻"></canvas>
    <div class="hint" id="pHint"></div></div>
@@ -112,8 +119,9 @@ const DEF={face_roi:[0.2,0.05,0.8,0.95],mirror_view:true,show_face_roi:true,pose
  turned_away_early:true,turned_away_seconds:2,recede_ratio:0.1,distance_enabled:false,camera_hfov:60,face_width_m:0.15,shoulder_width_m:0.38,
  distance_calib:1,distance_ema:0.3,zone_min:0.4,zone_max:2,leave_distance:2.5,min_conf:0.6,embed_backend:'fp32',npu_precision:'int8',cos_match_int8:0.4,cos_match:0.4,cos_weak:0.2,iou_match:0.3,embed_ema:0.15,join_seconds:2,grace_seconds:15,
  present_frames:2,absent_frames:3,idle_after:3,present_timeout:15,empty_timeout:5,base_timeout:20,maybe_away_frac:0.5,end_after_away:5,new_group_seconds:3,
- priority_mode:'vision',speech_join:'auto',presence_model:'rules',intent_model:'rules',intent_tau:1,join_threshold:0.6,drop_threshold:0.35,drop_seconds:8,intent_weighted_presence:false,w_facing:0.45,w_distance:0.1,w_dwell:0.1,w_approach:0.05,w_still:0.15,w_center:0.15,leave_halflife:0.6,detect_gain:4,lowconf_factor:0.15,p_active:0.8,p_maybe:0.6,p_away:0.3,away_hold_seconds:1,tracker_mode:'legacy',coast_seconds:2,coast_present_conf:0.4,gate_mahalanobis:9.21,appearance_min_sim:0.6,appearance_ema:0.2,body_min_conf:0.4,present_max_silence:0,motion_gate:true,motion_threshold:0.015,force_detect_seconds:3,embed_throttle:true,embed_interval:3,embed_move_thresh:0.15,adaptive_fps:true,fps_low:0.5,fps_high:2,roi_crop:true,crop_margin:0.1,max_width:320,fps:1,vad_k:2.5,vad_min:0.005,vad_hang:400};
-const CLIENT=['mirror_view','fps','vad_k','vad_min','vad_hang','show_face_roi','show_pose_roi'];
+ priority_mode:'vision',speech_join:'auto',presence_model:'rules',intent_model:'rules',intent_tau:1,join_threshold:0.6,drop_threshold:0.35,drop_seconds:8,intent_weighted_presence:false,w_facing:0.45,w_distance:0.1,w_dwell:0.1,w_approach:0.05,w_still:0.15,w_center:0.15,leave_halflife:0.6,detect_gain:4,lowconf_factor:0.15,p_active:0.8,p_maybe:0.6,p_away:0.3,away_hold_seconds:1,tracker_mode:'legacy',coast_seconds:2,coast_present_conf:0.4,gate_mahalanobis:9.21,appearance_min_sim:0.6,appearance_ema:0.2,body_min_conf:0.4,present_max_silence:0,motion_gate:true,motion_threshold:0.015,force_detect_seconds:3,embed_throttle:true,embed_interval:3,embed_move_thresh:0.15,adaptive_fps:true,fps_low:0.5,fps_high:2,roi_crop:true,crop_margin:0.1,max_width:320,fps:1,vad_k:2.5,vad_min:0.005,vad_hang:400,
+ audio_pipeline:'energy_vad',iso_onset_guard:false,iso_reset_on_change:true,onset_needs_vision:true,onset_entry_only:true,clean_vad_margin_db:10,clean_vad_min_db:-50,clean_vad_hang:0.3,xcheck_enabled:true,near_range:1,xcheck_hold:0.75,xcheck_stale:2,xcheck_require_calib:false,xcheck_floor_db:-40,xcheck_recover_mix:0.3,xcheck_attack:0.01,xcheck_release:0.05,monitor:'off'};
+const CLIENT=['monitor','mirror_view','fps','vad_k','vad_min','vad_hang','show_face_roi','show_pose_roi'];
 const BOXES=['face_roi','pose_roi'];
 const S=(l,h,min,max,step,u='')=>({l,h,min,max,step,u});
 const GROUPS=[
@@ -208,6 +216,23 @@ GROUPS.push(['畫面與聲音（瀏覽器端）',{fps:S('每秒送出張數','�
    vad_k:S('VAD 靈敏度（門檻倍數）','音量超過「噪音底 × 這個倍數」才算說話。越小越靈敏。',1.2,8,0.1,'×'),
    vad_min:S('最低說話音量','絕對音量門檻（RMS），環境吵時調高。',0.001,0.05,0.001),
    vad_hang:S('說話尾音保留','音量變小後還要維持「說話中」多久，避免句子中間斷掉。',100,1500,50,'ms')}]);
+GROUPS.push(['乾淨音軌（PureSound）',{audio_pipeline:{l:'音訊管線',h:'瀏覽器 VAD：用瀏覽器端的音量 VAD 判斷說話（目前預設）。PureSound：麥克風音訊（16 kHz PCM）串流到伺服器，用 PureSound 的串流人聲分離（dpcrn_curriculum_v2）去掉背景聲音，再用「乾淨音軌」判斷說話。需要伺服器安裝 puresound 套件與模型；沒有的話會在「乾淨音軌」面板顯示原因，並繼續用瀏覽器 VAD。',opts:{energy_vad:'瀏覽器 VAD',puresound:'PureSound 人聲分離'}},
+   onset_entry_only:B('只在「進場」時開始對話','開啟時（PureSound 模式），對話只會在「乾淨音軌偵測到說話開頭」而且「畫面中有一位靠近的人」同時發生時開始；只有人經過、或只有聲音（電視、遠處的人）都不會開始。'),
+   onset_needs_vision:B('說話需搭配畫面','PureSound 模式下，說話要「開始對話」或「從 AWAY 回來」時，最近 1.5 秒內畫面中必須有一位靠近的人（影像不確定時例外，改成只看聲音）。'),
+   iso_onset_guard:B('起音保護（onset guard）','PureSound 內建：每段說話的前 1 秒先保留原始聲音，確認有人持續說話後才換成分離後的聲音，減少開頭字被吃掉。'),
+   iso_reset_on_change:B('換人時重置','NEW_GROUP、新的對話或參與者換人時，重置人聲分離的串流狀態（也重新啟動起音保護）。'),
+   clean_vad_margin_db:S('乾淨 VAD 門檻','分離後的聲音比噪音底高出多少 dB 才算說話。越小越靈敏。',3,30,0.5,'dB'),
+   clean_vad_min_db:S('乾淨 VAD 最低音量','分離後的聲音至少要多大聲（dBFS）才算說話。遠處或很小聲的說話會被忽略。',-80,-10,1,'dBFS'),
+   clean_vad_hang:S('乾淨 VAD 尾音保留','分離後的聲音變小後，還要維持「說話中」多久。',0,2,0.05,'s'),
+   xcheck_enabled:B('影像交叉確認','PureSound 一直在過濾（收音範圍約 1 m），每 20 ms 用畫面確認一次結果：有乾淨說話但畫面沒人＝漏音（壓低、不算說話）；有乾淨說話但所有人都在近距離範圍外＝聲學誤判-超出範圍（壓低、不算說話）；乾淨音軌沒聲音，但範圍內有人而且原始麥克風有說話＝聲學誤判-漏收（多放一些原始聲音、算說話）。畫面不確定時只看聲音。'),
+   near_range:S('近距離範圍','PureSound 的收音範圍。距離估計開啟時，所有人都比這個遠就視為「超出範圍」。沒開距離估計時只看 ROI 內有沒有人。',0.2,10,0.1,'m'),
+   xcheck_hold:S('畫面保持時間','畫面每秒只有 0.5–2 張，聲音每 20 ms 一塊；看到人之後保持這麼久，對齊兩者、避免句首被切掉。',0,5,0.05,'s'),
+   xcheck_stale:S('畫面過期時間','超過這麼久沒有新的畫面結果，就只看聲音。',0.2,30,0.1,'s'),
+   xcheck_require_calib:B('距離需先校正','開啟時，要先在「距離」做過校正才會判斷「超出範圍」。'),
+   xcheck_floor_db:S('壓低音量','漏音或超出範圍時輸出降低多少（≤ -60 dB 為靜音）。',-80,0,1,'dB'),
+   xcheck_recover_mix:S('漏收時的增強比例','聲學誤判-漏收時，輸出中分離後聲音的比例；其餘是（時間對齊的）原始聲音。越小保留越多原聲。',0,0.9,0.05),
+   xcheck_attack:S('音量上升時間','壓低解除時的淡入時間常數。',0.001,0.5,0.001,'s'),
+   xcheck_release:S('音量下降時間','開始壓低時的淡出時間常數。',0.005,2,0.005,'s')}]);
 const META=Object.assign({},...GROUPS.map(g=>g[1]));
 const PRESETS={
  single:{face_roi:[0.25,0.05,0.75,0.95],join_seconds:1.5,grace_seconds:10,present_timeout:45,empty_timeout:5,new_group_seconds:3,absent_frames:3},
@@ -215,7 +240,7 @@ const PRESETS={
  noisy:{priority_mode:'vision',vad_k:3.5,vad_min:0.02,vad_hang:300,min_conf:0.7,base_timeout:15,present_timeout:45,empty_timeout:5}};
 const KEY='presence-cfg-v1';
 const migrate=o=>{o={...o};if(o.roi&&!o.face_roi)o.face_roi=o.roi;delete o.roi;return o};
-let cfg=Object.assign(structuredClone(DEF),migrate(JSON.parse(localStorage.getItem(KEY)||'{}')));
+let cfg=Object.assign(structuredClone(DEF),migrate(JSON.parse(localStorage.getItem(KEY)||'{}')));cfg.monitor='off';// 監聽每次都預設關閉（避免回授）
 const save=()=>localStorage.setItem(KEY,JSON.stringify(cfg));
 const toast=t=>{const e=$('toast');e.textContent=t;e.classList.add('show');clearTimeout(e._t);e._t=setTimeout(()=>e.classList.remove('show'),2200)};
 const clamp=(k,v)=>{const m=META[k];if(m.bool)return v===true||v==='true'||v===1;if(m.opts)return m.opts[v]?v:DEF[k];return Math.min(m.max,Math.max(m.min,Number(v)))};
@@ -260,11 +285,12 @@ $('imp').onchange=async e=>{try{const j=JSON.parse(await e.target.files[0].text(
 const drawer=(o)=>{$('drawer').classList.toggle('open',o);$('scrim').classList.toggle('open',o)};
 $('openSet').onclick=()=>drawer(true);$('closeSet').onclick=$('scrim').onclick=()=>drawer(false);
 // ---------- websocket ----------
-let ws,last=null;
-function connect(){ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws'+location.search);
+let ws,last=null,aMeta=null;
+function connect(){ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws'+location.search);ws.binaryType='arraybuffer';
  ws.onopen=()=>{$('conn').classList.add('on');sendCfg();if(running)ws.send(JSON.stringify({type:'start'}))};
  ws.onclose=()=>{$('conn').classList.remove('on');setTimeout(connect,1500)};
- ws.onmessage=e=>{const s=JSON.parse(e.data);
+ ws.onmessage=e=>{if(typeof e.data!=='string')return onClean(e.data);const s=JSON.parse(e.data);
+  if(s.type==='audio'){aMeta=s;return renderAudio()}
   if(s.type==='stats')return renderStats(s);
   if(s.type==='pong'){lastRtt=performance.now()-s.t;return}
   if(s.type==='state'&&(s.recommended_fps||0)!==recFps){recFps=s.recommended_fps||0;if(cfg.adaptive_fps)restartFrames()}
@@ -381,12 +407,13 @@ async function start(){
   $('thr').style.left=sc(thr);$('flo').style.left=sc(floor);
   if(speech!==prev)wsSend({type:'vad',speech});prev=speech},50);
  pingTimer=setInterval(()=>wsSend({type:'ping',t:performance.now(),rtt:lastRtt}),2000);
+ await startAudio(ac).catch(e=>toast('音訊串流無法啟動：'+e.message));
  restartFrames();
 }
 function stop(auto){
  [frameTimer,vadTimer,pingTimer].forEach(clearInterval);
  if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;v.srcObject=null;
- if(ac){ac.close().catch(()=>{});ac=null}
+ if(ac){ac.close().catch(()=>{});ac=null}player=rawMon=null;
  speech=false;$('lvl').style.width='0';
  if(running)wsSend({type:'stop'});running=false;autoPaused=!!auto;setUI();last=null;draw();
 }
@@ -425,5 +452,51 @@ function addCalib(){const det=[...document.querySelectorAll('#groups details')].
  det.insertAdjacentHTML('beforeend',`<div class="row"><div class="top"><label>距離校正</label><input type="number" id="calM" min="0.2" max="10" step="0.1" value="1.0"><span class="def">m</span><button id="calB" style="padding:5px 10px">我站在這個距離</button></div>
   <div class="tip">站在鏡頭前已知的距離（例如用捲尺量 1.0 m），然後按按鈕。系統會用目前最近那個人的估計值算出校正係數。需要先啟用距離估計並開始偵測。</div></div>`);
  $('calB').onclick=()=>{if(!running){toast('請先按「開始」');return}wsSend({type:'calibrate',meters:+$('calM').value})}}
-buildUI();addCalib();new ResizeObserver(fit).observe(cv);connect();
+// ---------- audio: AudioWorklet capture (16 kHz PCM16, 20 ms) -> WS binary; clean audio back -> player ----------
+// PRIVACY: audio exists only in memory (worklet buffers, WebSocket), never stored.
+const WORKLET=`class Cap extends AudioWorkletProcessor{constructor(){super();this.r=sampleRate/16000;this.p=0;this.prev=0;this.buf=new Int16Array(320);this.n=0}
+ process(i){const x=i[0]&&i[0][0];if(!x)return true;let p=this.p;
+  // linear-interpolation resampler with a 2-tap pre-average (box low-pass) when downsampling
+  for(;p<x.length;p+=this.r){const k=Math.floor(p),f=p-k,a=k>0?x[k-1]:this.prev,b=x[k],c=k+1<x.length?x[k+1]:b;
+   let v=this.r>1.5?((a+b)/2*(1-f)+(b+c)/2*f):(b+(c-b)*f);v=Math.max(-1,Math.min(1,v));this.buf[this.n++]=v*32767;
+   if(this.n===320){this.port.postMessage(this.buf.slice(0));this.n=0}}
+  this.p=p-x.length;this.prev=x[x.length-1];return true}}
+registerProcessor('cap',Cap);
+class Play extends AudioWorkletProcessor{constructor(){super();this.q=[];this.cur=null;this.i=0;this.r=16000/sampleRate;this.port.onmessage=e=>{this.q.push(e.data);if(this.q.length>25)this.q.splice(0,this.q.length-5)}}
+ process(_,o){const out=o[0][0];for(let j=0;j<out.length;j++){if(!this.cur||this.i>=this.cur.length){this.cur=this.q.shift()||null;this.i=0}
+  out[j]=this.cur?this.cur[Math.floor(this.i)]:0;if(this.cur)this.i+=this.r}return true}}
+registerProcessor('play',Play);`;
+let player=null,rawMon=null;const WR=[],WC=[];
+async function startAudio(ac){await ac.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET],{type:'application/javascript'})));
+ const src=ac.createMediaStreamSource(stream),cap=new AudioWorkletNode(ac,'cap');src.connect(cap);
+ const sink=ac.createGain();sink.gain.value=0;cap.connect(sink).connect(ac.destination);// keep the graph pulling, silent
+ rawMon=ac.createGain();rawMon.gain.value=0;src.connect(rawMon).connect(ac.destination);
+ player=new AudioWorkletNode(ac,'play',{outputChannelCount:[1]});player.connect(ac.destination);setMonitor(cfg.monitor);
+ cap.port.onmessage=e=>{const pcm=e.data;meterPush(WR,pcm);
+  if(cfg.audio_pipeline!=='puresound'||!ws||ws.readyState!==1)return;
+  const b=new ArrayBuffer(9+pcm.byteLength),dv=new DataView(b);dv.setUint8(0,1);dv.setFloat64(1,performance.now(),true);new Uint8Array(b,9).set(new Uint8Array(pcm.buffer,pcm.byteOffset,pcm.byteLength));ws.send(b)}}
+function setMonitor(m){cfg.monitor=m;if(rawMon)rawMon.gain.value=m==='raw'?1:0;document.querySelectorAll('#monBtns button').forEach(b=>b.classList.toggle('on',b.dataset.m===m))}
+document.querySelectorAll('#monBtns button').forEach(b=>b.onclick=()=>{setMonitor(b.dataset.m);if(b.dataset.m!=='off')toast('監聽中：請戴耳機')});
+let lastLat=null;
+function onClean(buf){const dv=new DataView(buf);if(dv.getUint8(0)!==2)return;lastLat=performance.now()-dv.getFloat64(1,true);
+ const pcm=new Int16Array(buf.slice(9));meterPush(WC,pcm);
+ if(player&&cfg.monitor==='clean'){const f=new Float32Array(pcm.length);for(let i=0;i<pcm.length;i++)f[i]=pcm[i]/32768;player.port.postMessage(f,[f.buffer])}}
+function meterPush(arr,pcm){let mx=0;for(let i=0;i<pcm.length;i+=4)mx=Math.max(mx,Math.abs(pcm[i]));arr.push(mx/32768);if(arr.length>250)arr.shift()}
+function wave(id,arr,col){const c=$(id),d=devicePixelRatio||1,r=c.getBoundingClientRect();if(!r.width)return;c.width=r.width*d;c.height=r.height*d;const x=c.getContext('2d'),W=c.width,H=c.height;
+ x.fillStyle=col;arr.forEach((v,i)=>{const h=Math.max(1,Math.sqrt(v)*H);x.fillRect(i/250*W,(H-h)/2,Math.max(1,W/250),h)})}
+const db=a=>{const v=a.length?a[a.length-1]:0;return v>0?(20*Math.log10(v)).toFixed(0)+' dBFS':'—'};
+setInterval(()=>{if(!running)return;wave('wRaw',WR,'#8b949e');wave('wClean',WC,aMeta&&aMeta.clean_vad?'#3fb950':'#58a6ff')},100);
+function renderAudio(){const a=aMeta;if(!a)return;
+ if(a.available===false){$('aSt').textContent='（無法使用）';$('aKv').innerHTML=`<span>原因</span><span>${a.error}</span>`;return}
+ const LB={agree:'✅ 一致',leak:'漏音',false_reject:'聲學誤判-漏收',false_accept:'聲學誤判-超出範圍',silence:'安靜',acoustic_only:'只看聲音'};
+ $('aSt').textContent=(LB[a.decision]||a.decision)+(a.speech?' · 🎙 算說話':'');
+ const kv={'判斷':`${LB[a.decision]||a.decision}${a.why?'（'+a.why+'）':''}`,
+  '次數':`漏音 ${a.counts.leak} · 聲學誤判-漏收 ${a.counts.false_reject} · 聲學誤判-超出範圍 ${a.counts.false_accept} · 一致 ${a.counts.agree}`,'VAD 乾淨 / 原始':`${a.clean_vad?'說話':'—'} / ${a.raw_vad?'說話':'—'} · 乾淨開頭 ${a.onsets} 次 · ${a.vad_source==='energy_on_enhanced'?'分離後能量':'模型 VAD'}`,
+  '電平 原始 / 乾淨':`${a.raw_db} / ${a.clean_db} dBFS（波形峰值 ${db(WR)} / ${db(WC)}）`,
+  '混合 / 增益':`增強 ${(a.mix*100).toFixed(0)}% · 原聲 ${(100-a.mix*100).toFixed(0)}% · 增益 ${a.gain}`,
+  '目標':a.target_track!=null?`#${a.target_track}${a.distance!=null?' · '+a.distance+' m':''}`:'—','P(group)':a.p_group??'—',
+  'RTF（單執行緒）':a.rtf??'—','處理 / 佇列':`${a.proc_ms} ms · 佇列 ${a.queue} · 丟棄 ${a.dropped} · 重置 ${a.resets}`,
+  '延遲':`演算法 ${a.algo_latency_ms} ms + 傳輸/處理 ${lastLat!=null?lastLat.toFixed(0):'—'} ms + 擷取 20 ms`};
+ $('aKv').innerHTML=Object.entries(kv).map(([k,v])=>`<span>${k}</span><span>${v}</span>`).join('')}
+buildUI();addCalib();setMonitor('off');new ResizeObserver(fit).observe(cv);connect();
 </script></body></html>

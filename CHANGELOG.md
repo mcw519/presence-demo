@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.9.0 — 2026-10-15
+
+- **新增 PureSound 串流人聲分離**（`audio_pipeline = puresound`；預設仍是 `energy_vad`，行為不變）。詳見 `docs/AUDIO.md`。
+  - PureSound 可攜式 SDK（`sdk/python`，Apache-2.0）以**選用相依**安裝：`uv sync --extra puresound`（uv git 來源，固定 commit `121bf62`，私有 repo 需 git 權限）。沒有複製任何 PureSound 程式碼，只有 `presence_demo/audio.py` 的 glue。
+  - 模型 `dpcrn_curriculum_v2`（ONNX + manifest）用 `scripts/fetch_puresound_model.py` 從 PureSound clone 複製到 gitignored `models/`，並檢查 sha256。
+  - 瀏覽器 AudioWorklet 擷取麥克風 → 16 kHz PCM16 → 每 20 ms 一個 WS binary 訊框；伺服器回傳修正後的乾淨音軌（binary）和每 100 ms 的 `audio` 中繼資料。
+  - 乾淨 VAD（v2 沒有 VAD 輸出頭，用分離後訊號的能量 + 尾音）。
+  - **影像交叉確認**每 20 ms 一次：漏音（有乾淨說話但沒人）、聲學誤判-超出範圍（所有人都 > `near_range` 1.0 m）→ 壓低、不算說話；聲學誤判-漏收（近距離有人、原始有說話、模型沒聲音）→ 多放原聲、算說話；影像不確定時只看聲音。
+  - **進場規則**：乾淨音源下，session 只在「修正後說話開頭 + 近距離有人」時開始（`onset_entry_only`）。
+  - NEW_GROUP／新 session／參與者換人時重置分離串流狀態（重新啟動 onset guard）。
+  - UI：「乾淨音軌」面板（監聽 不監聽／原始／乾淨，預設靜音，耳機警告；原始與乾淨波形、電平；判斷標籤與次數；RTF、延遲），設定群組「乾淨音軌（PureSound）」。
+- 效能（box，單執行緒）：分離 RTF 0.22–0.27，演算法延遲 52–62 ms，WS + 計算 p50 6 ms；伺服器 CPU 影像 3.8 % → 影像 + 音訊 31.4 %。
+- 輸出驗證：glue vs SDK、SDK vs PureSound `StreamingOrt` 最大差 0.0。
+- 新增 `tests/test_audio.py`（SDK smoke 與分塊不變性〔沒有 SDK 時跳過〕、四種交叉確認情況、影像不確定的退回、距離關閉、保持時間、NEW_GROUP 重置、乾淨 VAD、進場規則、WS 音訊來回不寫檔）。
+- 新文件 `docs/AUDIO.md`；更新 ALGORITHM、CONFIGURATION、PERFORMANCE、LICENSES。
+
 ## 0.8.2 — 2026-10-15
 
 - **修正**：balanced／audio priority + rules 在場模型下，在場但沉默的人讓狀態每 0.5 s 在 AWAY 和 ACTIVE 之間來回跳、session 永遠不會結束。

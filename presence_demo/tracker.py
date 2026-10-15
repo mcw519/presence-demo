@@ -121,6 +121,24 @@ class Config:
     w_center: float = 0.15
     speech_join: str = "auto"  # auto (vision: off, else single_candidate) | off | single_candidate | all
     present_max_silence: float = 0.0  # vision mode: cap on silence with people present (0 = off)
+    # --- audio (v0.9.0, see docs/AUDIO.md) ---
+    audio_pipeline: str = "energy_vad"  # energy_vad (browser VAD) | puresound (server isolation + clean VAD)
+    iso_onset_guard: bool = False  # PureSound onset guard (input untouched until 1 s of sustained speech)
+    iso_reset_on_change: bool = True  # reset isolation state on NEW_GROUP / session / participant change
+    onset_needs_vision: bool = True  # clean speech starts/returns only with a visible near candidate
+    onset_entry_only: bool = True  # clean VAD active: a session opens ONLY on clean onset + visible near person
+    clean_vad_margin_db: float = 10.0  # clean VAD: dB over the adaptive floor of the enhanced signal
+    clean_vad_min_db: float = -50.0  # clean VAD: absolute minimum level (dBFS)
+    clean_vad_hang: float = 0.3  # clean VAD hangover (s)
+    xcheck_enabled: bool = True  # vision cross-checks the clean result (leak / false reject / false accept)
+    near_range: float = 1.0  # m: PureSound pickup range; speakers beyond it are "false accept"
+    xcheck_hold: float = 0.75  # s: vision presence/near hold (aligns 1-2 fps vision with 20 ms audio)
+    xcheck_stale: float = 2.0  # s: no processed frame for this long -> acoustic only
+    xcheck_require_calib: bool = False  # only use distance (false_accept) after a distance calibration
+    xcheck_floor_db: float = -40.0  # leak / false_accept output level (<= -60 = mute)
+    xcheck_recover_mix: float = 0.3  # false_reject: enhanced share (rest = latency-aligned raw input)
+    xcheck_attack: float = 0.01  # s: gain ramp up
+    xcheck_release: float = 0.05  # s: gain ramp down
 
     @property
     def match_cos(self) -> float:
@@ -283,6 +301,23 @@ RANGES = {
     "roi_crop": (False, True, bool),
     "crop_margin": (0.0, 0.5, float),
     "max_width": (96, 1920, int),
+    "audio_pipeline": (("energy_vad", "puresound"), None, str),
+    "iso_onset_guard": (False, True, bool),
+    "iso_reset_on_change": (False, True, bool),
+    "onset_needs_vision": (False, True, bool),
+    "onset_entry_only": (False, True, bool),
+    "clean_vad_margin_db": (3.0, 30.0, float),
+    "clean_vad_min_db": (-80.0, -10.0, float),
+    "clean_vad_hang": (0.0, 2.0, float),
+    "xcheck_enabled": (False, True, bool),
+    "near_range": (0.2, 10.0, float),
+    "xcheck_hold": (0.0, 5.0, float),
+    "xcheck_stale": (0.2, 30.0, float),
+    "xcheck_require_calib": (False, True, bool),
+    "xcheck_floor_db": (-80.0, 0.0, float),
+    "xcheck_recover_mix": (0.0, 0.9, float),
+    "xcheck_attack": (0.001, 0.5, float),
+    "xcheck_release": (0.005, 2.0, float),
 }
 
 
@@ -378,6 +413,8 @@ class PresenceTracker:
         self.clock = clock
         self.log: list[dict] = []
         self._next_id = 1
+        self.speech_source = "browser"  # browser (energy VAD) | clean (PureSound clean VAD, set by server)
+        self._last_starter_t = -1e9  # last frame with a confident, near person in the ROI
         self._reset_session(self.clock(), initial=True)
 
     # ------------------------------------------------------------------ session
@@ -464,13 +501,37 @@ class PresenceTracker:
             return body_ok
         return face_ok or body_ok
 
+    def _entry_only(self) -> bool:
+        """PureSound clean VAD active + onset_entry_only: vision alone (or speech alone) never opens a session;
+        only a clean-speech onset together with a visible near candidate does (see set_speech)."""
+        return self.speech_source == "clean" and self.cfg.onset_entry_only
+
+    def _onset_ok(self, now) -> bool:
+        """Clean-speech gating: with the PureSound clean VAD, speech may start a session / return from AWAY
+        only when a confident near person was in the ROI within 1.5 s (TV / far talkers do not trigger), or
+        when vision is uncertain (audio-only fallback)."""
+        if self.speech_source != "clean" or not self.cfg.onset_needs_vision:
+            return True
+        return now - self._last_starter_t <= 1.5 or getattr(self, "path", "") == "uncertain" or self._low_streak > 0
+
     def set_speech(self, speaking: bool, now: float | None = None) -> dict:
         now = self.clock() if now is None else now
+        onset = bool(speaking) and not self.speaking
         self.speaking = bool(speaking)
         if speaking:
             self.last_speech = now
-            if self.state == State.ENDED and self.cfg.priority_mode != "vision":
-                self._start(now, "speech detected")
+            if self.state == State.ENDED and self._entry_only():
+                if onset and now - self._last_starter_t <= 1.5:
+                    keep = dict(self.tracks)
+                    self._start(now, "entry: clean speech onset + visible near person")
+                    self.tracks = keep
+            elif self.state == State.ENDED and self._onset_ok(now):
+                if self.cfg.priority_mode != "vision":
+                    self._start(now, "speech detected" if self.speech_source != "clean" else "clean speech onset")
+                elif onset and self.speech_source == "clean" and now - self._last_starter_t <= 1.5:
+                    keep = dict(self.tracks)
+                    self._start(now, "clean speech onset + visible candidate")
+                    self.tracks = keep
         self._evaluate(now)
         return self.snapshot(now)
 
@@ -486,13 +547,16 @@ class PresenceTracker:
         confident = [d for d in dets if d.conf >= self._min_conf(d)]
         low = [d for d in dets if d.conf < self._min_conf(d)]
         starters = [d for d in confident if not self._det_far(d)]
+        if starters:
+            self._last_starter_t = now
 
         score = self.cfg.intent_model == "score"
         if self.state == State.ENDED and self._restart_needs_fresh and not starters:
             self._restart_absent_seen = True  # ROI seen without anyone confident: a later arrival is new
-        vision_start_ok = not self._restart_needs_fresh or self._restart_absent_seen
+        vision_start_ok = (not self._restart_needs_fresh or self._restart_absent_seen) and not self._entry_only()
         if self.state == State.ENDED and (
-            (starters and not score and vision_start_ok) or (self.speaking and self.cfg.priority_mode != "vision")
+            (starters and not score and vision_start_ok)
+            or (self.speaking and self.cfg.priority_mode != "vision" and self._onset_ok(now) and not self._entry_only())
         ):
             self._start(now, "person in ROI" if starters and not score else "speech detected")
 
@@ -551,6 +615,8 @@ class PresenceTracker:
     def _speech_join_mode(self) -> str:
         m = self.cfg.speech_join
         if m == "auto":
+            if self.speech_source == "clean":
+                return "single_candidate"  # clean near speech is trustworthy enough even in vision priority
             return "off" if self.cfg.priority_mode == "vision" else "single_candidate"
         return m
 
@@ -1096,7 +1162,9 @@ class PresenceTracker:
                     t.visible and t.visible_kind == "detected" and not t.far and t.id not in self._away_ids
                     for t in self.tracks.values()
                 )
-                returned = self.speaking or (self.present and (self._away_absent_seen or newcomer))
+                returned = (self.speaking and self._onset_ok(now)) or (
+                    self.present and (self._away_absent_seen or newcomer)
+                )
                 why_ret = (
                     "speech onset"
                     if self.speaking

@@ -14,6 +14,7 @@
 | **SFace int8**（`face_recognition_sface_2021dec_int8.onnx`，`embed_backend=int8`） | Apache-2.0（同一個 opencv_zoo 目錄 LICENSE） | https://github.com/opencv/opencv_zoo/tree/main/models/face_recognition_sface | ⚠️ **高風險（同 SFace）** | fp32 SFace 的官方量化版，訓練資料的疑慮完全相同。下載時檢查 sha256 `2b0e941e6f16cc048c20aee0c8e31f569118f65d702914540f7bfdc14048d78a`（等於 git-LFS oid）。 |
 | **SFace TFLite**（`..._int8.tflite`、`..._fp16.tflite`，`embed_backend=npu`） | 衍生自 Apache-2.0 的 SFace 權重；用 `scripts/export_sface_tflite.py` 在本機產生，**不放進 git、不散布** | 本專案腳本 | ⚠️ **高風險（同 SFace）** | 格式轉換不會改變權重的授權和訓練資料疑慮。INT8 校正只用 CC0 人像，而且只在記憶體中處理。 |
 | ~~YOLOv8n-pose~~（v0.3.0） | AGPL-3.0（Ultralytics） | https://github.com/ultralytics/ultralytics | ❌ 已移除 | AGPL 對網路服務也要求開放原始碼；商用需要 Ultralytics 企業授權。v0.4.0 已刪除程式碼和下載。 |
+| **PureSound `dpcrn_curriculum_v2`**（串流 ONNX + manifest，`audio_pipeline=puresound`，v0.9.0） | Apache-2.0（PureSound `LICENSE` + `NOTICE`：Copyright 2026 Milo Wu and PureSound contributors；原始碼、SDK、設定、文件與模型權重） | https://github.com/mcw519/puresound （私有）`egs/voice_isolate/pretrained_ckpt/streaming/`，commit `121bf62`；sha256 onnx `9a79e9ea…f375e4`、json `92de972e…b3aaa9` | ⚠️ 權重可以，**資料集待確認** | PureSound NOTICE 明確寫出：**資料集和錄音不在 Apache-2.0 授權範圍內**，沒有另外授權不代表可以使用。語音分離模型常見的訓練資料（例如 DNS Challenge 語料、VoxCeleb、LibriSpeech、噪音與 RIR 庫）各有自己的條款，其中 VoxCeleb 只限研究用途；商用前要逐一確認 v2 實際使用的資料。模型**不放進 git**，由 `scripts/fetch_puresound_model.py` 從 PureSound clone 複製並校驗 sha256。 |
 | Haar cascade（備援，`haarcascade_frontalface_default.xml`，OpenCV 內附） | Intel License Agreement（BSD 類，寫在 XML 檔頭） | OpenCV 套件內 `cv2/data/` | ✅ | 只在沒有 YuNet 時使用。 |
 | HSV 直方圖 embedding（備援） | 本專案程式碼，沒有模型權重 | `presence_demo/vision.py` | ✅ | 沒有訓練資料問題，但辨識力很弱（主要靠衣服顏色），換衣服或光線變化就不準。 |
 
@@ -27,6 +28,8 @@
 | starlette | 1.8.0 | BSD-3-Clause | ✅ | |
 | uvicorn（含 standard：uvloop、httptools、watchfiles、websockets、python-dotenv、PyYAML） | 0.54.0 | BSD-3-Clause（uvloop：MIT/Apache-2.0；httptools、watchfiles、PyYAML：MIT；websockets、python-dotenv：BSD-3） | ✅ | |
 | pydantic / pydantic-core | 2.14 / 2.50 | MIT | ✅ | |
+| puresound-streaming（選用，`uv sync --extra puresound`） | 0.1.0（git `121bf62`，`sdk/python`） | Apache-2.0（套件內附 `LICENSE`、`NOTICE`） | ✅ 需附 NOTICE | PureSound 的可攜式串流 SDK，**沒有複製進本專案**，以 uv git 相依安裝（私有 repo，需要 git 權限）。散布時需附上 Apache-2.0 授權和 PureSound NOTICE。 |
+| onnxruntime（隨 puresound-streaming[cpu] 安裝） | 1.31 | MIT | ✅ | |
 | opencv-python-headless | 4.14.0.94 | Apache-2.0 | ⚠️ 可以，需附授權 | wheel 內附 **FFmpeg（LGPL-2.1）**、OpenBLAS、libvpx、libaom、OpenSSL 等（見套件內 `LICENSE-3RD-PARTY.txt`）。LGPL 是動態連結的 .so，一般可以商用，但散布時要附上授權並允許替換。Android 產品通常不會用這個 wheel。 |
 | numpy | 2.5.4 | BSD-3-Clause（另含 0BSD、MIT、Zlib、CC0 元件） | ✅ | |
 | psutil | 7.2.2 | BSD-3-Clause | ✅ | |

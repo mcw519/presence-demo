@@ -1,6 +1,6 @@
 [project]
 name = "presence-demo"
-version = "0.8.2"
+version = "0.9.0"
 description = "Detect when conversing users leave: audio VAD + face tracking fusion, with a live web demo"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -14,6 +14,10 @@ dependencies = [
     "psutil>=5.9",
     "ai-edge-litert>=2.3.0",
 ]
+
+[project.optional-dependencies]
+# PureSound streaming voice isolation (audio_pipeline=puresound). Private repo: needs git auth.
+puresound = ["puresound-streaming[cpu]; python_version >= '3.12'"]
 
 [project.scripts]
 presence-demo = "presence_demo.server:main"
@@ -42,3 +46,6 @@ ignore = ["E702", "E701", "UP031"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.uv.sources]
+puresound-streaming = { git = "https://github.com/mcw519/puresound.git", subdirectory = "sdk/python", rev = "121bf623b491cb7f18805bec65099543ecc5323f" }

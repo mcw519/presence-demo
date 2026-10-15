@@ -526,6 +526,26 @@ stateDiagram-v2
 
 ---
 
+## 5b. 音訊管線（v0.9.0，`audio_pipeline = puresound`）
+
+預設 `energy_vad` 時本節不適用（瀏覽器 VAD，同上）。選 `puresound` 時，瀏覽器用 AudioWorklet 把麥克風 16 kHz PCM16
+每 20 ms 經 WebSocket 送到伺服器，PureSound SDK 持續分離人聲（收音範圍約 1 m），影像逐塊交叉確認，
+修正後的說話取代瀏覽器 VAD。完整說明、決策表和數字見 [AUDIO.md](AUDIO.md)。
+
+![音訊資料流](img/audio.png)
+
+| 乾淨 VAD | 原始 VAD | 影像（保持 0.75 s） | 判斷 | 輸出 | 算說話 |
+|---|---|---|---|---|---|
+| 有 | – | ROI 內沒人 | leak 漏音 | -40 dB | 否 |
+| 有 | – | 所有人 > `near_range` | false_accept 超出範圍 | -40 dB | 否 |
+| 有 | – | 有人 ≤ `near_range` | agree | 不變 | 是 |
+| 無 | 有 | 有人 ≤ `near_range` | false_reject 漏收 | 增強 30 % + 原聲 70 % | 是 |
+| 其他 | | | silence | 不變 | 否 |
+| 任何 | | 不確定／過期 2 s | acoustic_only | PureSound 原樣 | = 乾淨 VAD |
+
+進場規則（`onset_entry_only`）：乾淨音源下，session **只**在「修正後說話開頭」且「1.5 s 內 ROI 有一位信心足夠、
+不在 leave_distance 外的人」時開始；只有人或只有聲音都不會開始。NEW_GROUP／換人時重置分離串流狀態。
+
 ## 6. 效能、隱私與授權
 
 ### 效能（box：Intel Xeon 8 vCPU，x86，**不是 Kebbi**；詳見 [PERFORMANCE.md](PERFORMANCE.md)）
