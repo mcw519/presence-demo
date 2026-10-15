@@ -19,7 +19,8 @@ from dataclasses import asdict
 from pathlib import Path
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
 
 from . import asr as asrmod
 from . import diag
@@ -38,7 +39,9 @@ TOKEN = os.environ.get("PRESENCE_TOKEN", "")  # empty = no auth (local use)
 
 @app.middleware("http")
 async def require_token(request: Request, call_next):
-    if TOKEN and not secrets.compare_digest(request.query_params.get("token", ""), TOKEN):
+    # vendored design-system assets (public CSS + fonts, no data) load without the token
+    public = request.url.path.startswith("/static/vendor/")
+    if TOKEN and not public and not secrets.compare_digest(request.query_params.get("token", ""), TOKEN):
         return PlainTextResponse("forbidden", status_code=403)
     return await call_next(request)
 
@@ -125,9 +128,22 @@ def pipeline() -> VisionPipeline:
     return _pipeline
 
 
+app.mount("/static/vendor", StaticFiles(directory=STATIC / "vendor"), name="vendor")
+
+
 @app.get("/")
 def index():
-    return FileResponse(STATIC / "index.html")
+    html = (STATIC / "index.html").read_text(encoding="utf-8").replace("__VERSION__", _version())
+    return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
+
+
+def _version() -> str:
+    try:
+        from importlib.metadata import version
+
+        return version("presence-demo")
+    except Exception:  # noqa: BLE001
+        return "dev"
 
 
 @app.get("/api/config")

@@ -84,3 +84,10 @@
    - 注意：常見的公開人臉辨識權重（InsightFace／ArcFace 系列、FaceNet 系列等）幾乎都是用 MS1M、VGGFace2、Glint360K、WebFace 等資料訓練的。InsightFace 的預訓練模型明文只限非商業研究使用，**不要假設「Apache／MIT 程式碼」就代表權重可以商用**。
 2. **YuNet（人臉偵測）— 中低風險。** 替代方案：MediaPipe **BlazeFace**（Face Detector，Google AI Edge）。MediaPipe 程式碼是 Apache-2.0；模型的授權寫在個別模型卡（PDF），**本次沒有逐份確認**，採用前請閱讀模型卡。在這台環境，MediaPipe Python 套件需要 `libEGL`，但 `.tflite` 模型本身可以用 ai-edge-litert 執行，和 MoveNet 一樣。也可以直接用 MoveNet 的鼻子、眼睛、耳朵關鍵點估計頭部位置，完全不需要人臉偵測器。
 3. **姿勢模型的其他候選（沒有採用）：** RTMPose／RTMO（MMPose，程式碼 Apache-2.0，權重用 COCO 等資料訓練，部分版本混入 AIC／CrowdPose 等資料集，各有條款）；MediaPipe Pose Landmarker（單人為主，需要另外加人物偵測器）。MoveNet MultiPose 是唯一由官方直接以 Apache-2.0 發布、原生支援多人、而且能在這個環境（Python 3.13、Linux、無 GPU）用 pip 套件執行的選項。
+
+## 前端資源（隨套件散布）
+
+| 元件 | 授權 | 來源 | 商用？ | 說明 |
+|---|---|---|---|---|
+| PureSound web 設計系統（`tokens.css`、`base.css`、`components.css`） | Apache-2.0（Copyright 2026 Milo Wu and PureSound contributors） | https://github.com/mcw519/puresound `puresound/web/static/css`，revision `121bf62` | ✅ | 放在 `presence_demo/static/vendor/puresound/`，附 LICENSE、NOTICE；`base.css` 只把字型網址改成相對路徑。 |
+| IBM Plex Sans／Mono（woff2，latin 子集） | SIL Open Font License 1.1 | 同上 `fonts/`（IBM 原始字型） | ✅ | 附 `fonts/LICENSE.txt`；OFL 允許隨軟體散布，不可單獨販售字型。 |

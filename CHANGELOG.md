@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.10.2 — 2026-10-15
+
+- **UI 改用 PureSound playground 的設計系統**：直接載入 PureSound web 的 `tokens.css`、`base.css`、`components.css` 與 IBM Plex 字型（釘在與 `puresound-streaming` 相同的 revision `121bf62`，放在 `presence_demo/static/vendor/puresound/`，Apache-2.0／OFL，授權檔一併附上），不再維護自己的一份色票。App 自己的 CSS 只把 presence 的角色對應到上游 token。
+- 版面改成 playground 的 shell：深色側欄（導覽、連線狀態、主題 自動／淺色／深色、版本）＋頁首（標題、說明、主要動作）＋右側面板欄。主要按鈕用 ink 色、強調色（橘）只用於焦點、選取和進行中；原始音訊＝mint、乾淨音訊＝periwinkle，與 playground 同義；波形、頻譜、時間軸、sparkline 放在常駐深色底上（同 playground 播放器）。設定抽屜、事件紀錄、錯誤橫幅、toast 套用 Inspector／toast 樣式。
+- 主題預設改為「自動」（跟隨系統），仍可固定淺色／深色。
+- `/static/vendor/` 下的公開 CSS／字型不需 token，其餘路徑仍受 token 保護；首頁顯示版本號。
+- `docs/DESIGN.md` 改為記錄與 PureSound token 的對應；NOTICE 補上第三方 CSS／字型。
+- 新增 `tests/test_design_tokens.py`（vendored 檔案與釘選 checksum、未重新定義上游 token、vendor 公開但 app 受保護）。
+- 無頭 Chrome：深／淺色主畫面與設定頁沒有 JS 錯誤，文字對比全部符合 WCAG AA。
+
 ## 0.10.1 — 2026-10-15
 
 - **修正：啟用姿勢後臉部追蹤與音訊停止**。伺服器原本在影像／音訊處理工作中直接 `await` 傳送給瀏覽器；慢的或經過轉送的連線（每個連線約 50 kB/s，兩個分頁加倍）會讓處理工作卡在傳送上，最後連線因 keepalive 被關閉；工作中的例外也不會被記錄。現在所有傳送改走每連線一個非阻塞的傳送佇列（Outbox：過舊的音訊與可丟的訊息會被丟棄並計數），state 訊息只在設定變更時附上設定。
