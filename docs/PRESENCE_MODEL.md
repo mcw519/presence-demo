@@ -55,8 +55,8 @@
    | priority_mode | w_說話 | w_靜默 | 效果 |
    |---|---|---|---|
    | vision | 0.05 | 0 | 聲音幾乎不影響；安靜的人在畫面裡不會被判定離開 |
-   | balanced | 0.8 | 0.8 | 說話可以撐住；有人但靜默約 15–20 s 會離開（接近 `present_timeout`） |
-   | audio | 1.0 | 1.0 | 主要看說話；靜默約 12 s MAYBE、20 s AWAY |
+   | balanced | 0.8 | 0.8 | 說話可以撐住；有人在場但靜默時，約 14.5 s MAYBE、20.5 s AWAY、25.5 s ENDED（人還在就立刻開始新的 session） |
+   | audio | 1.0 | 1.0 | 主要看說話；有人在場但靜默時，約 11.5 s MAYBE、16.5 s AWAY、21.5 s ENDED（人還在就立刻開始新的 session） |
 
 3. **群組機率**：`P_群組 = sigmoid( logit(P_影像) + A )`。
 

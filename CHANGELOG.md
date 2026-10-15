@@ -1,5 +1,12 @@
 # Changelog
 
+## 未發布（文件）
+
+- `docs/ALGORITHM.md` 改寫成演算法架構總文件（v0.8.1）：端到端資料流、各層的公式和預設值、priority_mode 的影響、模式矩陣與建議預設、時間表、效能／隱私／授權、已知限制。所有數字都已經和程式碼預設值核對，時間表用模擬實測。
+- 新增 mermaid 原始檔和 PNG：`docs/img/dataflow`、`state_rules`、`state_hmm`。
+- 修正 `docs/PRESENCE_MODEL.md` 中 balanced／audio 靜默時的時間（依實測：audio 約 16.5 s AWAY，不是 20 s）。
+- 記錄已知問題：balanced／audio + rules 模式下，在場但沉默的人會讓狀態在 AWAY 和 ACTIVE 之間來回跳（程式碼尚未修改）。
+
 ## 0.8.1 — 2026-10-14
 
 - 網頁預覽新增「鏡像顯示」（預設開啟，存在 localStorage）：影像與疊圖（人臉框、身體框、關鍵點、ROI）一起左右翻轉成自拍視角；疊圖是換算座標後再畫，文字不會反過來。

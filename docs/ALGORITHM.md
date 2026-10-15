@@ -1,364 +1,581 @@
-# 偵測邏輯詳解（依目前程式碼，v0.7.0）
+# 演算法架構總覽（v0.8.1）
 
-> 依據 `presence_demo/tracker.py`、`vision.py`、`optimizer.py`、`body.py`、`server.py`、`static/index.html` 的現行程式碼整理。括號內是預設值。座標都是正規化 0–1。
+> 這份是**總文件**：完整說明目前程式碼實作的演算法，從瀏覽器擷取畫面到最後的狀態輸出。內容依據 `presence_demo/` 下的 `tracker.py`、`optimizer.py`、`vision.py`、`embed_backends.py`、`body.py`、`appearance.py`、`kalman.py`、`intent.py`、`presence_model.py`、`server.py` 和 `static/index.html` 整理，所有預設值都已經和 `Config` 核對過。
+>
+> 細節請看各層的文件：[TRACKING.md](TRACKING.md)（Layer 4 追蹤）、[INTENT_MODEL.md](INTENT_MODEL.md)（Layer 3 意圖）、[PRESENCE_MODEL.md](PRESENCE_MODEL.md)（Layer 2 在場）、[NPU.md](NPU.md)（嵌入後端／NPU）、[CONFIGURATION.md](CONFIGURATION.md)（所有參數）、[PERFORMANCE.md](PERFORMANCE.md)（效能）、[LICENSES.md](LICENSES.md)（授權）。
+>
+> 寫法約定：座標都是正規化 0–1 的 `(x0, y0, x1, y1)`，而且是**原始相機座標**（網頁的鏡像顯示只影響畫面）。時間單位是秒。`參數名`（預設值）。
 
-## 0. 總覽：一個 WebSocket 連線裡發生什麼
+## 目錄
 
-- 瀏覽器端：
-  - 每 `1000/fps` ms 送一張 JPEG（高 480 px、品質 0.7），附帶目前的 `speech` 旗標。
-  - VAD 狀態改變時立即送 `{type:'vad'}`。
-- 伺服器端的 worker 只處理**最新一張**：處理中又進來的幀會覆蓋舊的，計為 dropped。
-  1. 處理前記錄 `stable = state ∉ {MAYBE_AWAY, AWAY}`。
-  2. 在記憶體中解碼 → `FrameProcessor.process()` → `tracker.update(dets, speaking)` → 計算建議 fps → 回傳 state。
-- ticker 每 0.5 s 呼叫一次 `tracker.tick()`（等於 `_evaluate`）。所以就算沒有新的幀，計時也會繼續走，狀態照樣轉換。
-- 按停止或重設會建立新的 `PresenceTracker`（track 和 embedding 全部清掉），`FrameProcessor` 也一起重設。
+1. [端到端資料流](#1-端到端資料流)
+2. [各層說明](#2-各層說明)（感知 → 追蹤 → 意圖 → 在場 → 群組決策 → 狀態機 → 輸出）
+3. [priority_mode 對各層的影響](#3-priority_mode-對各層的影響)
+4. [模式矩陣與建議預設](#4-模式矩陣與建議預設)
+5. [時間表：各種事件需要多久](#5-時間表各種事件需要多久)
+6. [效能、隱私與授權](#6-效能隱私與授權)
+7. [已知限制與尚未在實機驗證的項目](#7-已知限制與尚未在實機驗證的項目)
+
+---
+
+## 1. 端到端資料流
+
+![資料流](img/dataflow.png)
+
+（原始檔：[img/dataflow.mmd](img/dataflow.mmd)。下面是同一張圖的 mermaid 版本，GitHub 會直接渲染。）
 
 ```mermaid
-flowchart LR
-  F[JPEG 幀] --> D[記憶體解碼]
-  D --> G{移動閘門}
-  G -- 跳過 --> R[沿用上一次的 detections]
-  G -- 偵測 --> C[face_roi 裁切+縮小] --> Y[YuNet] --> E[SFace / 節流]
-  E --> P{pose_enabled?}
-  P -- 是 --> M[MoveNet on pose_roi] --> A[臉-身體配對 fuse]
-  P -- 否 --> T
-  A --> T[tracker.update]
-  R --> T
-  V[VAD speech] --> T
-  T --> S[狀態機 _evaluate]
-  TK[ticker 0.5 s] --> S
-  S --> FPS[recommend_fps]
+flowchart TD
+  subgraph B["瀏覽器（static/index.html）"]
+    CAM["getUserMedia 640×480 + 麥克風"] --> JPG["每 1/fps 秒：縮到高 480 px → JPEG q0.7（原始方向，不鏡像）"]
+    MIC["AnalyserNode RMS（每 50 ms）"] --> VAD["自適應噪音底 VAD"]
+  end
+  JPG -- "WS frame + speech" --> SLOT["worker：只處理最新一張"]
+  VAD -- "WS vad（改變時）" --> SP["tracker.set_speech()"]
+  SLOT --> DEC["cv2.imdecode（只在記憶體）"]
+  DEC --> MG{"移動閘門：畫面幾乎沒變？"}
+  MG -- "是" --> REUSE["沿用上一次的 detections"]
+  MG -- "否" --> CROP["face_roi + margin 裁切 → 寬 ≤ 320"]
+  CROP --> YN["YuNet → 框 + 5 點 + frontal"]
+  YN --> TH{"embedding 可重用？"}
+  TH -- "重用" --> DETS
+  TH -- "重算" --> SF["SFace 128-d（fp32 / int8 / npu）"]
+  SF --> DETS["Detection 清單"]
+  DETS --> PE{"pose_enabled"}
+  PE -- "是" --> MN["MoveNet MultiPose（pose_roi）→ 臉＋身體配對"]
+  PE -- "否" --> AP
+  MN --> AP{"kalman 模式"}
+  AP -- "是" --> HS["軀幹 HSV 直方圖"]
+  AP -- "否" --> TR
+  HS --> TR
+  REUSE --> TR
+  SP --> TR
+  TR["tracker.update()：ROI 規則 → 信心分組 → 距離"] --> L4["Layer 4 追蹤：legacy / kalman"]
+  L4 --> L3["Layer 3 意圖：rules / score"]
+  L3 --> L2["Layer 2 在場：rules / hmm"]
+  L2 --> NG["NEW_GROUP 檢查"]
+  NG --> SM["狀態機 _evaluate"]
+  TICK["ticker 每 0.5 s"] --> SM
+  SM --> OUT["JSON state + 建議 fps → 網頁"]
 ```
 
-## 1. 每一幀的處理流程（`FrameProcessor.process`）
+### 1.1 連線與排程（`server.py`）
 
-1. **解碼**：`cv2.imdecode`，只在記憶體中，不寫入磁碟。
-2. **移動偵測閘門**（`motion_gate`=開）：
-   - 把畫面轉灰階、縮成 64×48，和上一張比，`diff = mean|Δ| / 255`。
-   - 以下條件**全部**成立才跳過偵測，直接沿用上一次的 detections（含身體）：
-     - `motion_gate` 開；
-     - `stable`（目前不在 MAYBE_AWAY 或 AWAY）；
-     - 已經有上一次的結果；
-     - `diff < motion_threshold`（0.015）；
-     - 距離上次完整偵測 `< force_detect_seconds`（3 s）。
-   - 第一張幀的 diff 視為 1.0，所以一定會做偵測。
-   - 被跳過的幀照樣送進 tracker，track 的 `last_seen` 一樣會更新。
-3. **ROI 裁切＋縮小**（`roi_crop`=開）：
-   - 裁切範圍是 `face_roi`（0.2, 0.05, 0.8, 0.95）往外加 `crop_margin`（0.1），夾在畫面內。
-   - 寬度大於 `max_width`（320）時等比例縮小。
-   - 偵測框和 5 個特徵點會換算回原畫面座標。
-4. **人臉偵測**：
-   - YuNet 本身的 score 門檻是 0.5（`FaceDetectorYN.create(..., 0.5, nms 0.3, top 50)`）。
-   - `min_conf`（0.6）在 tracker 裡才使用，用來把 detection 分成「有信心」和「低信心」。
-   - 沒有模型時改用 Haar：信心 ≈ 權重 / 5，上限 1。
-5. **Embedding 節流**（`embed_throttle`=開）：
-   - 每張臉從快取中找 IoU 最大的上一筆。
-   - 以下條件全部成立才**重用**上一筆的 embedding：
-     - 上一筆有 embedding；
-     - IoU > 0.3；
-     - 中心位移和大小變化都不超過 `embed_move_thresh`（0.15，相對上一筆的框）；
-     - 距離上次計算 `< embed_interval`（3 s）；
-     - 上次計算時的自我相似度 `self_sim ≥ cos_match`（0.40）。
-   - 其他情況就重新計算（SFace 在縮小後的裁切圖上 alignCrop）。
-   - 重新計算時，如果上一筆 IoU > 0.3，就把新舊 embedding 的 cosine 記成 `self_sim`。
-6. **姿勢**（`pose_enabled`=關）：
-   - 只有完整偵測的幀才跑。
-   - MoveNet MultiPose 在 `pose_roi`（整個畫面）上執行：開了 `roi_crop` 時加 `crop_margin`；不縮小，模型內部把長邊縮到 256。
-   - 丟掉信心 `< pose_conf`（0.4）的人。
-   - 關鍵點信心門檻：
-     - 朝向、肩寬用 0.5；
-     - 髖用 0.3；
-     - 頭部框、配對用 0.3。
-7. **臉和身體配對**（`fuse` / `associate`）：
-   - 配對條件：臉中心落在身體框內（上緣可以再往上 5%），而且：
-     - 有鼻子或眼睛時：臉中心到這些點平均位置的距離 ≤ 臉寬（取寬高較大者）；
-     - 沒有鼻子或眼睛時：臉中心在身體框上方 40% 以內。
-   - 符合的組合依「臉中心到頭部框中心的距離」由小到大貪婪配對。
-   - 沒配到身體的臉：保留為只有臉的 detection。
-   - 沒配到臉的身體：用 `head_box`（頭部關鍵點，或身體框頂部）當 bbox，`conf` 取身體信心，**沒有 embedding**。
-8. **距離估計**（在 tracker 的 `_update_body` 中，`distance_enabled`=關）：
-   - 基本公式：`d = W / (w · 2·tan(HFOV/2))`，其中 HFOV 是 `camera_hfov`（60°），w 是正規化後的寬度。
-   - 臉：W=0.15 m，w 是臉框寬。
-   - 肩：W=0.38 m，w 是肩寬，**只在 facing=「facing」時使用**。
-   - 有兩個估計時取平均，再乘 `distance_calib`（1.0），用 `distance_ema`（0.3）平滑。
-   - `far = distance_enabled 而且 distance > leave_distance`（2.5 m）。
-   - 校正：取目前看得到、原始距離最近的人，`calib = 已知距離 / 原始距離`（範圍限制在 0.2–5），並重設所有 EMA。
+| 項目 | 實作 |
+|---|---|
+| 驗證 | 設定 `PRESENCE_TOKEN` 時，HTTP 和 WebSocket 都要帶 `?token=`，否則 403／1008。access log 關閉（避免 token 進 log）。 |
+| 每個連線 | 一個 `PresenceTracker`（各自的 `Config`）、一個 `FrameProcessor`、一組統計。YuNet／SFace 的 `VisionPipeline` 和 MoveNet 是**整個行程共用**。 |
+| 送幀 | 瀏覽器每 `1000/fps` ms 送一張：把影片縮到高 480 px（640×480 鏡頭就是 640×480），JPEG 品質 0.7，附帶目前的 `speech`。 |
+| 只處理最新一張 | worker 正在處理時又收到的幀會覆蓋上一張待處理的幀（計為 dropped），所以延遲不會累積。 |
+| 時鐘 | ticker 每 0.5 s 呼叫 `tracker.tick()`（只跑狀態機），所以沒有新的幀時計時一樣會走；每 1 s 送一次資源統計。 |
+| 停止／重設 | 建立新的 `PresenceTracker`、重設 `FrameProcessor`：所有 track 和 embedding 都清掉。 |
+| 分頁切到背景 | 網頁自動停止（關鏡頭和麥克風），切回來時自動恢復。 |
 
-## 2. 追蹤（`_match`）
+### 1.2 聲音（瀏覽器 VAD）
 
-- 只有**在 ROI 內**（見 §3）而且有信心的 detection 會參與比對；低信心的 detection 不會更新 track。
-  - 有臉的 detection：`conf ≥ min_conf`（0.6）。
-  - 只有身體、沒有臉的 detection：`conf ≥ body_min_conf`（0.4）。
-- 每一幀開始時，所有 track 先設成 `visible=False`。
-- 一組 detection × track 符合下列**任一**條件就是候選：
-  - `cos ≥ cos_match`（0.40）；
-  - `IoU ≥ iou_match`（0.3）而且 `cos ≥ cos_weak`（0.20）；
-  - `IoU ≥ iou_match` 而且任一方沒有 embedding（只有身體的情況）。這時 IoU 取「頭部框 IoU」和「身體框 IoU」的較大值。
-- 分數 = `cos + 0.5·IoU`，由高到低貪婪一對一配對。
+每 50 ms 取一次 1024 點的 RMS $r$：
+
+$$
+\text{thr}=\max(f\cdot \texttt{vad\_k},\ \texttt{vad\_min}),\qquad
+f \leftarrow \begin{cases}0.999f+0.001r & r>\text{thr}\\ 0.95f+0.05r & \text{其他}\end{cases},\quad f\ge 10^{-4}
+$$
+
+- `vad_k`（2.5）、`vad_min`（0.005）、噪音底初始值 0.01。
+- $r>\text{thr}$ 時把 hang 計時器設成 `vad_hang`（400 ms）；`speech = 還在 hang 時間內`。
+- 傳到伺服器有兩條路：狀態改變時送 `vad` 訊息（`set_speech()` 會立即評估狀態機）；每張幀也帶著 `speech`。
+- 靜默時間：$s = 0$（正在說話），否則 $s = \text{now} - \text{last\_speech}$。
+- 聲音**沒有位置資訊**，所以不會直接歸到某一個人身上（例外見 §2.4 的 `speech_join` 和 §2.5 的說話線索）。
+
+---
+
+## 2. 各層說明
+
+### 2.1 Layer 1：感知（`optimizer.FrameProcessor.process`、`vision.py`）
+
+#### (a) 移動閘門（`motion_gate`=開）
+
+把畫面轉灰階、縮成 64×48，和上一張比：
+
+$$
+\Delta=\frac{1}{64\cdot 48}\sum_{i}\frac{|g_t(i)-g_{t-1}(i)|}{255}
+$$
+
+以下條件**全部**成立時跳過偵測，直接沿用上一次的 detections（包含身體和外觀）：
+
+- $\Delta <$ `motion_threshold`（0.015）；
+- `stable`：處理前的狀態不是 MAYBE_AWAY 或 AWAY；
+- 已經有上一次的結果；
+- 距離上次完整偵測 $<$ `force_detect_seconds`（3 s）。
+
+第一張幀的 $\Delta$ 當作 1。被跳過的幀仍然會送進 tracker（track 會照樣更新 `last_seen`）。
+
+#### (b) ROI 裁切和縮小（`roi_crop`=開）
+
+- 人臉偵測只在 `face_roi`（0.2, 0.05, 0.8, 0.95）往外加 `crop_margin`（0.1）的範圍內進行，範圍限制在畫面內。
+- 裁切後的寬度如果大於 `max_width`（320），就等比例縮小，縮放比例 $k=\min(1, 320/w_\text{crop})$。
+- 偵測框和 5 個特徵點會換算回原畫面座標：$x = x'/k + x_0$。
+- 姿勢偵測用的是 `pose_roi`（預設整個畫面）加 margin，**不縮小**（MoveNet 內部會把長邊縮到 256）。
+
+#### (c) YuNet 人臉偵測
+
+- `cv2.FaceDetectorYN`：score 門檻 0.5，NMS 0.3，最多 50 張臉。每張臉輸出框、5 個特徵點（右眼、左眼、鼻子、兩個嘴角）和信心值。
+- 正面分數（從特徵點計算，Layer 3 使用）：
+
+$$
+\text{frontal}=\operatorname{clip}\!\left(1-\frac{|n_x-(r_x+l_x)/2|}{0.5\,|l_x-r_x|},\,0,\,1\right)
+$$
+
+- 沒有 YuNet 模型時改用 Haar（信心值約為權重／5）；那時 embedding 改用 HSV 直方圖（備援，辨識力很弱）。
+
+#### (d) SFace embedding 和節流
+
+- 先用 5 個特徵點做相似轉換對齊成 112×112，再算出 128 維特徵並做 L2 正規化。比對用 cosine：$\cos(a,b)=a\cdot b$。
+- embedding 是在**裁切縮小後**的影像上計算的。
+- **後端**（`embed_backend`，見 [NPU.md](NPU.md)）：
+
+  | 值 | 模型 | 執行 | 比對門檻 |
+  |---|---|---|---|
+  | `fp32`（預設） | SFace ONNX | OpenCV DNN CPU | `cos_match`（0.40） |
+  | `int8` | opencv_zoo 官方 int8 ONNX（檢查 sha256） | OpenCV DNN CPU | `cos_match_int8`（0.40） |
+  | `npu` | 本機匯出的 TFLite：`npu_precision`=`int8`（全整數）或 `fp16` | LiteRT。有設定 `PRESENCE_NPU_DELEGATE`（只能用伺服器的環境變數設定）時載入外部 delegate，失敗或沒設定就用 CPU XNNPACK。沒有 delegate 而且要求 int8 時，自動改用 fp16 模型（在 CPU 上比較快）。 | int8 用 `cos_match_int8`，fp16 用 `cos_match` |
+
+  模型不存在時退回 fp32，並在資源面板顯示原因。
+- **節流**（`embed_throttle`=開）：每張臉從快取裡找 IoU 最大的上一筆。以下條件全部成立時就**重用**上一筆的 embedding：
+  - IoU $> 0.3$；
+  - 中心位移和大小變化（相對上一筆的框）都 $\le$ `embed_move_thresh`（0.15）；
+  - 距離上次計算 $<$ `embed_interval`（3 s）；
+  - 上次計算時的自我相似度 `self_sim` $\ge$ `cos_match`。
+
+  重新計算時，`self_sim` 是新舊 embedding 的 cosine。
+
+#### (e) MoveNet 姿勢（`pose_enabled`=關）
+
+- 使用 MoveNet MultiPose Lightning（TFLite fp16，LiteRT 4 個執行緒），最多 6 人，輸出 COCO-17 關鍵點。
+- 只在完整偵測的幀上執行；捨棄信心 $<$ `pose_conf`（0.4）的人。
+- **臉和身體配對**（`fuse`）：
+  - 條件：臉的中心落在身體框內（上緣可以再往上 5%），而且臉中心到鼻子／眼睛平均位置的距離 $\le$ 臉寬；沒有鼻子和眼睛時，改成臉中心在身體框上方 40% 以內。
+  - 符合條件的組合依照距離由近到遠貪婪配對。
+  - 沒配到臉的身體會變成「只有身體」的 detection：用 `head_box` 當作 bbox，沒有 embedding。
+- **朝向**分數：
+
+$$
+o = 0.35[\text{鼻}] + 0.25[\text{雙眼}] + 0.2[\text{左肩在畫面右側}] + 0.2\min\!\left(1,\frac{\text{肩寬}/\text{軀幹高}}{0.6}\right)
+$$
+
+  - $o \ge 0.6$ 是 facing，$\ge 0.3$ 是 side，其他是 away。
+  - 只有臉、沒有身體時視為 facing（分數 1）。
+
+#### (f) 外觀描述子（只在 `tracker_mode=kalman` 時計算）
+
+- 取軀幹區域（優先用肩膀和髖部的關鍵點，其次用身體框，最後用臉下方的區域），計算 HSV 色彩直方圖（H 12 格 × S 4 格），再做 L1 正規化。
+- 相似度用 Bhattacharyya 係數：$\text{BC}(a,b)=\sum_i\sqrt{a_ib_i}$。
+
+#### (g) 距離估計（`distance_enabled`=關，在 tracker 的 `_update_body` 中計算）
+
+針孔相機模型，$w$ 是正規化後的寬度：
+
+$$
+d=\frac{W}{w\cdot 2\tan(\text{HFOV}/2)}\cdot k_\text{calib}
+$$
+
+- 臉：$W$ = `face_width_m`（0.15 m）；肩：$W$ = `shoulder_width_m`（0.38 m），**只在 facing 時使用**。兩者都有時取平均。
+- `camera_hfov` 是 60°，$k_\text{calib}$ 是 `distance_calib`（1.0）。
+- 用 EMA 平滑：$d_t=(1-0.3)\,d_{t-1}+0.3\,d$（`distance_ema` 0.3）。
+- `far = distance > leave_distance`（2.5 m）。far 的人不能開始 session、不能加入、也不算 NEW_GROUP 的新人；hmm 模式下會往「離開」推。
+- 距離區（`zone_min` 0.4、`zone_max` 2.0）主要用來顯示，score 模式也會當作意圖線索。
+- 校正：取原始距離最近的可見者，$k=\text{已知距離}/d_\text{raw}$。
+
+### 2.2 進入 tracker 前的篩選（`PresenceTracker.update`）
+
+1. **ROI 規則**（`roi_rule`=either，看框的中心點）：
+   - `pose_enabled` 關，或 `roi_rule=face`：臉中心要在 `face_roi` 內；
+   - `roi_rule=body`：身體中心要在 `pose_roi` 內；
+   - `either`：兩者任一成立即可。
+   
+   ROI 外的 detection 直接丟掉，連「低信心」都不算。
+2. **信心分組**：有臉的 detection 門檻是 `min_conf`（0.6），只有身體的是 `body_min_conf`（0.4）。高於門檻是「有信心」，低於門檻是「低信心」。只有有信心的 detection 會參與追蹤；低信心的 detection 只影響在場判斷（變成「不確定」）。
+3. **開始 session**（狀態是 ENDED 時）：
+   - `intent_model=rules`：ROI 內有**有信心、非 far** 的人（任何 priority）；
+   - balanced／audio：正在說話也可以開始（`set_speech(True)` 也一樣）；
+   - `intent_model=score`：只有當某個 track 達到意圖加入條件時才開始（路人不會開始 session）。開始時保留現有的 track。
+
+### 2.3 Layer 4：追蹤（`_match`／`_match_kalman`，詳見 [TRACKING.md](TRACKING.md)）
+
+**比對門檻**：`match_cos` 用 `cos_match`（0.40）；量化後端（int8，或 npu 的 int8）用 `cos_match_int8`（0.40）。`cos_weak`（0.20）。`iou_match`（0.3）。
+
+#### legacy（預設）：貪婪比對
+
+一組 detection 和 track 符合下列**任一**條件就成為候選：
+
+$$
+\cos\ge \texttt{match\_cos}\ \ \lor\ \ (\text{IoU}\ge 0.3 \land \cos\ge 0.20)\ \ \lor\ \ (\text{IoU}\ge 0.3 \land \text{任一方沒有 embedding})
+$$
+
+- 沒有臉時，IoU 取頭部框和身體框兩者的較大值。
+- 分數 $=\cos+0.5\,\text{IoU}$，由高到低一對一貪婪配對。
+
+#### kalman：Kalman + Hungarian + 外觀 + 預測延續
+
+- **狀態**：$x=[c_x,c_y,w,h,\dot c_x,\dot c_y,\dot w,\dot h]$，等速模型，用實際的 $dt$ 預測：
+
+$$
+F=\begin{bmatrix}I_4 & dt\,I_4\\ 0 & I_4\end{bmatrix},\quad
+Q=\begin{bmatrix}\tfrac{dt^4}{4}\Sigma_a & \tfrac{dt^3}{2}\Sigma_a\\ \tfrac{dt^3}{2}\Sigma_a & dt^2\Sigma_a\end{bmatrix},\quad
+\Sigma_a=\operatorname{diag}(0.5^2,0.5^2,0.1^2,0.1^2)
+$$
+
+  量測雜訊 $R=\operatorname{diag}(0.01^2,0.01^2,0.015^2,0.015^2)$。
+- **排除**（任一條件成立就不配對）：
+  - 中心點的 Mahalanobis 距離平方 $m^2>$ `gate_mahalanobis`（9.21，χ² 2 自由度 99%），而且 IoU $<0.3$，而且臉部 cosine 沒有達到 `match_cos`（夠像的臉可以在任何位置重新認出）；
+  - 兩邊都有臉，但 $\cos<$ `cos_weak`；
+  - 沒有臉，而且外觀 $\text{BC}<$ `appearance_min_sim`（0.6）。
+- **分數**：有資料的項目做加權平均，分數 $\ge 0.3$ 才能配對，代價 $=1-\text{score}$，用 Hungarian 演算法求全域最佳配對：
+
+$$
+\text{score}=\frac{1\cdot\text{IoU}+1\cdot e^{-m^2/9.21}+2\cdot\min(1,\cos/\texttt{match\_cos})+1.5\cdot\operatorname{clip}\!\left(\tfrac{\text{BC}-0.5}{0.5}\right)}{\sum \text{權重（只算有資料的項目）}}
+$$
+
+- **預測延續（coast）**：沒配到而且消失時間 $\le$ `coast_seconds`（2 s）的 track，框改成預測框，並設定：
+
+$$
+\texttt{vis\_conf}=1-\frac{\text{消失秒數}}{\texttt{coast\_seconds}},\qquad \texttt{visible}=\texttt{vis\_conf}\ge \texttt{coast\_present\_conf}\ (0.4)
+$$
+
+  也就是大約 1.2 s 內仍然算看得到。外觀模板用 `appearance_ema`（0.2）更新。
+
+#### 兩種模式共用的部分
+
 - 配對成功時：
-  - 更新 bbox、conf、`last_seen`，設 `visible=True`；
-  - 更新身體、朝向、大小趨勢、距離；
-  - embedding 用 EMA 更新：`norm((1−0.15)·舊 + 0.15·新)`；track 原本沒有 embedding 時直接採用新的。
-  - 如果不是參與者，而且離上次看到超過 2.5 s，重設 `in_roi_since`（重新計算加入時間）。
-- 沒配對到的 detection：建立新 track（`in_roi_since=now`），記錄 `track_new` 事件。
-- 大小趨勢：
-  - 有身體時用身體框高度，否則用臉寬，保留最近 12 筆。
-  - 和至少 1.5 s 前最近的一筆比：比值 `< 1−recede_ratio`（0.9）是 receding，`> 1.1` 是 approaching，其他是 steady。
-- **移除**：`now − last_seen > grace_seconds`（15 s）的 track 會被刪除（`track_drop`）。參與者也一樣。
+  - embedding 用 EMA 更新：$e\leftarrow \text{norm}((1-0.15)e+0.15e_\text{new})$（`embed_ema` 0.15）；
+  - 同時更新身體、朝向、大小趨勢和距離。
+- 非參與者消失超過 2.5 s 後再被配到時，加入計時（`in_roi_since`）會重新開始。
+- 沒配到的 detection 建立新的 track。
+- `now − last_seen > grace_seconds`（15 s）的 track 會被刪除。
+- **大小趨勢**：有身體時用身體框高度，否則用臉寬；和至少 1.5 s 前的值比較：比值 $<1-0.1$ 是 receding，$>1+0.1$ 是 approaching（`recede_ratio` 0.1）。
 
-### 2b. kalman 追蹤模式（`tracker_mode=kalman`，`_match_kalman`）
+### 2.4 Layer 3：意圖和加入（詳見 [INTENT_MODEL.md](INTENT_MODEL.md)）
 
-預設是上面的 legacy。kalman 模式的完整說明和評估見 [TRACKING.md](TRACKING.md)。
+#### rules（預設）
 
-1. **預測**：每個 track 的 Kalman 濾波器（狀態是 cx、cy、w、h 和它們的速度）用實際的 `dt` 預測到現在。
-2. **門檻篩選**（任一條件成立就不配對）：
-   - Mahalanobis² > `gate_mahalanobis`（9.21），而且 IoU < `iou_match`，臉部 cosine 也沒有達到 `cos_match`；
-   - 兩邊都有臉，但 cosine < `cos_weak`；
-   - 沒有臉，而且衣服相似度 < `appearance_min_sim`（0.6）。
-3. **分數**：有資料的項目做加權平均：
-   - IoU（預測框或身體框）×1；
-   - 移動一致性 `exp(−m²/gate)` ×1；
-   - 臉 `min(1, cos/cos_match)` ×2；
-   - 衣服 `(sim−0.5)/0.5` ×1.5。
-   
-   分數 ≥ 0.3 才可以配對；代價 = 1 − 分數。
-4. **匈牙利演算法**：求全域最佳配對。配對成功時用偵測結果更新 Kalman，再套用和 legacy 相同的更新（bbox、身體、embedding EMA、距離），衣服模板用 `appearance_ema`（0.2）更新。
-5. **預測延續**：沒配對到而且消失 ≤ `coast_seconds`（2 s）的 track：
-   - bbox 改成預測框，`visible_kind=predicted`，`vis_conf = 1 − 消失秒數／coast_seconds`；
-   - `visible = vis_conf ≥ coast_present_conf`（0.4）。
-   
-   超過 `coast_seconds` 就是 `none`。
-6. **對其他規則的影響**：
-   - 預測中而且 visible 的 track 會讓「有人」繼續成立。它不會增加 `present_streak`，但會延後 ROI 空的判定，`first_empty_at` 從預測結束後的第一張空幀開始算。
-   - 預測中的 track 不能加入成參與者，也不算 NEW_GROUP 的 newcomer。
-   - 在「舊群組是否消失」的判斷中，它算是可見。
-7. **衣服描述子**：只在 kalman 模式時，由 `FrameProcessor` 在記憶體中計算。軀幹區域優先用肩膀和髖部的關鍵點，其次用身體框，最後用臉下方的區域。
+- 加入條件：visible、這一幀**有偵測到**（不是預測）、不是 far、還不是參與者，而且：
 
-所有模式的 snapshot 都多了 `visible_kind`、`vis_conf`、`dwell_seconds`、`velocity`（legacy 模式下 `velocity` 是 null）。
+$$
+\text{now}-\texttt{in\_roi\_since}\ \ge\ \texttt{join\_seconds}\ (2\text{ s})\quad\lor\quad \text{說話立即加入}
+$$
 
-## 3. 參與者規則
+- **說話立即加入**（`speech_join`=auto）：vision 模式等於 `off`；balanced／audio 模式等於 `single_candidate`。`single_candidate` 的條件：正在說話，**只有一位**候選人，臉在 `face_roi` 內，朝向是 facing，開啟距離時還要 $\le$ `zone_max`。`all` 會讓所有候選人立即加入。
+- 下列情況不能加入：NEW_GROUP 正在計時；或舊群組全部消失、但仍然有參與者時（這時應該走 NEW_GROUP）。
 
-- **ROI 規則**（`det_in_roi`，看框的中心點）：
-  - `pose_enabled` 關，或 `roi_rule="face"` → 只看臉中心是否在 `face_roi` 內。只有身體的 detection 不算在內。
-  - `roi_rule="body"` → 只看身體框中心是否在 `pose_roi` 內。
-  - `"either"`（預設）→ 兩者任一成立即可。
-  - 不在 ROI 內的 detection 會被整個丟掉，連「低信心」也不算。
-- **加入**：一個 track 成為參與者要同時滿足：
-  - `visible`、不是 `far`，而且目前還不是參與者；
-  - `now − in_roi_since ≥ join_seconds`（2 s），**或**符合「說話立即加入」（`speech_join`，見下方）；
-  - 目前沒有正在計時的 NEW_GROUP（`_newgroup_since is None`）；
-  - 舊群組沒有全部消失，或根本還沒有參與者。
-- **說話立即加入**（`speech_join`=auto）：聲音沒有位置資訊，所以預設很保守。
-  - `auto`：vision 模式等於 `off`，balanced／audio 模式等於 `single_candidate`。
-  - `off`：說話不會讓人立即加入，一律等 `join_seconds`。
-  - `single_candidate`：目前正在說話，而且只有**一位**可見、非 far 的候選人；他的臉在 `face_roi` 內、朝向是 facing（沒有身體資料時視為 facing）；開啟距離時距離 ≤ `zone_max`。
-  - `all`：所有可見候選人立即加入（v0.4.0 以前的行為）。
-- **距離區**（只用來顯示）：
-  - `> leave_distance` → left；
-  - `< zone_min`（0.4）→ near；
-  - `≤ zone_max`（2.0）→ in；
-  - 其他 → far。
-  - 真正影響判斷的只有 `far`（`> leave_distance`）：far 的人不能加入，也不算「有人」。所有可見的人都超出距離時，記錄一次 `far` 事件。
+#### score
 
-### 3b. 互動意圖模式（`intent_model=score`，`_update_intent`）
+每個有偵測到的 track 每幀計算各個線索（0–1）：
 
-預設是上面的 rules。score 模式的規則：
+| 線索 | 公式 | 權重（預設） |
+|---|---|---|
+| facing | 有臉：$f$ = frontal（沒有特徵點時用 0.85）；有姿勢：$0.5f+0.5o$；只有身體：$o$ | `w_facing` 0.45 |
+| distance | $d\le$ `zone_max` 時是 1，到 `leave_distance` 線性降到 0；沒開距離估計時略過 | `w_distance` 0.10 |
+| dwell | $\min(1, \text{在 ROI 的秒數}/4)$ | `w_dwell` 0.10 |
+| approach | $\operatorname{clip}(0.5+4\,\dot s)$，$\dot s$ 是大小相對變化率（EMA，時間常數 1 s） | `w_approach` 0.05 |
+| still | $\max(0,1-\lvert v_x\rvert/0.12)$，$v_x$ 是橫向速度（每秒畫面寬度；kalman 模式直接用濾波器的速度） | `w_still` 0.15 |
+| center | $\max(0, 1-\sqrt{d_x^2+(0.5d_y)^2})$，相對 `face_roi` 中心和半寬高 | `w_center` 0.15 |
+| speech | 正在說話，而且只有一位候選人，或他是唯一面向機器人（frontal $\ge 0.5$）的人時才給 1 | vision 0.05／balanced 0.15／audio 0.25 |
 
-- 每個 track 的意圖分數（0–1）= 各線索的加權平均，乘上面向閘門，再用實際 dt 做 EMA。線索有：
-  - 面向：YuNet 五點＋肩膀；
-  - 距離：沒開距離估計就略過；
-  - 停留、走近、沒在路過、ROI 中央；
-  - 可歸屬的說話。
-- **加入**：意圖 ≥ `join_threshold` 持續 `join_seconds`，取代「待滿 join_seconds」和 `speech_join`。
-- **開始 session**：ENDED 時同樣要有人達到加入條件；balanced／audio 模式的說話仍可開始。
-- **降為旁觀者**：意圖 < `drop_threshold` 持續 `drop_seconds`，而且有看到他；最後一位參與者不會被降級。
-- **NEW_GROUP**：新候選人要達到加入條件。
-- **在場（hmm）**：群組 P 只看參與者；還沒有參與者時只看意圖達門檻的 track。
+$$
+r=\frac{\sum_k w_k c_k}{\sum_k w_k}\ (\text{只算有值的線索}),\qquad
+r_g=r\,(1-0.5(1-c_\text{facing})),\qquad
+I\leftarrow I+(r_g-I)\left(1-e^{-dt/\tau}\right)
+$$
 
-詳細說明見 [INTENT_MODEL.md](INTENT_MODEL.md)。
+- $\tau$ 是 `intent_tau`（1 s）。新 track 的 $I$ 直接等於第一次的 $r_g$。
+- 看不到的 track 不更新線索，$I$ 以 $4\tau$ 的時間常數慢慢降向 0。
+- **加入**：$I\ge$ `join_threshold`（0.6）持續 `join_seconds`（2 s），取代 rules 的「待滿 2 s」和 `speech_join`。
+- **降為旁觀者**：參與者在**看得到**的情況下 $I<$ `drop_threshold`（0.35）持續 `drop_seconds`（8 s），而且他不是最後一位參與者（離開與否由 Layer 2 判斷）。
+- 例子（沒開距離估計）：
+  - 正面、靜止、在中央的人：$r=0.775/0.9\approx0.86$，所以 2 s 後加入；
+  - 側面（frontal 0.5）、以 0.2 畫面寬／秒走過、在 ROI 邊緣的人：$r_g\approx0.27$，不會加入；
+  - 側站看熱鬧（frontal 0.3）、靜止待滿 4 s 的人：$r_g\approx0.37$，不會加入。
 
-## 4. 影像狀態：有人／空／不確定（`_update_presence`）
+### 2.5 Layer 2：在場判斷
 
-這一幀的輸入：
-- `near`：有任何 visible 而且不是 far 的 track。
-- `low`：ROI 內有低信心的 detection。
+#### rules（預設，`_update_presence`）
 
-依序判斷：
+這一幀的輸入：`near`（有偵測到、visible、非 far 的 track）、`low`（ROI 內有低信心的 detection）、`coasting`（kalman 模式下還在預測、visible 的 track）。
 
 | 條件 | 動作 |
 |---|---|
 | `near` | `present_streak += 1`，`empty_streak = 0` |
-| 不是 near，但有 `low` | `present_streak = 0`，`low_streak += 1`；`low_streak ≥ absent_frames`（3）時記錄 `uncertain` 事件，`present=False`、`empty=False` |
-| 兩者都沒有 | `empty_streak += 1`，`present_streak = 0`；這是第一張空幀時記下 `first_empty_at = now` |
-| `present_streak ≥ present_frames`（2），或（`near` 而且本來就 present） | `present=True`，`empty=False` |
-| `empty_streak ≥ absent_frames`（3） | `present=False`、`empty=True`；`empty_since = first_empty_at`（第一張空幀的時間，和 fps 無關） |
-| `low` 而且不是 near、目前不是 present | 立刻 `empty=False`（變成不確定） |
+| 不是 near，但有 `low` | `present_streak = 0`；連續 `absent_frames`（3）張之後設 `present = empty = False`（不確定） |
+| 兩者都沒有 | `empty_streak += 1`；記下第一張空幀的時間（coasting 時不記） |
+| `present_streak ≥ present_frames`（2），或 `near` 而且本來就是 present | `present = True` |
+| `empty_streak ≥ absent_frames`（3），而且沒有在 coasting | `empty = True`，`empty_since` = 第一張空幀的時間（和 fps 無關） |
 
-判斷路徑（path）：
-- `present=True` → **present**；
-- `empty=True` 而且 `empty_since` 有值 → **empty**；
-- 其他 → **uncertain**。
+判斷路徑（path）：`present` → present；`empty` 而且有 `empty_since` → empty；其他 → uncertain。
 
-## 5. 聲音（瀏覽器 VAD）
+**逾時表**（`maybe_away_frac` 0.5：elapsed 達到 timeout 的一半時進入 MAYBE_AWAY）：
 
-- AnalyserNode 的 fftSize 是 1024，每 50 ms 計算一次 RMS。
-- 門檻：`thr = max(noise_floor × vad_k, vad_min)`，預設 `vad_k` 2.5、`vad_min` 0.005。
-- 噪音底初始值 0.01：
-  - 說話中：`floor = 0.999·floor + 0.001·rms`；
-  - 沒說話：`floor = 0.95·floor + 0.05·rms`；
-  - 下限 1e-4。
-- `rms > thr` 時，把 `until` 設成 `now + vad_hang`（400 ms）；`speech = now < until`。
-- 送進伺服器的兩條路：
-  - 狀態改變時送 `vad` 訊息 → `set_speech()`：更新 `speaking`，說話時更新 `last_speech`，然後立即 `_evaluate`。
-  - 每張幀也帶 `speech` → `update(..., speaking)`，效果相同。
-- 靜默時間 = 正在說話時為 0，否則為 `now − last_speech`。
+| priority＼path | present | empty | uncertain |
+|---|---|---|---|
+| **vision** | timeout = `present_max_silence`（0 = 關）→ **不會因為靜默而離開** | `empty_timeout`（5 s），elapsed = 空了多久（**不管聲音**）→ 2.5 s MAYBE、5 s AWAY | `base_timeout`（20 s），elapsed = 靜默 → 10／20 s |
+| **balanced** | `present_timeout`（15 s），elapsed = 靜默 → 7.5／15 s | `empty_timeout`（5 s），elapsed = min(靜默, 空了多久) → 2.5／5 s | `base_timeout`（20 s），elapsed = 靜默 → 10／20 s |
+| **audio** | 1.5 × base = 30 s，elapsed = 靜默 → 15／30 s | 0.5 × base = 10 s，elapsed = 靜默 → 5／10 s | 1.0 × base = 20 s → 10／20 s |
 
-## 6. 狀態機（`_evaluate`）
+**轉身提早**（`turned_away_early`=開，只在 rules 模式）：所有 visible、非 far 的參與者都是 side 或 away，**而且** trend 是 receding，持續 `turned_away_seconds`（2 s）而且沒有說話時 → MAYBE_AWAY（不會直接進入 AWAY）。
+
+#### hmm（`_hmm_update`／`_evaluate_hmm`，詳見 [PRESENCE_MODEL.md](PRESENCE_MODEL.md)）
+
+每個 track 有一個對數勝算 $L=\ln\frac{P(\text{在場})}{P(\text{離開})}$，每一幀依實際 $dt$（最多 3 s）積分：
+
+$$
+L\leftarrow \operatorname{clip}\big(L+\rho\cdot dt,\ \ln\tfrac{0.02}{0.98},\ \ln\tfrac{0.98}{0.02}\big),\qquad \lambda=\frac{\ln 2}{\texttt{leave\_halflife}}\ (0.6\text{ s} \Rightarrow 1.155/\text{s})
+$$
+
+| 這一幀的狀況 | $\rho$ |
+|---|---|
+| far | $-3\lambda$ |
+| 有偵測到 | $+\texttt{detect\_gain}\cdot\text{conf}$（4 × conf）；轉身而且遠離時改成 $-\lambda$ |
+| 預測中（kalman） | $-\lambda(1-\texttt{vis\_conf})$ |
+| 只有低信心的幀 | $-\lambda\cdot\texttt{lowconf\_factor}$（0.15） |
+| 完全沒看到 | $-\lambda$ |
+
+- 新 track：$L=0+\rho\cdot0.5$（conf 0.9 時 $P\approx0.86$）。
+- **影像機率** $P_\text{tr}$：參與者中最大的 $P$。還沒有參與者時用所有 track（score 模式只看意圖 $\ge$ 門檻的 track）。完全沒有 track 時：vision 模式是 0.02，其他模式是 0.5。舊參與者都 $<$ `p_away`，但有穩定的新人（$P\ge$ `p_active`、待滿 `join_seconds`）時，也把新人算進來（避免換組前先跳到 AWAY）。
+- `intent_weighted_presence`（關）：開啟時，score 模式的 $P$ 會乘上 $\min(1, I/\texttt{join\_threshold})$。
+- **聲音偏移**（只加在群組上，不歸到任何人）：
+
+$$
+A=\begin{cases} w_s(\text{mode})\cdot 5 & \text{說話中}\\ -w_q(\text{mode})\cdot 6\cdot\min(1, s/\texttt{base\_timeout}) & \text{靜默}\end{cases},\qquad
+P_g=\sigma\big(\operatorname{logit}(P_\text{tr})+A\big)
+$$
+
+  $w_s$／$w_q$：vision 0.05／0，balanced 0.8／0.8，audio 1.0／1.0。
+- 每幀也會更新 `present`（$P_\text{tr}\ge$ `p_active`，或已經 present 而且 $\ge$ `p_maybe`）和 `empty`（$P_\text{tr}<$ `p_away`），只用來顯示 path。
+- 注意：$L$ 只在**收到幀**時更新，ticker 不會更新。
+
+### 2.6 群組決策：NEW_GROUP（`_check_new_group`，狀態不是 ENDED 時才檢查）
+
+| | rules | hmm |
+|---|---|---|
+| 舊群組消失 | 有參與者，**沒有**任何 visible 而且非 far 的參與者，而且有確定的證據（這一幀有有信心的 detection，或 ROI 已確認是空的）。只有低信心的幀不算。 | 所有參與者的 $P<$ `p_away` |
+| 新人 | 不是參與者、這一幀有偵測到、非 far、`now − in_roi_since ≥ join_seconds` | 同左，再加上 $P\ge$ `p_active` |
+| score 模式 | 新人還要達到意圖加入條件 | 同左 |
+
+- 兩個條件持續 `new_group_seconds`（3 s）→ 記錄 `NEW_GROUP` 事件。
+- 結束舊 session（清空 track），開始新的 session（ACTIVE），新人保留原本的 id 和 embedding，直接成為參與者。
+- 計時期間新人不能用一般規則加入。舊參與者只要被比對回來，計時就中斷。
+
+### 2.7 狀態機（`_evaluate`）
+
+#### rules 在場模型
+
+![rules 狀態機](img/state_rules.png)
 
 ```mermaid
 stateDiagram-v2
   [*] --> ENDED
-  ENDED --> ACTIVE: ROI 內有信心、非 far 的人（任何模式）<br/>或說話（balanced/audio）
-  ACTIVE --> IDLE: 靜默 ≥ idle_after (3 s)
-  IDLE --> ACTIVE: 靜默 < idle_after
-  ACTIVE --> MAYBE_AWAY: elapsed ≥ maybe_away_frac × timeout<br/>或轉身+遠離 ≥ turned_away_seconds
+  ENDED --> ACTIVE: 開始 session（§2.2 第 3 點）
+  ACTIVE --> IDLE: 靜默 ≥ idle_after（3 s）
+  IDLE --> ACTIVE: 靜默 ＜ idle_after
+  ACTIVE --> MAYBE_AWAY: elapsed ≥ 0.5·timeout，或轉身＋遠離 ≥ 2 s 且沒說話
   IDLE --> MAYBE_AWAY: 同上
-  MAYBE_AWAY --> ACTIVE: 條件不再成立而且靜默 < 3 s
-  MAYBE_AWAY --> IDLE: 條件不再成立
-  ACTIVE --> AWAY: elapsed ≥ timeout（timeout > 0）
+  MAYBE_AWAY --> ACTIVE: 條件消失且靜默 ＜ 3 s
+  MAYBE_AWAY --> IDLE: 條件消失且靜默 ≥ 3 s
+  ACTIVE --> AWAY: timeout ＞ 0 且 elapsed ≥ timeout
   IDLE --> AWAY: 同上
   MAYBE_AWAY --> AWAY: 同上
-  AWAY --> ACTIVE: 使用者回來（依模式）
-  AWAY --> ENDED: 在 AWAY ≥ end_after_away (5 s)
-  ACTIVE --> ACTIVE: NEW_GROUP（ENDED→ACTIVE，新 session）
+  AWAY --> ACTIVE: vision：present；balanced／audio：present 或說話
+  AWAY --> ENDED: 在 AWAY ≥ end_after_away（5 s）
+  ACTIVE --> ACTIVE: NEW_GROUP → 新 session
 ```
 
-### 每次評估的順序
+每次評估的順序：
 
-1. 狀態是 ENDED → 什麼都不做。
-2. 依模式和 path 決定 `timeout` 和 `elapsed`（見下表）。
-3. 狀態是 AWAY：
-   - `returned` 成立 → ACTIVE（「user returned」）；
-   - 否則在 AWAY 已經 `≥ end_after_away`（5 s）→ ENDED；
-   - 然後結束這次評估（AWAY 不會跳到 MAYBE_AWAY）。
-4. `timeout > 0` 而且 `elapsed ≥ timeout` → **AWAY**。
-5. 否則，如果「轉身提早」成立 → **MAYBE_AWAY**：
-   - 轉身計時已持續 `≥ turned_away_seconds`（2 s），而且目前沒有在說話。
-6. 否則，`timeout > 0`、`elapsed ≥ maybe_away_frac × timeout`（0.5），而且不屬於「vision 模式、path=present、靜默 < idle_after」的情況 → **MAYBE_AWAY**。
-7. 否則，靜默 `< idle_after`（3 s）→ **ACTIVE**；其他 → **IDLE**。
+1. 狀態是 ENDED → 不做任何事。
+2. 依照 §2.5 的表決定 timeout 和 elapsed。
+3. 狀態是 AWAY：回來了就切到 ACTIVE；否則在 AWAY 已經 $\ge$ 5 s 就切到 ENDED。然後結束這次評估。
+4. timeout $>0$ 而且 elapsed $\ge$ timeout → AWAY。
+5. 轉身提早成立 → MAYBE_AWAY。
+6. elapsed $\ge 0.5\times$timeout（vision、present、靜默 $<3$ s 的情況除外）→ MAYBE_AWAY。
+7. 靜默 $<$ `idle_after` → ACTIVE，否則 IDLE。
 
-MAYBE_AWAY 沒有自己的遲滯：條件一消失，下一次評估就回到 ACTIVE 或 IDLE。
+MAYBE_AWAY 沒有遲滯：條件一消失，下一次評估就回到 ACTIVE 或 IDLE。
 
-### 各模式的 timeout 與 elapsed（預設值）
+#### hmm 在場模型
 
-| 模式＼path | present | empty | uncertain |
+![hmm 狀態機](img/state_hmm.png)
+
+```mermaid
+stateDiagram-v2
+  [*] --> ENDED
+  ENDED --> ACTIVE: 開始 session（同 rules）
+  ACTIVE --> IDLE: P_g ≥ p_maybe 且靜默 ≥ 3 s
+  IDLE --> ACTIVE: P_g ≥ p_maybe 且靜默 ＜ 3 s
+  ACTIVE --> MAYBE_AWAY: P_g ＜ p_maybe（0.6）
+  IDLE --> MAYBE_AWAY: P_g ＜ p_maybe
+  MAYBE_AWAY --> ACTIVE: P_g ≥ p_active（0.8）且靜默 ＜ 3 s
+  MAYBE_AWAY --> IDLE: P_g ≥ p_active 且靜默 ≥ 3 s
+  ACTIVE --> AWAY: P_g ＜ p_away（0.3）持續 1 s，或 vision 的靜默上限
+  IDLE --> AWAY: 同上
+  MAYBE_AWAY --> AWAY: 同上
+  AWAY --> ACTIVE: P_ret ≥ p_active（vision：P_ret＝P_影像；其他：P_g）
+  AWAY --> ENDED: 在 AWAY ≥ end_after_away（5 s）
+  ACTIVE --> ACTIVE: NEW_GROUP → 新 session
+```
+
+- 0.6 和 0.8 之間是遲滯區：進入 MAYBE_AWAY 之後，要回到 0.8 以上才算恢復。
+- vision 模式下，`present_max_silence > 0` 而且靜默達到上限時會直接進入 AWAY。
+- **進入 ENDED**：清空所有 track 和 embedding。下一個 session 的編號 +1，計時全部重設。
+
+### 2.8 自適應 fps 和輸出
+
+- **建議 fps**（`adaptive_fps`=開，只在處理完一張幀後計算）：
+  - 回傳 `fps_high`（2）的情況：MAYBE_AWAY 或 AWAY；3 s 內 track 組合有變；有候選人（visible 但不是參與者）；有參與者暫時看不到。
+  - 其他情況回傳 `fps_low`（0.5）。
+  - 瀏覽器在開啟自適應 fps 而且有建議值時照建議送幀，否則用自己的 `fps`（1）。
+- **輸出 JSON**（每張幀處理完和每 0.5 s 的 tick 都會送）：
+  - `state`、`session`、`speaking`、`silence`、`path`、`present`、`empty`、`timeout`、`elapsed`、`in_state`；
+  - `face_roi`、`pose_roi`；
+  - `tracks[]`：`id`、`bbox`、`participant`、`role`、`visible`、`visible_kind`、`vis_conf`、`similarity`、`p`、`intent`、`intent_cues`、`dwell_seconds`、`velocity`、`body`、`keypoints`、`facing`、`distance`、`trend`、`zone`；
+  - `p_group`、`p_tracks`、`away_cue`、事件 `log`（最近 30 筆）；
+  - 這一幀的 `detections`、建議 fps、`config`。
+  
+  embedding **不會**輸出。
+
+---
+
+## 3. priority_mode 對各層的影響
+
+| 影響的地方 | vision（預設） | balanced | audio |
 |---|---|---|---|
-| **vision** | timeout=`present_max_silence`（0 = 關）→ **不會因靜默離開**；開啟時 elapsed=靜默 | timeout=`empty_timeout` 5 s，elapsed=已經空了多久（**不管聲音**）→ 2.5 s MAYBE、5 s AWAY | base 20 s、elapsed=靜默 → 10 s MAYBE、20 s AWAY |
-| **balanced** | `present_timeout` 15 s、靜默 → 7.5 / 15 s | `empty_timeout` 5 s、elapsed=min(靜默, 空的時間) → 2.5 / 5 s | base 20 s、靜默 → 10 / 20 s |
-| **audio** | 1.5×base = 30 s、靜默 → 15 / 30 s | 0.5×base = 10 s、靜默 → 5 / 10 s | 1.0×base = 20 s、靜默 → 10 / 20 s（下限 1 s） |
+| 說話能否開始 session | 不能 | 能 | 能 |
+| `speech_join=auto` | off | single_candidate | single_candidate |
+| 意圖的說話線索權重 | 0.05 | 0.15 | 0.25 |
+| rules：有人在場時 | 不會因靜默離開 | 靜默 15 s 進入 AWAY | 靜默 30 s 進入 AWAY |
+| rules：ROI 空時 | 空 5 s 進入 AWAY，不管聲音 | min(靜默, 空的時間) 達 5 s | 靜默 10 s |
+| rules：不確定時 | 靜默 20 s | 靜默 20 s | 靜默 20 s |
+| 從 AWAY 回來 | 只有 present／$P_\text{影像}$ | present 或說話／$P_g$ | 同 balanced |
+| hmm 聲音偏移 $A$ | 說話 +0.25，靜默 0 | 說話 +4.0，靜默最低 −4.8 | 說話 +5.0，靜默最低 −6.0 |
+| hmm 完全沒有 track 時的 $P$ | 0.02 | 0.5 | 0.5 |
+| `present_max_silence` 靜默上限 | 有效 | 不使用 | 不使用 |
 
-### 其他規則
+---
 
-- **轉身提早 MAYBE_AWAY**（`turned_away_early`=開）：
-  - 所有可見而且不是 far 的參與者都滿足：facing 是 side 或 away，**而且** trend 是 receding。
-  - 條件成立時開始計時並記錄 `turned_away` 事件；條件一不成立就重設計時。
-  - 只能進到 MAYBE_AWAY；真正的 AWAY 仍然由 timeout 決定。
-  - facing 判定：
-    - 分數 = 0.35（有鼻子）+ 0.25（兩眼都有）+ 0.2（左肩在畫面右側）+ 0.2×min(1, 肩寬／軀幹高 ÷ 0.6)；
-    - ≥ 0.6 是 facing，≥ 0.3 是 side，其他是 away；
-    - 只有臉、沒有身體時當作 facing。
-- **從 AWAY 恢復**：
-  - vision 模式 → **只有 `present` 才算回來**；單靠說話永遠不會恢復（包括 path 是 uncertain 時）。
-  - balanced、audio → `speaking or present`。
-- **ENDED**：
-  - 進入時清空所有 track 和 embedding，設 `present=False`、`empty=True`。
-  - 重新開始（`_start`）：
-    - `update()`：ROI 內有**有信心而且不是 far** 的人（任何模式；far 用這一幀的距離估計判斷）；或在 balanced／audio 模式下正在說話。
-    - `set_speech(True)`：只在 balanced／audio 模式。
-  - 重新開始時 session +1，所有狀態重設：`empty=True`、`empty_since=now`、`last_speech=now`。
+## 4. 模式矩陣與建議預設
 
-### 6b. 在場機率模式（`presence_model=hmm`，`_hmm_update`／`_evaluate_hmm`）
+三個獨立的開關可以任意組合（2 × 2 × 2 = 8 種）。下表的時間是 vision、2 fps、預設參數、人在 t=0 離開時的模擬結果（§5）：
 
-預設是上面的 rules。hmm 模式下，第 4 節的計數和本節的逾時表都不使用：
+| `tracker_mode` | `presence_model` | `intent_model` | 開始 session | 離開 → AWAY | 遮擋 3 s | 擋住看不到臉時的身分 | 路人 |
+|---|---|---|---|---|---|---|---|
+| legacy | rules | rules | 第一張幀 | 5.0 s | 進入 MAYBE_AWAY | 只靠 IoU／身體 | 待 2 s 就加入 |
+| kalman | rules | rules | 第一張幀 | 6.0 s | 不受影響 | 預測 + 外觀 | 待 2 s 就加入 |
+| legacy | hmm | rules | 第一張幀 | 5.0 s | 不受影響 | 只靠 IoU／身體 | 待 2 s 就加入 |
+| kalman | hmm | rules | 第一張幀 | 約 5.5 s | 不受影響 | 預測 + 外觀 | 待 2 s 就加入 |
+| * | * | score | 意圖達標 2 s 後 | 同上 | 同上 | 同上 | **不會加入，也不會開始 session** |
 
-- 每個 track 存一個對數勝算 L，每張幀加上 `rate × dt`，並限制在 P = 0.02–0.98 之間。rate 的來源：
-  - 偵測到：`+detect_gain × conf`；
-  - 預測中：較弱；
-  - 低信心幀：接近中立；
-  - 沒看到：每 `leave_halflife` 秒勝算減半；
-  - 轉身＋遠離、超出距離：往「離開」推。
-- 群組 P = sigmoid(參與者最大 L + 聲音證據 A)。A 的權重依 priority_mode：vision 幾乎是 0，balanced 中等，audio 最高。
-- 狀態判斷：
-  - P < `p_away` 持續 `away_hold_seconds` → AWAY；
-  - P < `p_maybe`（或已經在 MAYBE_AWAY 且 P < `p_active`）→ MAYBE_AWAY；
-  - 否則依靜默時間 → ACTIVE／IDLE。
-- AWAY 時 P ≥ `p_active` → ACTIVE（vision 只看影像的 P）；AWAY 持續 `end_after_away` → ENDED。
-- NEW_GROUP：舊參與者的 P 都 < `p_away`，而且新候選人的 P ≥ `p_active`。
-- 加入規則不變。
+- **目前程式的預設**：`legacy + rules + rules`，priority `vision`（相容舊版行為）。
+- **建議的目標預設**：**`kalman + hmm + score`，priority `vision`**：
+  - 短暫遮擋（≤ 3 s）不會誤判離開；看不到臉時可以靠預測和外觀維持身分；
+  - 路人和旁觀者不會開始或撐住對話；
+  - 離開判定約 5–5.5 s，和舊預設差不多；
+  - 額外成本 < 0.5 ms／幀（見 §6）。
+  
+  代價是開始 session 要等意圖達標 2 s（rules 是第一張幀就開始）。真正改成預設之前，請先在實際場景用網頁切換觀察意圖分數的分布。
+- `pose_enabled` 在 kalman 模式下可以提高「只看得到身體」時的身分維持，但每次完整偵測多約 6 ms（box）。
 
-詳細說明見 [PRESENCE_MODEL.md](PRESENCE_MODEL.md)。
+---
 
-## 7. NEW_GROUP（`_check_new_group`，只在不是 ENDED 時檢查）
+## 5. 時間表：各種事件需要多久
 
-- 條件：
-  - 舊群組消失：有參與者，沒有任何參與者 visible 且不是 far，**而且有確定的證據**（這一幀有有信心的 detection，或 ROI 已確認是空的）。只有低信心的幀不算舊群組消失。
-  - **而且**有 newcomer：不是參與者、visible、**不是 far**，而且 `now − in_roi_since ≥ join_seconds`（2 s）。
-- 條件第一次成立時開始計時 `_newgroup_since`；條件中斷就重設。
-- 持續 `≥ new_group_seconds`（3 s）時：
-  1. 記錄 `NEW_GROUP` 事件；
-  2. 結束目前 session（清空 track）並開始新的 session（ACTIVE）；
-  3. 把 newcomer 保留成新的參與者（保留原本的 id 和 embedding），設 `present=True`。
-- 計時期間 newcomer 不能加入成參與者。所以從新的人出現算起，最快大約 2 + 3 = 5 s 換組。
-- 換組只看身分（embedding）比對失敗。舊參與者回來時，只要能比對回原本的 track，計時就會中斷。
+以下時間是用注入時鐘的模擬求得：預設參數、每 0.5 s 一張幀（2 fps）、ticker 每 0.5 s，一個正面靜止的人（conf 0.9）。實際時間還要加上偵測延遲（約 15–25 ms），以及「事件發生到下一張幀」的等待（≤ 1/fps；穩定時 fps_low 是 0.5，所以最多 2 s）。移動閘門沿用舊結果時，最多可能晚 `force_detect_seconds`（3 s）才發現。
 
-## 8. 自適應 fps（`recommend_fps`，`adaptive_fps`=開）
+| 事件 | legacy+rules | kalman+rules | legacy+hmm | kalman+hmm+score |
+|---|---|---|---|---|
+| ENDED → ACTIVE（人出現） | 0 s（第一張幀） | 0 s | 0 s | 2.0 s（意圖達標） |
+| 成為參與者 | 2.0 s | 2.0 s | 2.0 s | 2.0 s |
+| 離開 → MAYBE_AWAY（vision） | 2.5 s | 3.5 s | 3.0 s | 3.5 s |
+| 離開 → AWAY（vision） | 5.0 s | 6.0 s | 5.0 s | 5.5 s |
+| 離開 → ENDED（vision） | 10.0 s | 11.0 s | 10.0 s | 10.5 s |
+| 遮擋不影響狀態的最長時間 | 2 s（3 s 就 MAYBE） | 3 s | 3 s | 3 s |
+| 遮擋後仍在同一個 session 的最長時間 | 約 8 s | 約 10 s | 約 8 s | 約 8 s |
+| NEW_GROUP（A 離開的同時 B 出現） | 5.0 s（2 + 3） | 5.0 s | 7.0 s（約 4.1 + 3） | 7.5 s |
 
-- 只在處理完一張幀後計算，ticker 不會計算。
-- 回傳 `fps_high`（2）的情況（任一）：
-  - 狀態是 MAYBE_AWAY 或 AWAY；
-  - 3 s 內 track 組合有變（id、participant、visible 的簽章改變）；
-  - 有候選人（visible 但不是參與者）；
-  - 有參與者暫時不可見（還在 grace 期間）。
-- 其他情況回傳 `fps_low`（0.5），包括 ENDED、ACTIVE、IDLE 穩定時。
-- 瀏覽器在 `adaptive_fps` 開啟而且建議值 > 0 時採用建議值；否則使用自己的 `fps`（1）。
+**有人在場但一直沉默**（在 t=0 停止說話）：
 
-## 精簡判斷流程
+| priority | rules | hmm |
+|---|---|---|
+| vision | 不會離開（3 s 後變 IDLE） | 不會離開 |
+| balanced | 7.5 s MAYBE，15 s AWAY，**之後在 AWAY 和 ACTIVE 之間來回跳**（見 §7 第 1 點） | 約 14.5 s MAYBE，約 20.5 s AWAY，約 25.5 s ENDED，接著因為人還在而立刻開始新的 session |
+| audio | 15 s MAYBE，30 s AWAY，之後同樣來回跳 | 約 11.5 s MAYBE，約 16.5 s AWAY，約 21.5 s ENDED，接著重新開始 |
 
-```
-每幀: 解碼 → [閘門: 靜止&穩定&<3s → 沿用] → 裁切縮小 → YuNet → SFace(可重用) → [姿勢→配對]
-     → ROI 規則篩選 → 有信心才追蹤（臉 0.6／只有身體 0.4） → 比對/新建/加入/移除(grace 15s)
-     → present(連續2) / empty(連續3) / uncertain(低信心)
-     → NEW_GROUP 檢查 → _evaluate
-_evaluate: ENDED? 跳過
-         AWAY? 回來→ACTIVE；滿 5s→ENDED
-         elapsed≥timeout → AWAY
-         轉身+遠離≥2s 且沒說話 → MAYBE_AWAY
-         elapsed≥0.5×timeout → MAYBE_AWAY
-         靜默<3s → ACTIVE，否則 IDLE
-```
+**其他時間**：
 
-## v0.4.1 已修正
+- hmm 從 $P=0.98$（L = 3.89）開始衰減：降到 0.6 要 $(3.89-0.41)/1.155\approx3.0$ s；降到 0.3 要約 4.1 s，再加上確認 1 s → 約 5.1 s。
+- score 模式降為旁觀者：在看得到的情況下意圖 $<0.35$ 持續 8 s。
+- 轉身＋遠離（rules）：持續 2 s → MAYBE_AWAY。
+- track 被刪除：消失超過 15 s（`grace_seconds`）。不過在 vision 模式下，session 通常在 10 s 時就已經 ENDED，track 會一起清掉。
 
-- `empty_since` 改成記錄第一張空幀的時間，不再假設 1 fps。
-- 只有身體的 detection 改用 `body_min_conf`（0.4）。
-- far 的人不會從 ENDED 開始 session，也不會成為 NEW_GROUP 的 newcomer。
-- 說話立即加入改成 `speech_join`（vision 模式預設關閉）。
-- vision 模式下，說話不會從 AWAY 恢復（包括 uncertain 時）。
-- `present_timeout` 的說明修正。
-- `_low_streak` 在新 session 時重設。
-- 只有低信心的幀不算「舊群組消失」。
-- snapshot 新增 `face_roi`、`pose_roi`（保留 `roi` 當作 `face_roi` 的別名）。
+---
 
-## 目前已知的限制
+## 6. 效能、隱私與授權
 
-（下列是 legacy 預設模式下的限制；kalman 模式另外有約 1 s 的離開判定延遲，見 TRACKING.md。）
+### 效能（box：Intel Xeon 8 vCPU，x86，**不是 Kebbi**；詳見 [PERFORMANCE.md](PERFORMANCE.md)）
 
-1. **`present_timeout`（15 s）比 `base_timeout`（20 s）短**：這是使用者選定的預設值。在 balanced 模式下，有人在場時反而比影像不確定時更快判定離開，和 audio 模式（有人時 ×1.5）方向相反。需要時請調高。
-2. **新 session 一開始的 path 是 empty**：`present_frames`=2 要第二張幀才會變成 present。
-   - vision 模式下，第一張和第二張幀之間會用 `empty_timeout` 計時。
-   - 幀間隔大於 2.5 s 時（例如網路很慢），可能短暫進入 MAYBE_AWAY。
-3. **第 6 步的排除條件幾乎不會生效**：「vision 而且 present 而且靜默 < idle_after」只有在 `present_max_silence > 0`，而且它的一半小於 3 s 時才有作用。
-4. **連續低信心時，參與者在畫面上顯示為不可見**：建議 fps 會變成 high。不過已經不會因此觸發 NEW_GROUP 或阻擋加入。
-5. **移動閘門沿用的結果仍然更新 `last_seen`**：如果人離開的動作很小（diff < 0.015），最多要等到下一次強制偵測（≤ `force_detect_seconds` 3 s）才會發現。
-6. **轉身提早只看參與者**：沒有參與者時（例如還在 join 期間），不會觸發轉身提早。
-7. **`single_candidate` 仍然無法確認是誰在說話**：只是把風險降到「只有一個人可能是說話者」的情況。
+| 項目 | p50 |
+|---|---|
+| JPEG 解碼 640×480 | 0.6 ms |
+| 移動閘門 | 0.2 ms |
+| YuNet（裁切縮小後） | 2.4 ms |
+| SFace fp32／int8 ONNX／fp16 TFLite（整條管線中的 embed） | 10.5／12.2／3.6 ms |
+| MoveNet MultiPose（開啟時） | 約 6 ms |
+| 外觀 + kalman + hmm + score（所有決策層） | < 0.5 ms |
+| 整幀（legacy+rules+rules，640×480，沒開姿勢） | 13.7 ms |
+| WebSocket 端到端（沒開姿勢／有開姿勢） | 17–18／約 25 ms |
+| 靜止或空畫面（移動閘門跳過） | < 1 ms（跳過率 83%） |
+
+四項省電最佳化（移動閘門、embedding 節流、ROI 裁切、自適應 fps）全部開啟時，60 秒情境的 CPU 時間減少約 71%。
+
+### 隱私
+
+- 畫面**只在記憶體中處理**：base64 JPEG → 解碼 → 偵測 → 丟掉。沒有任何 `imwrite`、暫存檔，也不會記錄畫面內容（`tests/test_privacy.py` 會檢查）。
+- embedding 和外觀直方圖只存在該連線的 tracker 記憶體中。進入 ENDED、停止、重設或斷線時都會清除，也不會出現在輸出 JSON 裡。
+- 伺服器 log 關閉 access log（token 在 query string 裡），只記錄啟動和模型相關的訊息。
+- 評估和 INT8 校正用的 CC0 人像只在記憶體中處理，不存檔。
+
+### 授權（詳見 [LICENSES.md](LICENSES.md)）
+
+| 元件 | 授權 | 商用 |
+|---|---|---|
+| YuNet | MIT | ⚠️ 大致可以（用 WIDER FACE 訓練，資料集條款不明） |
+| SFace fp32／int8／TFLite | Apache-2.0 | ⚠️ **高風險**：訓練資料可能是限非商業研究的名人資料集；而且屬於生物特徵資料 |
+| MoveNet MultiPose Lightning | Apache-2.0 | ✅ |
+| Kalman、Hungarian、HSV 外觀、意圖、在場（本專案程式碼） | 本專案 | ✅ 不含模型權重 |
+| NeuroPilot delegate | 專有授權，條款未確認 | ❓ |
+| Python 套件（OpenCV、LiteRT、FastAPI 等） | Apache／MIT／BSD 等 | ✅（OpenCV wheel 附帶的 FFmpeg 是 LGPL） |
+
+---
+
+## 7. 已知限制與尚未在實機驗證的項目
+
+### 演算法行為
+
+1. **balanced／audio + rules 模式下，在場但沉默的人會讓狀態在 AWAY 和 ACTIVE 之間來回跳**：
+   - 靜默達到 timeout（balanced 15 s、audio 30 s）就進入 AWAY；
+   - 但在這兩個模式下 `returned = speaking or present`，人還在畫面裡，所以下一次評估（約 0.5 s 後）又回到 ACTIVE；接著又因為靜默超過 timeout 再次進入 AWAY。
+   - 這會持續到有人說話或離開，而且永遠不會進入 ENDED。
+   - vision 模式和 hmm 模型沒有這個問題。hmm 在這兩個模式下會走 AWAY → ENDED，然後因為人還在，立刻開始新的 session。
+   - 需要修正，例如在 AWAY 時只有「新的證據」才算回來。程式碼這次沒有改。
+2. **balanced 模式下 `present_timeout`（15 s）比 `base_timeout`（20 s）短**：有人在場時反而比影像不確定時更快離開，和 audio 模式（有人時 ×1.5）方向相反。
+3. **移動閘門沿用的結果仍然算「有偵測到」**：人離開時的動作很小（$\Delta<0.015$）的話，最多要等 3 s 的強制偵測才會發現。hmm 的 $L$ 在這段時間也會維持在高點。
+4. **hmm 只在收到幀時積分**：fps 很低或網路中斷時，$P$ 不會下降，狀態會停在最後的判斷。
+5. **聲音沒辦法分辨是誰在說話**：`single_candidate` 和說話線索只是把風險限制在「只有一個人可能是說話者」的情況。電視等背景聲在 balanced／audio 模式下可能撐住對話。
+6. **新 session 的第一張幀 path 是 empty**（`present_frames`=2）：vision + rules 模式下，第一張和第二張幀之間會用 `empty_timeout` 計時；幀間隔很長時可能短暫進入 MAYBE_AWAY。
+7. **轉身提早只看參與者**，而且只在 rules 模式使用；hmm 模式把轉身當成負證據。
+8. **嵌入後端是整個行程共用的**：兩個連線設定不同的 `embed_backend` 時，每一幀都會切換後端（功能正確，但會互相影響效能）。embedding 節流的 `self_sim` 門檻固定用 `cos_match`，不會因為量化後端改用 `cos_match_int8`（預設值兩者相同，所以目前沒有影響）。
+9. **距離估計**用的是平均臉寬和肩寬，沒有校正時誤差可能很大（沒有量測過），而且小孩的臉比較小，會被估得比較遠。
+
+### 只在 box 上驗證過、需要在實機（Kebbi，MTK Helio G520）測試的項目
+
+- **延遲**：所有延遲數字都是 x86 Xeon 量到的。ARM 上預估慢好幾倍，必須在實機上重新量測（方法見 [NPU.md](NPU.md)、[PERFORMANCE.md](PERFORMANCE.md)）。
+- **NPU**：NNAPI／NeuroPilot delegate 能不能載入、哪些運算子會交給 NPU 執行、int8 在 NPU 上的精度和速度，都**還沒驗證**。box 上只驗證了 LiteRT CPU 和「delegate 載入失敗就退回 CPU」的流程。
+- **鏡頭和環境**：機器人的鏡頭高度、視角（`camera_hfov`）、低光和逆光、實際對話距離下的人臉大小（YuNet README 說約 10 px 起就能偵測；但在 box 的縮放測試中，臉高約 30 px 以下就偵測不到，而且裁切後會縮到寬 320，遠處的臉會更小），都需要用實機鏡頭重新調整。
+- **使用情境**：意圖分數的權重和門檻是依照合成資料和 CC0 照片設定的，還沒有用真人互動資料驗證。
+- **前端**：目前前端是瀏覽器（getUserMedia 和 Web Audio VAD），Android 上的相機和 VAD 行為需要另外驗證。

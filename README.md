@@ -72,7 +72,7 @@ docs/            文件
 ## 文件
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)：架構、資料流、狀態機
-- [docs/ALGORITHM.md](docs/ALGORITHM.md)：依程式碼整理的完整偵測邏輯（條件、預設值、已知限制）
+- [docs/ALGORITHM.md](docs/ALGORITHM.md)：演算法架構總文件（資料流、各層公式與預設值、模式矩陣、時間表、已知限制）
 - [docs/CONFIGURATION.md](docs/CONFIGURATION.md)：所有參數、範圍、預設值、預設組合
 - [docs/TUNING.md](docs/TUNING.md)：調參方法
 - [docs/TRACKING.md](docs/TRACKING.md)：追蹤模式比較（legacy 與 kalman）
