@@ -53,20 +53,28 @@
     </header>
     <div class="presence-workbench">
       <div class="workbench-main presence-stack">
-        <section class="panel monitor-stage" id="stage" aria-label="監看：影像與音訊">
+        <section class="panel monitor-stage" id="stage" data-view="both" aria-label="監看：影像與音訊">
           <div id="view"><video id="v" autoplay muted playsinline></video><canvas id="c"></canvas>
             <div id="placeholder"><strong>按「開始」開啟鏡頭與麥克風</strong><small>需 HTTPS 或 localhost</small></div>
             <div id="cap" class="caption" aria-live="polite" hidden><span id="capTxt"></span></div></div>
-          <div class="sig-pair" aria-label="音訊：原始與輸出">
+          <div class="stage-bar">
+            <span class="stage-bar-title">音軌<small>上：原始 noisy・下：輸出 output・同一時間軸</small></span>
+            <div class="segmented" id="trkView" role="radiogroup" aria-label="音軌顯示">
+              <button type="button" role="radio" data-v="wave" aria-checked="false">波形</button>
+              <button type="button" role="radio" data-v="spec" aria-checked="false">頻譜</button>
+              <button type="button" role="radio" data-v="both" aria-checked="true" class="is-active">兩者</button>
+            </div>
+          </div>
+          <div class="sig-stack" id="sigStack" data-view="both" aria-label="音訊：原始與輸出">
           <div class="sig-group raw" id="grpRaw">
-            <p class="sig-head"><i class="sig-sw"></i>原始 noisy<span>瀏覽器麥克風，16 kHz</span></p>
-            <canvas id="wRaw" class="scope" style="width:100%;height:32px;display:block"></canvas>
-            <canvas id="sgRaw" class="scope" width="300" height="48" style="width:100%;height:48px;display:block"></canvas>
+            <p class="sig-head"><i class="sig-sw"></i>原始 noisy<span>麥克風 16 kHz</span></p>
+            <canvas id="wRaw" class="scope trk-wave"></canvas>
+            <canvas id="sgRaw" class="scope trk-spec" width="300" height="64"></canvas>
           </div>
           <div class="sig-group clean" id="grpClean">
-            <p class="sig-head"><i class="sig-sw"></i>輸出 output<span>PureSound 乾淨音軌</span></p>
-            <canvas id="wClean" class="scope" style="width:100%;height:32px;display:block"></canvas>
-            <canvas id="sgClean" class="scope" width="300" height="48" style="width:100%;height:48px;display:block"></canvas>
+            <p class="sig-head"><i class="sig-sw"></i>輸出 output<span>PureSound</span></p>
+            <canvas id="wClean" class="scope trk-wave"></canvas>
+            <canvas id="sgClean" class="scope trk-spec" width="300" height="64"></canvas>
           </div>
           </div>
         </section>
@@ -742,7 +750,13 @@ function meterPush(arr,pcm){let mx=0;for(let i=0;i<pcm.length;i+=4)mx=Math.max(m
 function wave(id,arr,col){const c=$(id),d=devicePixelRatio||1,r=c.getBoundingClientRect();if(!r.width)return;c.width=r.width*d;c.height=r.height*d;const x=c.getContext('2d'),W=c.width,H=c.height;
  x.fillStyle=col;arr.forEach((v,i)=>{const h=Math.max(1,Math.sqrt(v)*H);x.fillRect(i/250*W,(H-h)/2,Math.max(1,W/250),h)})}
 const db=a=>{const v=a.length?a[a.length-1]:0;return v>0?(20*Math.log10(v)).toFixed(0)+' dBFS':'—'};
-setInterval(()=>{if(!running)return;wave('wRaw',WR,K.viz_raw);wave('wClean',WC,aMeta&&aMeta.clean_vad?K.ok:K.viz_clean)},100);
+// 音軌顯示：波形／頻譜／兩者，存在 localStorage；隱藏的 canvas 不重畫
+const TRK_KEY='presence.trackView',TRK=['wave','spec','both'];let trkView=TRK.includes(localStorage.getItem(TRK_KEY))?localStorage.getItem(TRK_KEY):'both';
+const showWave=()=>trkView!=='spec',showSpec=()=>trkView!=='wave';
+function setTrkView(v){trkView=TRK.includes(v)?v:'both';localStorage.setItem(TRK_KEY,trkView);$('sigStack').dataset.view=trkView;$('stage').dataset.view=trkView;
+ $('trkView').querySelectorAll('button').forEach(b=>{const on=b.dataset.v===trkView;b.classList.toggle('is-active',on);b.setAttribute('aria-checked',on)});if(typeof fit==='function')fit()}
+$('trkView').addEventListener('click',e=>{const b=e.target.closest('button[data-v]');if(b)setTrkView(b.dataset.v)});setTrkView(trkView);
+setInterval(()=>{if(!running||!showWave())return;wave('wRaw',WR,K.viz_raw);wave('wClean',WC,aMeta&&aMeta.clean_vad?K.ok:K.viz_clean)},100);
 function monLat(){if(lastLat==null)return'—';const s=[...LATS].sort((x,y)=>x-y),p=q=>s[Math.min(s.length-1,Math.floor(q*s.length))];
  const buf=pst?pst.buf_ms:0,tot=20+aMeta.algo_latency_ms+p(0.5)+buf+outLat();
  return `約 ${tot.toFixed(0)} ms ＝ 擷取 20 + 演算法 ${aMeta.algo_latency_ms} + 往返 ${p(0.5).toFixed(0)}（p95 ${p(0.95).toFixed(0)}）+ 緩衝 ${buf.toFixed(0)} + 輸出 ${outLat().toFixed(0)} ms`+(pst?` · 斷音 ${pst.under} 次 · 追趕丟棄 ${pst.drop_ms.toFixed(0)} ms`:'')+` · 伺服器佇列 ${aMeta.queue}（最多 ${aMeta.backlog_max??0}）`}
@@ -775,7 +789,7 @@ function drawTL(){const c=$('tl'),d=devicePixelRatio||1,r=c.getBoundingClientRec
 let anRaw=null,anClean=null;const SGB=new Uint8Array(128);
 function sg(id,an){if(!an)return;const c=$(id),g=c.getContext('2d');const img=g.getImageData(1,0,c.width-1,c.height);g.putImageData(img,0,0);an.getByteFrequencyData(SGB);
  for(let y=0;y<c.height;y++){const v=SGB[Math.floor((1-y/c.height)*SGB.length*0.5)];g.fillStyle=`hsl(${240-v*0.9},80%,${v/5.5}%)`;g.fillRect(c.width-1,y,1,1)}}
-setInterval(()=>{if(!running)return;sg('sgRaw',anRaw);sg('sgClean',anClean);drawTL()},100);
+setInterval(()=>{if(!running)return;if(showSpec()){sg('sgRaw',anRaw);sg('sgClean',anClean)}drawTL()},100);
 const ASR=[];
 // 影像字幕：單行、逐字更新（partial 原地覆寫）、新句淡入、final 後停留再淡出。放在 canvas 外，不受鏡像影響
 const CAP_HOLD_MS=2500;let capTimer=null,capKey=null;

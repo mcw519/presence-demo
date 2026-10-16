@@ -54,7 +54,7 @@ Checksums of the unmodified upstream files are pinned in `tests/test_design_toke
 | Audio signals | `.sig-group.raw` / `.sig-group.clean` (waveform + spectrogram) | One bundle per signal; mint / periwinkle edge |
 | ROI editor | `.segmented#roiPick` (臉部 / 身體 / 鎖定) + drag on `#view canvas` | Face cyan dashed, body purple dotted; only the selected ROI is draggable |
 | Live caption | `#view > .caption` (`.is-in` fade, `.is-final` white; `--nav` 78 % backing, `--on-nav` text) | Single bottom line over the camera, never mirrored |
-| Monitor stage | `section.panel.monitor-stage` = `#view` (+ `.caption`) + `.sig-pair` (raw / output bundles) on `--nav` | One dark frame, tracks attached under the video, width from `100vh` so it fits a laptop screen |
+| Monitor stage | `section.panel.monitor-stage` = `#view` (+ `.caption`) + `.stage-bar` (`.segmented#trkView` 波形／頻譜／兩者) + `.sig-stack` (raw on top, output below, full width) on `--nav` | One dark frame; shared time axis; per-view track heights (`data-view`) and width from `100vh` so every view fits a laptop screen |
 | Layout | Left column: monitor stage, then ROI card, then monitor/record/timeline card; right column: state, ASR, P(group), countdowns | |
 | Monitor off/raw/clean | `.segmented` `[role=radiogroup]` `.is-active` | |
 | Live camera chip | `.chip.is-live` | Accent border + pulse |
