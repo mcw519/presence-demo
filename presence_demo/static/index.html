@@ -475,7 +475,7 @@ function connect(){ws=new WebSocket((location.protocol==='https:'?'wss://':'ws:/
 // ---------- render ----------
 const STATES=['ACTIVE','IDLE','MAYBE_AWAY','AWAY','ENDED'];
 const STZH={ACTIVE:'對話中',IDLE:'閒置',MAYBE_AWAY:'可能離開',AWAY:'離開',ENDED:'結束'};
-$('sm').innerHTML=STATES.map((x,i)=>`${i?`<i class="fsm-edge" id="se_${i}"></i>`:''}<div class="fsm-node" id="st_${x}" data-s="${x}"><b></b><span>${x.replace('_',' ')}</span><small>${STZH[x]}</small></div>`).join('');
+$('sm').innerHTML=STATES.map((x,i)=>`<div class="fsm-node" id="st_${x}" data-s="${x}">${i?`<i class="fsm-edge" id="se_${i}"></i>`:''}<b></b><span>${x.replace('_',' ')}</span><small>${STZH[x]}</small></div>`).join('');
 // 軸上節點：目前狀態高亮，最近一次轉換的來源節點與經過的線段標示出來
 function renderFsm(s){const trs=s.log.filter(e=>e.event==='transition'),tr=trs[trs.length-1];
  const a=tr?STATES.indexOf(tr.frm):-1,b=STATES.indexOf(s.state);

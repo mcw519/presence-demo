@@ -7,7 +7,7 @@
   --viz-raw:var(--mint);--viz-clean:var(--periwinkle);--viz-grid:var(--nav-line);
   --viz-empty:var(--nav-3);--viz-ink:var(--on-nav-2);--violet:var(--magenta);
   --bg:var(--page);--card:var(--canvas);--card2:var(--sunken);--txt:var(--ink);
-  --mut:var(--ink-2);--acc:var(--accent);--line:var(--line);
+  --mut:var(--ink-2);--acc:var(--accent);
 }
 :root[data-theme=dark]{--on-status:#0d0e20}
 @media (prefers-color-scheme:dark){:root:not([data-theme=light]){--on-status:#0d0e20}}
@@ -133,18 +133,18 @@
 
 /* v0.10.4 State machine: nodes on an axis + recent transitions. */
 .fsm-axis{display:flex;align-items:flex-start;padding:4px 0 2px}
-.fsm-node{flex:0 0 auto;display:grid;justify-items:center;gap:2px;width:56px;text-align:center;color:var(--ink-2)}
-.fsm-node b{width:14px;height:14px;border-radius:50%;border:2px solid var(--line);background:var(--canvas);transition:all .2s}
+.fsm-node{flex:1 1 0;min-width:0;position:relative;display:flex;flex-direction:column;align-items:center;gap:2px;text-align:center;color:var(--ink-2)}
+.fsm-node b{position:relative;z-index:1;display:block;box-sizing:border-box;width:14px;height:14px;border-radius:50%;border:2px solid var(--line);background:var(--canvas)}
 .fsm-node span{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.02em}
 .fsm-node small{font-size:10.5px;color:var(--ink-2)}
-.fsm-edge{flex:1 1 auto;height:2px;margin-top:7px;background:var(--line);position:relative}
+.fsm-edge{position:absolute;left:calc(-50% + 9px);right:calc(50% + 9px);top:6px;height:2px;background:var(--line)}
 .fsm-edge.is-path{background:var(--accent)}
 .fsm-edge.is-path::after{content:"";position:absolute;right:-1px;top:-4px;border:5px solid transparent;border-left-color:var(--accent);border-right:0}
 .fsm-edge.is-path.back::after{right:auto;left:-1px;border-left:0;border-right:5px solid var(--accent)}
 .fsm-node.is-from b{border-color:var(--accent);border-style:dashed}
 .fsm-node.is-current{color:var(--ink)}
 .fsm-node.is-current span{font-weight:600}
-.fsm-node.is-current b{width:18px;height:18px;margin-top:-2px;border-color:transparent;box-shadow:0 0 0 4px color-mix(in srgb,currentColor 18%,transparent)}
+.fsm-node.is-current b{width:18px;height:18px;margin:-2px 0;border-color:transparent;box-shadow:0 0 0 4px color-mix(in srgb,currentColor 18%,transparent)}
 .fsm-node.ACTIVE.is-current b{background:var(--ok)}.fsm-node.IDLE.is-current b{background:var(--idle)}
 .fsm-node.MAYBE_AWAY.is-current b{background:var(--warn)}.fsm-node.AWAY.is-current b{background:var(--bad)}
 .fsm-node.ENDED.is-current b{background:var(--end)}
