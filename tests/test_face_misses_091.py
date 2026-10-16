@@ -56,7 +56,7 @@ def test_roi_uses_raw_camera_coordinates(pipe):
 def test_ui_sends_unmirrored_frames_and_raw_roi():
     html = (Path(__file__).parents[1] / "presence_demo" / "static" / "index.html").read_text(encoding="utf-8")
     assert "og.drawImage(v,0,0,off.width,off.height)" in html  # mirroring is CSS only, never in the sent frame
-    assert "mx=x=>MIR()?1-x:x" in html and "return[mx((e.clientX-r.left)/r.width)" in html  # pointer -> raw x
+    assert "mx=x=>MIR()?1-x:x" in html and "C(mx((e.clientX-r.left)/r.width))" in html  # pointer -> raw x
     assert "mbox=b=>MIR()?[1-b[2],b[1],1-b[0],b[3]" in html  # raw ROI -> mirrored drawing
 
 

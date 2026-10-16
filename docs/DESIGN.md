@@ -50,7 +50,9 @@ Checksums of the unmodified upstream files are pinned in `tests/test_design_toke
 | Ghost / icon close | `.button.button-ghost.button-icon.button-small` | |
 | Camera / status / audio cards | `.panel.panel-pad` + `.panel-title` > `h2` + `.panel-help` | Not custom `.card` + uppercase `h3` |
 | Speaking / silence / ROI / session | `.metric-row` > `.metric` > `span` + `strong` | Playground result metrics |
-| State machine | `.segmented.sm` with `.cur.ACTIVE…` | Semantic fill on the active segment |
+| State machine | `.fsm-axis` > `.fsm-node` + `.fsm-edge`; `.fsm-hist` > `.fsm-tr` (app.css) | Nodes on an axis; current node filled with its state colour, last transition's source dashed and path in accent |
+| Audio signals | `.sig-group.raw` / `.sig-group.clean` (waveform + spectrogram) | One bundle per signal; mint / periwinkle edge |
+| ROI editor | `.segmented#roiPick` (臉部 / 身體 / 鎖定) + drag on `#view canvas` | Face cyan dashed, body purple dotted; only the selected ROI is draggable |
 | Monitor off/raw/clean | `.segmented` `[role=radiogroup]` `.is-active` | |
 | Live camera chip | `.chip.is-live` | Accent border + pulse |
 | Recording indicator | `#recInd` (pill on `--bad-soft`) | |

@@ -41,12 +41,6 @@
 #placeholder small{color:var(--on-nav-2);font-family:var(--font-mono);font-size:var(--text-small)}
 
 /* State machine: segmented strip; current state filled with its semantic colour. */
-.sm.segmented{display:flex;width:100%;flex-wrap:wrap}
-.sm.segmented span,.sm.segmented button{flex:1;min-width:72px;pointer-events:none;font-family:var(--font-mono);font-size:11px}
-.sm .cur{color:var(--on-status)!important;background:var(--end)!important;box-shadow:none!important}
-.sm .cur.ACTIVE{background:var(--ok)!important}.sm .cur.IDLE{background:var(--idle)!important}
-.sm .cur.MAYBE_AWAY{background:var(--warn)!important}.sm .cur.AWAY{background:var(--bad)!important}
-.sm .cur.ENDED{background:var(--end)!important}
 
 /* Countdown bars (presence-specific). */
 .bar{margin:10px 0 0}.bar .lab{display:flex;justify-content:space-between;font-size:var(--text-small);color:var(--ink-2)}
@@ -136,3 +130,36 @@
 
 .mon-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 @media (max-width:759px){.presence-workbench{gap:12px}}
+
+/* v0.10.4 State machine: nodes on an axis + recent transitions. */
+.fsm-axis{display:flex;align-items:flex-start;padding:4px 0 2px}
+.fsm-node{flex:0 0 auto;display:grid;justify-items:center;gap:2px;width:56px;text-align:center;color:var(--ink-2)}
+.fsm-node b{width:14px;height:14px;border-radius:50%;border:2px solid var(--line);background:var(--canvas);transition:all .2s}
+.fsm-node span{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.02em}
+.fsm-node small{font-size:10.5px;color:var(--ink-2)}
+.fsm-edge{flex:1 1 auto;height:2px;margin-top:7px;background:var(--line);position:relative}
+.fsm-edge.is-path{background:var(--accent)}
+.fsm-edge.is-path::after{content:"";position:absolute;right:-1px;top:-4px;border:5px solid transparent;border-left-color:var(--accent);border-right:0}
+.fsm-edge.is-path.back::after{right:auto;left:-1px;border-left:0;border-right:5px solid var(--accent)}
+.fsm-node.is-from b{border-color:var(--accent);border-style:dashed}
+.fsm-node.is-current{color:var(--ink)}
+.fsm-node.is-current span{font-weight:600}
+.fsm-node.is-current b{width:18px;height:18px;margin-top:-2px;border-color:transparent;box-shadow:0 0 0 4px color-mix(in srgb,currentColor 18%,transparent)}
+.fsm-node.ACTIVE.is-current b{background:var(--ok)}.fsm-node.IDLE.is-current b{background:var(--idle)}
+.fsm-node.MAYBE_AWAY.is-current b{background:var(--warn)}.fsm-node.AWAY.is-current b{background:var(--bad)}
+.fsm-node.ENDED.is-current b{background:var(--end)}
+.fsm-hist{display:flex;flex-wrap:wrap;gap:4px 10px;margin-top:8px;padding-top:8px;border-top:1px dashed var(--line);font-size:var(--text-small);color:var(--ink-2);font-family:var(--font-mono)}
+.fsm-tr{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+.fsm-tr em{font-style:normal;opacity:.75}.fsm-tr small{display:none}
+.fsm-tr.is-last{color:var(--ink)}.fsm-tr.is-last small{display:inline;font-family:var(--font-sans);color:var(--ink-2)}
+.fsm-tr .dot{width:8px;height:8px;border-radius:50%;background:var(--end)}
+.fsm-tr .dot.ACTIVE{background:var(--ok)}.fsm-tr .dot.IDLE{background:var(--idle)}.fsm-tr .dot.MAYBE_AWAY{background:var(--warn)}.fsm-tr .dot.AWAY{background:var(--bad)}
+
+/* v0.10.4 Audio: one bundle (waveform + spectrogram) per signal. */
+.sig-group{display:grid;gap:4px;margin-top:10px;padding:8px;border:1px solid var(--line);border-left:3px solid var(--viz-raw);border-radius:var(--radius-control)}
+.sig-group.clean{border-left-color:var(--viz-clean)}
+.sig-head{display:flex;align-items:baseline;gap:6px;margin:0 0 2px;font-size:var(--text-ui);font-weight:600;color:var(--ink)}
+.sig-head span{font-weight:400;color:var(--ink-2);font-size:var(--text-small)}
+.sig-sw,.roi-sw{display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--viz-raw)}
+.sig-group.clean .sig-sw{background:var(--viz-clean)}
+.roi-sw{margin-right:5px}.roi-sw.face{background:#6fd3db}.roi-sw.body{background:#bdbbff}

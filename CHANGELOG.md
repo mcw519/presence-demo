@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.4 — 2026-10-16
+
+- **狀態機改成軸上的節點**：ACTIVE → IDLE → MAYBE AWAY → AWAY → ENDED 排成一條軸，目前狀態的節點高亮（狀態色），最近一次轉換的來源節點以虛線標示、經過的線段以強調色加箭頭（往回轉換箭頭反向）。軸下方列出最近 6 次轉換（時間、來源 → 目標，最後一筆附原因）。
+- **音軌依訊號分組**：「原始 noisy」一組＝波形＋頻譜，「輸出 output」一組＝波形＋頻譜，兩組分開並以 mint／periwinkle 色條區分；頻譜改為全寬。
+- **臉部與身體 ROI 都能直接在影像上拖曳設定**：相機上方新增「編輯 ROI：臉部／身體／鎖定」選擇與「重設此 ROI」。只有選中的 ROI 可拖曳（避免重疊時抓錯框）：框內拖曳移動、四角縮放、框外拖曳畫新框；正在編輯的身體 ROI 即使姿勢偵測關閉也會顯示並提示。鏡像顯示時座標一律換算回原始相機座標儲存（新增純函式 `roiMath` 與測試）。數字輸入仍保留在設定中。
+
 ## 0.10.3 — 2026-10-15
 
 - **真正貼齊 PureSound playground 的設計，不只是字體與色票。** HTML 改用 vendored 的 PureSound 元件 class（`.button` / `.button-primary` / `.panel.panel-pad` / `.panel-title` / `.metric` / `.segmented` / `.chip` / `.stat` / `.table` / `.toast` / `.toggle-row` / `.control` / `.range` / `.inspector` / `.eyebrow` / `.empty-state` / `.status-dot`），並載入完整的 `shell.css` 與 `screens-shared.css`。自訂樣式收到 `app.css`，只留相機、狀態機、倒數、scope 底色、追蹤名單、設定模組手風琴等 presence 專用佈局，不再重寫 button/panel/token。

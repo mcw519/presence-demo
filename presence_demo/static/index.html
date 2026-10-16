@@ -54,7 +54,17 @@
     <div class="presence-workbench">
       <div class="workbench-main presence-stack">
         <div class="panel panel-pad">
-          <div class="panel-title"><div><h2>相機</h2><p class="panel-help">青色虛線框是偵測範圍（ROI）：可拖曳移動，拉四個角調整大小。綠框＝參與者，黃框＝候選，灰框＝暫時看不到。<span id="pipe"></span></p></div></div>
+          <div class="panel-title"><div><h2>相機</h2><p class="panel-help">先選要編輯的 ROI（青色＝臉部、紫色＝身體），在畫面上拖曳框內移動、拉四個角調整大小，或在框外拖一個新框。綠框＝參與者，黃框＝候選，灰框＝暫時看不到。<span id="pipe"></span></p></div></div>
+          <div class="roi-edit" style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:10px">
+            <span class="quiet" style="font-size:var(--text-small)">編輯 ROI</span>
+            <div class="segmented" id="roiPick" role="radiogroup" aria-label="編輯 ROI">
+              <button type="button" role="radio" data-roi="face_roi" aria-checked="true" class="is-active"><i class="roi-sw face"></i>臉部</button>
+              <button type="button" role="radio" data-roi="pose_roi" aria-checked="false"><i class="roi-sw body"></i>身體</button>
+              <button type="button" role="radio" data-roi="" aria-checked="false">鎖定</button>
+            </div>
+            <button class="button button-ghost button-small" id="roiReset" type="button">重設此 ROI</button>
+            <span class="quiet" id="roiVal" style="font-size:var(--text-small);font-family:var(--font-mono)"></span>
+          </div>
           <div id="view"><video id="v" autoplay muted playsinline></video><canvas id="c"></canvas>
             <div id="placeholder"><strong>按「開始」開啟鏡頭與麥克風</strong><small>需 HTTPS 或 localhost</small></div></div>
         </div>
@@ -62,7 +72,8 @@
       <div class="presence-stack">
         <div class="panel panel-pad">
           <div class="panel-title"><div><h2>狀態機</h2><p class="panel-help" id="reason">—</p></div></div>
-          <div class="segmented sm" id="sm" role="group" aria-label="狀態"></div>
+          <div class="fsm-axis" id="sm" role="group" aria-label="狀態"></div>
+          <div class="fsm-hist" id="smHist" aria-label="最近的狀態轉換"></div>
           <div class="metric-row" style="margin-top:12px">
             <div class="metric"><span>說話</span><strong id="spk">—</strong></div>
             <div class="metric"><span>靜默</span><strong id="sil">0s</strong></div>
@@ -84,12 +95,16 @@
           </div>
           <p class="toggle-hint" id="recSt">選用・預設關閉：三軌 raw / vi / out 只存在瀏覽器記憶體，停止後下載到你的電腦，伺服器不存任何聲音。需要 PureSound 管線。最長 10 分鐘。</p>
           <p class="form-note is-error" style="min-height:0">⚠ 監聽請戴耳機，否則喇叭聲音會被麥克風收進去（回授）。每次開啟頁面都是靜音。</p>
-          <p class="scope-label">原始（瀏覽器麥克風，16 kHz）</p>
-          <canvas id="wRaw" class="scope" style="width:100%;height:40px;display:block"></canvas>
-          <p class="scope-label">乾淨（PureSound 輸出）</p>
-          <canvas id="wClean" class="scope" style="width:100%;height:40px;display:block"></canvas>
-          <p class="scope-label">頻譜（原始 / 乾淨）</p>
-          <div style="display:flex;gap:4px"><canvas id="sgRaw" class="scope" width="250" height="64" style="width:50%;height:64px"></canvas><canvas id="sgClean" class="scope" width="250" height="64" style="width:50%;height:64px"></canvas></div>
+          <div class="sig-group raw" id="grpRaw">
+            <p class="sig-head"><i class="sig-sw"></i>原始 noisy<span>瀏覽器麥克風，16 kHz</span></p>
+            <canvas id="wRaw" class="scope" style="width:100%;height:40px;display:block"></canvas>
+            <canvas id="sgRaw" class="scope" width="300" height="64" style="width:100%;height:64px;display:block"></canvas>
+          </div>
+          <div class="sig-group clean" id="grpClean">
+            <p class="sig-head"><i class="sig-sw"></i>輸出 output<span>PureSound 乾淨音軌</span></p>
+            <canvas id="wClean" class="scope" style="width:100%;height:40px;display:block"></canvas>
+            <canvas id="sgClean" class="scope" width="300" height="64" style="width:100%;height:64px;display:block"></canvas>
+          </div>
           <p class="scope-label">時間軸（最近 30 秒）：原始 VAD／乾淨 VAD／算說話／判斷／狀態，橘線＝P(group)</p>
           <canvas id="tl" class="scope" style="width:100%;height:84px;display:block;border-radius:var(--radius-control) var(--radius-control) 0 0"></canvas>
           <div id="tlLeg"></div>
@@ -459,7 +474,14 @@ function connect(){ws=new WebSocket((location.protocol==='https:'?'wss://':'ws:/
   if(!('detections' in s)&&last)s.detections=last.detections;last=s;render(s)}}
 // ---------- render ----------
 const STATES=['ACTIVE','IDLE','MAYBE_AWAY','AWAY','ENDED'];
-$('sm').innerHTML=STATES.map(x=>`<span id="st_${x}">${x.replace('_',' ')}</span>`).join('');
+const STZH={ACTIVE:'對話中',IDLE:'閒置',MAYBE_AWAY:'可能離開',AWAY:'離開',ENDED:'結束'};
+$('sm').innerHTML=STATES.map((x,i)=>`${i?`<i class="fsm-edge" id="se_${i}"></i>`:''}<div class="fsm-node" id="st_${x}" data-s="${x}"><b></b><span>${x.replace('_',' ')}</span><small>${STZH[x]}</small></div>`).join('');
+// 軸上節點：目前狀態高亮，最近一次轉換的來源節點與經過的線段標示出來
+function renderFsm(s){const trs=s.log.filter(e=>e.event==='transition'),tr=trs[trs.length-1];
+ const a=tr?STATES.indexOf(tr.frm):-1,b=STATES.indexOf(s.state);
+ STATES.forEach((x,i)=>{$('st_'+x).className='fsm-node '+x+(x===s.state?' is-current':'')+(tr&&i===a&&x!==s.state?' is-from':'');
+  if(i)$('se_'+i).className='fsm-edge'+(a>=0&&b>=0&&i>Math.min(a,b)&&i<=Math.max(a,b)?(b<a?' is-path back':' is-path'):'')});
+ $('smHist').innerHTML=trs.slice(-6).map((e,i,arr)=>`<span class="fsm-tr${i===arr.length-1?' is-last':''}" title="${e.reason}"><i class="dot ${e.to}"></i><em>${e.t.toFixed(1)}s</em>${e.frm.replace('_',' ')} → ${e.to.replace('_',' ')}<small>${e.reason}</small></span>`).join('')||'<span class="quiet">尚無轉換</span>'}
 const pct=(a,b)=>Math.max(0,Math.min(100,b>0?a/b*100:0))+'%';
 const PH=[];
 function drawP(s){const card=$('pCard');if(s.presence_model!=='hmm'){card.style.display='none';return}card.style.display='';
@@ -471,7 +493,7 @@ function drawP(s){const card=$('pCard');if(s.presence_model!=='hmm'){card.style.
  if(PH.length>1){const t0=performance.now()-120000;g.strokeStyle=K.accent;g.lineWidth=2*d;g.beginPath();PH.forEach(([t,v],i)=>{const x=(t-t0)/120000*W,y=H-v*H;i?g.lineTo(x,y):g.moveTo(x,y)});g.stroke()}}
 function render(s){
  drawP(s);
- STATES.forEach(x=>$('st_'+x).className=x===s.state?'cur '+x:'');
+ renderFsm(s);
  const tr=[...s.log].reverse().find(e=>e.event==='transition');$('reason').textContent=tr?`${tr.frm} → ${tr.to}：${tr.reason}`:'—';
  $('pipe').textContent=s.pipeline?'模型：'+s.pipeline:'';
  $('spk').textContent=s.speaking?'🎙 是':'否';$('sil').textContent=s.silence.toFixed(1)+'s';
@@ -497,7 +519,18 @@ const ROICOL={face_roi:'#6fd3db',pose_roi:'#bdbbff'};  // mic / periwinkle
 const TR={approaching:'↘ 靠近',receding:'↗ 遠離',steady:''};
 const ZC={in:'#3ecf8e',near:'#f2b54a',far:'#f2b54a',left:'#ff7a6e'};
 const SK=[['l_shoulder','r_shoulder'],['l_shoulder','l_hip'],['r_shoulder','r_hip'],['l_hip','r_hip'],['nose','l_eye'],['nose','r_eye'],['l_eye','l_ear'],['r_eye','r_ear']];
-const visBoxes=()=>BOXES.filter(k=>k==='face_roi'?cfg.show_face_roi:(cfg.pose_enabled&&cfg.show_pose_roi));
+let roiEdit='face_roi';
+// 正在編輯的 ROI 一定顯示（即使姿勢偵測沒開），其他照「顯示」設定
+const visBoxes=()=>BOXES.filter(k=>k===roiEdit||(k==='face_roi'?cfg.show_face_roi:(cfg.pose_enabled&&cfg.show_pose_roi)));
+const ROINAME={face_roi:'臉部',pose_roi:'身體'},ROIDEF={face_roi:[0.2,0.05,0.8,0.95],pose_roi:[0,0,1,1]};
+function roiInfo(){$('roiVal').textContent=roiEdit?`${ROINAME[roiEdit]} [${cfg[roiEdit].map(v=>(+v).toFixed(2)).join(', ')}]${roiEdit==='pose_roi'&&!cfg.pose_enabled?' · 姿勢偵測未開啟':''}`:'';$('roiReset').disabled=!roiEdit}
+$('roiPick').addEventListener('click',e=>{const b=e.target.closest('button[data-roi]');if(!b)return;roiEdit=b.dataset.roi||null;
+ $('roiPick').querySelectorAll('button').forEach(x=>{const on=x===b;x.classList.toggle('is-active',on);x.setAttribute('aria-checked',on)});roiInfo();draw()});
+$('roiReset').addEventListener('click',()=>{if(!roiEdit)return;cfg[roiEdit]=[...ROIDEF[roiEdit]];syncUI();save();sendCfg();roiInfo();draw()});
+// 純函式（測試用）：畫面座標 ↔ 原始相機座標。鏡像時 x 翻轉，矩形左右邊互換
+const roiMath={toRaw:(x,m)=>m?1-x:x,boxToView:(b,m)=>m?[1-b[2],b[1],1-b[0],b[3]]:[...b],
+ norm:(a,b,min=0.05)=>{const C=v=>Math.min(1,Math.max(0,v));let r=[C(Math.min(a[0],b[0])),C(Math.min(a[1],b[1])),C(Math.max(a[0],b[0])),C(Math.max(a[1],b[1]))];
+  if(r[2]-r[0]<min){r[2]=Math.min(1,r[0]+min);r[0]=r[2]-min}if(r[3]-r[1]<min){r[3]=Math.min(1,r[1]+min);r[1]=r[3]-min}return r.map(v=>+v.toFixed(3))}};
 const cv=$('c'),g=cv.getContext('2d');let drag=null;
 function fit(){const r=cv.getBoundingClientRect(),d=devicePixelRatio||1;cv.width=r.width*d;cv.height=r.height*d;draw()}
 addEventListener('resize',fit);
@@ -521,26 +554,28 @@ function draw(){const W=cv.width,H=cv.height,d=devicePixelRatio||1;g.clearRect(0
  if(vb.includes('face_roi')){const r=mbox(cfg.face_roi),x=r[0]*W,y=r[1]*H,w=(r[2]-r[0])*W,h=(r[3]-r[1])*H;
   g.fillStyle='#0006';g.fillRect(0,0,W,y);g.fillRect(0,y+h,W,H-y-h);g.fillRect(0,y,x,h);g.fillRect(x+w,y,W-x-w,h)}
  vb.forEach(k=>{const r=mbox(cfg[k]),x=r[0]*W+(k==='pose_roi'?2*d:0),y=r[1]*H+(k==='pose_roi'?2*d:0),w=(r[2]-r[0])*W-(k==='pose_roi'?4*d:0),h=(r[3]-r[1])*H-(k==='pose_roi'?4*d:0);
-  g.strokeStyle=ROICOL[k];g.lineWidth=2*d;g.setLineDash(k==='pose_roi'?[3*d,5*d]:[8*d,6*d]);g.strokeRect(x,y,w,h);g.setLineDash([]);
-  g.fillStyle=ROICOL[k];[[x,y],[x+w,y],[x,y+h],[x+w,y+h]].forEach(([a,b])=>g.fillRect(a-6*d,b-6*d,12*d,12*d));
+  const ed=k===roiEdit;g.strokeStyle=ROICOL[k];g.lineWidth=(ed?3:1.5)*d;g.globalAlpha=ed?1:0.6;g.setLineDash(k==='pose_roi'?[3*d,5*d]:[8*d,6*d]);g.strokeRect(x,y,w,h);g.setLineDash([]);
+  g.fillStyle=ROICOL[k];if(ed)[[x,y],[x+w,y],[x,y+h],[x+w,y+h]].forEach(([a,b])=>g.fillRect(a-6*d,b-6*d,12*d,12*d));g.globalAlpha=1;
   g.font=`${11*d}px sans-serif`;g.fillText(k==='face_roi'?'臉部 ROI':'身體 ROI',x+8*d,y+(k==='face_roi'?16:30)*d)});
  if(cfg.distance_enabled){g.font=`${12*d}px sans-serif`;const txt=`對話區 ${cfg.zone_min}–${cfg.zone_max} m · 離開 > ${cfg.leave_distance} m`;
   const tw=g.measureText(txt).width;g.fillStyle='#000a';g.fillRect(W-tw-16*d,H-24*d,tw+12*d,20*d);g.fillStyle='#ececf1';g.fillText(txt,W-tw-10*d,H-10*d)}
 }
-function pos(e){const r=cv.getBoundingClientRect();return[mx((e.clientX-r.left)/r.width),(e.clientY-r.top)/r.height,r]}
-function hit(e){const[px,py,rc]=pos(e),tx=18/rc.width,ty=18/rc.height,vb=visBoxes();
- const corners=[[0,1],[2,1],[0,3],[2,3]];
- for(const k of vb){const r=cfg[k];for(const[i,j]of corners)if(Math.abs(px-r[i])<tx&&Math.abs(py-r[j])<ty)return{mode:'corner',i,j,k}}
- for(const k of vb){const r=cfg[k];if(px>r[0]&&px<r[2]&&py>r[1]&&py<r[3])return{mode:'move',k}}return null}
-cv.addEventListener('pointermove',e=>{if(!drag){const h=hit(e);cv.style.cursor=h?(h.mode==='move'?'move':'nwse-resize'):'default';return}
+function pos(e){const r=cv.getBoundingClientRect(),C=v=>Math.min(1,Math.max(0,v));return[C(mx((e.clientX-r.left)/r.width)),C((e.clientY-r.top)/r.height),r]}
+// 只有選取中的 ROI 可以拖曳；框外按下＝畫新框（座標都在原始相機座標系處理）
+function hit(e){if(!roiEdit)return null;const[px,py,rc]=pos(e),tx=18/rc.width,ty=18/rc.height,k=roiEdit,r=cfg[k];
+ for(const[i,j]of[[0,1],[2,1],[0,3],[2,3]])if(Math.abs(px-r[i])<tx&&Math.abs(py-r[j])<ty)return{mode:'corner',i,j,k};
+ if(px>r[0]&&px<r[2]&&py>r[1]&&py<r[3])return{mode:'move',k};return{mode:'new',k}}
+cv.addEventListener('pointermove',e=>{if(!drag){const h=hit(e);cv.style.cursor=h?({move:'move',corner:'nwse-resize',new:'crosshair'}[h.mode]):'default';return}
  const[px,py]=pos(e),r=[...drag.r],C=v=>Math.min(1,Math.max(0,v));
- if(drag.mode==='move'){const dx=px-drag.p[0],dy=py-drag.p[1],w=r[2]-r[0],h=r[3]-r[1];
+ if(drag.mode==='new')cfg[drag.k]=roiMath.norm(drag.p,[px,py]);
+ else if(drag.mode==='move'){const dx=px-drag.p[0],dy=py-drag.p[1],w=r[2]-r[0],h=r[3]-r[1];
   const x0=Math.min(1-w,Math.max(0,r[0]+dx)),y0=Math.min(1-h,Math.max(0,r[1]+dy));cfg[drag.k]=[x0,y0,x0+w,y0+h]}
  else{r[drag.i]=C(px);r[drag.j]=C(py);
   if(r[2]-r[0]<0.05){if(drag.i===0)r[0]=r[2]-0.05;else r[2]=r[0]+0.05}if(r[3]-r[1]<0.05){if(drag.j===1)r[1]=r[3]-0.05;else r[3]=r[1]+0.05}cfg[drag.k]=r}
- cfg[drag.k]=cfg[drag.k].map(v=>+v.toFixed(3));syncUI();draw()});
+ cfg[drag.k]=cfg[drag.k].map(v=>+v.toFixed(3));syncUI();roiInfo();draw()});
 cv.addEventListener('pointerdown',e=>{const h=hit(e);if(!h)return;drag={...h,p:pos(e),r:[...cfg[h.k]]};cv.setPointerCapture(e.pointerId);e.preventDefault()});
-const endDrag=()=>{if(drag){drag=null;save();sendCfg()}};cv.addEventListener('pointerup',endDrag);cv.addEventListener('pointercancel',endDrag);
+const endDrag=()=>{if(drag){const k=drag.k;if(drag.mode==='new'){const r=cfg[k];if(r[2]-r[0]<0.051&&r[3]-r[1]<0.051)cfg[k]=drag.r}drag=null;syncUI();roiInfo();save();sendCfg();draw()}};
+roiInfo();cv.addEventListener('pointerup',endDrag);cv.addEventListener('pointercancel',endDrag);
 // ---------- media: VAD + frames, start/stop ----------
 let speech=false,frameTimer,vadTimer,pingTimer,stream=null,ac=null,running=false,autoPaused=false,lastRtt=null,v=$('v'),off=document.createElement('canvas'),og=off.getContext('2d');
 const wsSend=o=>{if(ws&&ws.readyState===1)ws.send(JSON.stringify(o))};
