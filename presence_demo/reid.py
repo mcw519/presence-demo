@@ -254,7 +254,6 @@ class CrossSessionReid:
         self.best: tuple[float, bytes] | None = None  # current session's best face (memory only)
         self.best_t = -1e9
         self.phase = "idle"  # idle | await_query | calling | await_retry
-        self.opened_t = 0.0
         self.waited = 0.0  # seconds waited for a usable face (ACTIVE/IDLE only; paused in MAYBE_AWAY/AWAY)
         self.first_part_t: float | None = None  # waited-time when a participant first appeared
         self.wait_t = 0.0
@@ -380,7 +379,6 @@ class CrossSessionReid:
             self._commit_best(now)
             self.session, self.committed, self.best, self.best_t = sess, False, None, -1e9
             self.retried, self.retry_ref = False, None
-            self.opened_t = now
             self.waited, self.first_part_t, self.wait_t, self.wait_why = 0.0, None, now, {}
             if not self.store.valid(now, self.cfg.reid_ttl):
                 self._decide("new", "no_reference", now)  # no previous-round data: brand-new, no call

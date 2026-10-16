@@ -1,12 +1,13 @@
-"""Settings UI (v0.10.0): every config key belongs to a module; server config keys and client defaults agree."""
+"""Settings UI: every config key belongs to a module; server config keys and client defaults agree."""
 
 import re
 from dataclasses import fields
-from pathlib import Path
+
+from sources import STATIC, ui_source
 
 from presence_demo.tracker import Config
 
-HTML = (Path(__file__).parents[1] / "presence_demo" / "static" / "index.html").read_text(encoding="utf-8")
+HTML = ui_source()
 
 
 def _def_keys():
@@ -26,3 +27,20 @@ def test_client_defaults_cover_server_config():
     server = {f.name for f in fields(Config)}
     ui = _def_keys() - client_only
     assert ui <= server, ui - server
+
+
+def test_settings_key_rows_styled():
+    # API-key rows share one builder: PureSound buttons, .control input, padded module body, status badge
+    assert "function keyRow(" in HTML and "keyRow('asr'" in HTML and "keyRow('reid'" in HTML
+    assert "det.querySelector('.mbody')" in HTML and 'class="kbadge"' in HTML
+    assert (
+        re.search(
+            r"<button(?![^>]*class=)[^>]*>",
+            HTML[HTML.index("function addCalib") : HTML.index("function addCalib") + 900]
+            + HTML[HTML.index("function keyRow") : HTML.index("$('reidViewClr')")],
+        )
+        is None
+    )
+    css = (STATIC / "app.css").read_text(encoding="utf-8")
+    assert ".mod > .row{padding:10px 12px}" in css and ".kbadge" in css and ".rv-row" in css
+    assert 'id="reidCard"' in HTML and "RV_MAX=4" in HTML and "reid_show_crops:true" in HTML

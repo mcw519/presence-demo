@@ -1,4 +1,4 @@
-"""v0.10.0 optional client-side recording: aligned raw / vi / out streams; the server stores nothing."""
+"""Optional client-side recording: aligned raw / vi / out streams; the server stores nothing."""
 
 import os
 import struct
@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from sources import server_source, ui_source
 
 from presence_demo import audio
 from presence_demo.audio import AudioStream
@@ -97,8 +98,8 @@ def test_ws_record_streams_three_tracks_and_writes_no_files(tmp_path, monkeypatc
 
 
 def test_recording_is_client_side_opt_in():
-    html = (Path(__file__).parents[1] / "presence_demo" / "static" / "index.html").read_text(encoding="utf-8")
+    html = ui_source()
     assert "let rec=null" in html and "REC_MAX_S=600" in html  # off by default, 10 min cap
     assert "_raw.wav" in html and "_vi.wav" in html and "_out.wav" in html
-    src = (Path(__file__).parents[1] / "presence_demo" / "server.py").read_text(encoding="utf-8")
+    src = server_source()
     assert "wave" not in src and "open(" not in src  # the server has no file writer for audio

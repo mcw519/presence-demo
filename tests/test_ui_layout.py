@@ -1,14 +1,14 @@
-"""UI v0.10.4: state machine axis, audio signal bundles, draggable face/body ROI with mirror-safe coordinates."""
+"""UI layout: state machine axis, audio signal bundles, draggable face/body ROI with mirror-safe coordinates."""
 
 import json
 import re
 import shutil
 import subprocess
-from pathlib import Path
 
 import pytest
+from sources import ui_source
 
-HTML = (Path(__file__).parents[1] / "presence_demo" / "static" / "index.html").read_text(encoding="utf-8")
+HTML = ui_source()
 
 
 def test_state_machine_is_an_axis_with_history():

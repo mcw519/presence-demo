@@ -1,0 +1,132 @@
+// Audio: AudioWorklet capture, clean-audio playback/monitoring, opt-in client-side recording, tracks view.
+// Classic script; all files share one global scope and load in order from index.html.
+// ---------- audio: AudioWorklet capture (16 kHz PCM16, 20 ms) -> WS binary; clean audio back -> player ----------
+// PRIVACY: audio exists only in memory (worklet buffers, WebSocket), never stored.
+const WORKLET=`class Cap extends AudioWorkletProcessor{constructor(){super();this.r=sampleRate/16000;this.p=0;this.prev=0;this.buf=new Int16Array(320);this.n=0}
+ process(i){const x=i[0]&&i[0][0];if(!x)return true;let p=this.p;
+  // linear-interpolation resampler with a 2-tap pre-average (box low-pass) when downsampling
+  for(;p<x.length;p+=this.r){const k=Math.floor(p),f=p-k,a=k>0?x[k-1]:this.prev,b=x[k],c=k+1<x.length?x[k+1]:b;
+   let v=this.r>1.5?((a+b)/2*(1-f)+(b+c)/2*f):(b+(c-b)*f);v=Math.max(-1,Math.min(1,v));this.buf[this.n++]=v*32767;
+   if(this.n===320){this.port.postMessage(this.buf.slice(0));this.n=0}}
+  this.p=p-x.length;this.prev=x[x.length-1];return true}}
+registerProcessor('cap',Cap);
+// Low-latency player: small fixed jitter buffer (start at 60 ms, target 80 ms). Above 160 ms the oldest audio is
+// dropped back to the target, so bursts after network stalls never turn into permanent delay (and clock drift
+// between mic and speaker cannot accumulate). Underrun -> silence + re-prebuffer.
+class Play extends AudioWorkletProcessor{constructor(){super();this.q=[];this.n=0;this.cur=null;this.i=0;this.r=16000/sampleRate;this.play=false;
+  this.START=960;this.TGT=1280;this.MAX=2560;this.under=0;this.drop=0;this.k=0;this.hi=0;
+  this.port.onmessage=e=>{this.q.push(e.data);this.n+=e.data.length;
+   if(this.n>this.MAX){while(this.n>this.TGT&&this.q.length>1){this.drop+=this.q[0].length;this.n-=this.q.shift().length}}}}
+ depth(){return this.n+(this.cur?this.cur.length-this.i:0)}
+ process(_,o){const out=o[0][0];if(!this.play&&this.n>=this.START)this.play=true;
+  for(let j=0;j<out.length;j++){if(!this.play){out[j]=0;continue}
+   if(!this.cur||this.i>=this.cur.length){const rest=this.cur?this.i-this.cur.length:0;this.cur=this.q.shift()||null;if(this.cur)this.n-=this.cur.length;this.i=Math.max(0,rest)}
+   if(!this.cur){this.play=false;this.under++;out[j]=0;continue}
+   const k=Math.floor(this.i),f=this.i-k,a=this.cur[k],b=k+1<this.cur.length?this.cur[k+1]:(this.q.length?this.q[0][0]:a);out[j]=a+(b-a)*f;this.i+=this.r}
+  // slow drain: buffer above target+20 ms for 0.5 s -> drop one chunk (keeps latency near the target after bursts)
+  if(this.play&&this.depth()>this.TGT+320){if(++this.hi*out.length>sampleRate/2&&this.q.length){this.drop+=this.q[0].length;this.n-=this.q.shift().length;this.hi=0}}else this.hi=0;
+  if(++this.k%40===0)this.port.postMessage({buf_ms:this.depth()/16,under:this.under,drop_ms:this.drop/16,playing:this.play});return true}}
+registerProcessor('play',Play);`;
+let player=null,rawMon=null,cleanMon=null;const WR=[],WC=[];
+async function startAudio(ac){await ac.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET],{type:'application/javascript'})));
+ const src=ac.createMediaStreamSource(stream),cap=new AudioWorkletNode(ac,'cap');src.connect(cap);
+ const sink=ac.createGain();sink.gain.value=0;cap.connect(sink).connect(ac.destination);// keep the graph pulling, silent
+ rawMon=ac.createGain();rawMon.gain.value=0;src.connect(rawMon).connect(ac.destination);
+ anRaw=ac.createAnalyser();anRaw.fftSize=256;src.connect(anRaw);
+ player=new AudioWorkletNode(ac,'play',{outputChannelCount:[1]});player.port.onmessage=e=>{pst=e.data};cleanMon=ac.createGain();cleanMon.gain.value=0;player.connect(cleanMon).connect(ac.destination);
+ anClean=ac.createAnalyser();anClean.fftSize=256;player.connect(anClean);setMonitor(cfg.monitor);
+ cap.port.onmessage=e=>{const pcm=e.data;meterPush(WR,pcm);
+  if(cfg.audio_pipeline!=='puresound'||!ws||ws.readyState!==1)return;
+  const b=new ArrayBuffer(9+pcm.byteLength),dv=new DataView(b);dv.setUint8(0,1);dv.setFloat64(1,performance.now(),true);new Uint8Array(b,9).set(new Uint8Array(pcm.buffer,pcm.byteOffset,pcm.byteLength));ws.send(b)}}
+function setMonitor(m){cfg.monitor=m;if(rawMon)rawMon.gain.value=m==='raw'?1:0;if(cleanMon)cleanMon.gain.value=m==='clean'?1:0;document.querySelectorAll('#monBtns button').forEach(b=>{const on=b.dataset.m===m;b.classList.toggle('is-active',on);b.setAttribute('aria-checked',String(on))})}
+document.querySelectorAll('#monBtns button').forEach(b=>b.onclick=()=>{setMonitor(b.dataset.m);if(b.dataset.m!=='off')toast('監聽中：請戴耳機')});
+// ---------- optional client-side recording (opt-in, default off) ----------
+// PRIVACY: the three aligned tracks live only in this page's memory and are saved to the user's own computer as a
+// zip download. The server only streams them while recording is on; it never writes audio.
+const REC_MAX_S=600;let rec=null;
+function recToggle(){if(rec)return recStop();
+ if(!running){toast('請先按「開始」');return}if(cfg.audio_pipeline!=='puresound'){toast('錄音需要「音訊」模組使用 PureSound 管線');return}
+ rec={t0:new Date(),n:0,raw:[],vi:[],out:[],blocks:[],states:[],settings:JSON.parse(JSON.stringify(cfg)),dropped0:aMeta?aMeta.dropped:0};
+ wsSend({type:'record',on:true});recUI();rec.timer=setInterval(recUI,500)}
+function onRec(dv,buf){if(!rec)return;const n=dv.getUint32(9,true),o=13;
+ rec.out.push(new Int16Array(buf.slice(o,o+2*n)));rec.vi.push(new Int16Array(buf.slice(o+2*n,o+4*n)));rec.raw.push(new Int16Array(buf.slice(o+4*n,o+6*n)));rec.n+=n;
+ if(rec.n>=REC_MAX_S*16000){recStop();toast('已達最長 10 分鐘，自動停止並下載')}}
+function recMeta(s){if(!rec)return;const t=+(rec.n/16000).toFixed(3);
+ if(s.type==='audio'&&s.available!==false)rec.blocks.push({t,decision:s.decision,why:s.why,speech:s.speech,clean_vad:s.clean_vad,raw_vad:s.raw_vad,gain:s.gain,mix:s.mix,state:s.state,p_group:s.p_group,target_track:s.target_track,distance:s.distance});
+ if(s.type==='state'){const l=rec.states[rec.states.length-1];if(!l||l.state!==s.state||l.session!==s.session)rec.states.push({t,state:s.state,session:s.session,participants:(s.tracks||[]).filter(x=>x.participant).length})}}
+function recUI(){const on=!!rec;$('recInd').classList.toggle('on',on);$('recBtn').textContent=on?'停止並下載':'錄音';$('recBtn').classList.toggle('button-danger',on);
+ if(on){const sec=rec.n/16000,f=x=>`${Math.floor(x/60)}:${String(Math.floor(x%60)).padStart(2,'0')}`;$('recInd').textContent=`● 錄音中 ${f(sec)} / ${f(REC_MAX_S)}`;$('recSt').textContent=`錄音中 ${f(sec)}（最長 ${f(REC_MAX_S)}）・只在瀏覽器記憶體`}}
+function wav(chunks,n){const b=new ArrayBuffer(44+2*n),v=new DataView(b),w=(o,t)=>[...t].forEach((c,i)=>v.setUint8(o+i,c.charCodeAt(0)));
+ w(0,'RIFF');v.setUint32(4,36+2*n,true);w(8,'WAVEfmt ');v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);v.setUint32(24,16000,true);v.setUint32(28,32000,true);v.setUint16(32,2,true);v.setUint16(34,16,true);w(36,'data');v.setUint32(40,2*n,true);
+ let o=44;const u=new Uint8Array(b);for(const c of chunks){u.set(new Uint8Array(c.buffer,c.byteOffset,c.byteLength),o);o+=c.byteLength}return u}
+const CRC=(()=>{const t=new Uint32Array(256);for(let i=0;i<256;i++){let c=i;for(let k=0;k<8;k++)c=c&1?0xedb88320^(c>>>1):c>>>1;t[i]=c>>>0}return t})();
+function crc32(u){let c=0xffffffff;for(let i=0;i<u.length;i++)c=CRC[(c^u[i])&255]^(c>>>8);return(c^0xffffffff)>>>0}
+function zip(files){const parts=[],cd=[];let off=0;const enc=new TextEncoder();
+ for(const[name,data]of files){const nm=enc.encode(name),crc=crc32(data),h=new DataView(new ArrayBuffer(30));
+  h.setUint32(0,0x04034b50,true);h.setUint16(4,20,true);h.setUint32(14,crc,true);h.setUint32(18,data.length,true);h.setUint32(22,data.length,true);h.setUint16(26,nm.length,true);
+  parts.push(new Uint8Array(h.buffer),nm,data);const c=new DataView(new ArrayBuffer(46));c.setUint32(0,0x02014b50,true);c.setUint16(4,20,true);c.setUint16(6,20,true);
+  c.setUint32(16,crc,true);c.setUint32(20,data.length,true);c.setUint32(24,data.length,true);c.setUint16(28,nm.length,true);c.setUint32(42,off,true);cd.push(new Uint8Array(c.buffer),nm);off+=30+nm.length+data.length}
+ const cdl=cd.reduce((a,x)=>a+x.length,0),e=new DataView(new ArrayBuffer(22));e.setUint32(0,0x06054b50,true);e.setUint16(8,files.length,true);e.setUint16(10,files.length,true);e.setUint32(12,cdl,true);e.setUint32(16,off,true);
+ return new Blob([...parts,...cd,new Uint8Array(e.buffer)],{type:'application/zip'})}
+function recStop(){const r=rec;if(!r)return;rec=null;clearInterval(r.timer);wsSend({type:'record',on:false});recUI();
+ $('recSt').textContent='已停止，正在產生下載…';
+ if(!r.n){toast('沒有錄到聲音（PureSound 是否在運作？）');$('recSt').textContent='';return}
+ const p=x=>String(x).padStart(2,'0'),d=r.t0,stamp=`${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`,base='presence-'+stamp;
+ const side={format:'16 kHz mono PCM16 WAV',tracks:{raw:'麥克風輸入（已補償 PureSound 延遲，與 vi/out 逐樣本對齊）',vi:'PureSound 人聲分離輸出（未經影像交叉確認）',out:'最終輸出（影像交叉確認後，即監聽的乾淨音軌）'},
+  started_at:d.toISOString(),duration_s:+(r.n/16000).toFixed(3),samples:r.n,algo_latency_ms:aMeta?aMeta.algo_latency_ms:null,
+  server_dropped_chunks:aMeta?aMeta.dropped-r.dropped0:null,note:'t＝相對錄音開頭的秒數（以樣本數計）；伺服器丟棄的區塊不在檔案中。',blocks:r.blocks,states:r.states,settings:r.settings};
+ const enc=new TextEncoder(),z=zip([[base+'_raw.wav',wav(r.raw,r.n)],[base+'_vi.wav',wav(r.vi,r.n)],[base+'_out.wav',wav(r.out,r.n)],[base+'.json',enc.encode(JSON.stringify(side,null,1))]]);
+ const a=document.createElement('a');a.href=URL.createObjectURL(z);a.download=base+'.zip';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),60000);
+ $('recSt').textContent=`已下載 ${base}.zip（${(r.n/16000).toFixed(1)} s，三軌＋JSON）`;toast('錄音已下載到你的電腦')}
+$('recBtn').onclick=recToggle;
+let lastLat=null,pst=null;const LATS=[];
+const outLat=()=>ac?((ac.baseLatency||0)+(ac.outputLatency||0))*1000:0;
+function onClean(buf){const dv=new DataView(buf);if(dv.getUint8(0)===3)return onRec(dv,buf);if(dv.getUint8(0)!==2)return;lastLat=performance.now()-dv.getFloat64(1,true);LATS.push(lastLat);if(LATS.length>200)LATS.shift();
+ const pcm=new Int16Array(buf.slice(9));meterPush(WC,pcm);
+ if(player){const f=new Float32Array(pcm.length);for(let i=0;i<pcm.length;i++)f[i]=pcm[i]/32768;player.port.postMessage(f,[f.buffer])}}
+function meterPush(arr,pcm){let mx=0;for(let i=0;i<pcm.length;i+=4)mx=Math.max(mx,Math.abs(pcm[i]));arr.push(mx/32768);if(arr.length>250)arr.shift()}
+function wave(id,arr,col){const c=$(id),d=devicePixelRatio||1,r=c.getBoundingClientRect();if(!r.width)return;c.width=r.width*d;c.height=r.height*d;const x=c.getContext('2d'),W=c.width,H=c.height;
+ x.fillStyle=col;arr.forEach((v,i)=>{const h=Math.max(1,Math.sqrt(v)*H);x.fillRect(i/250*W,(H-h)/2,Math.max(1,W/250),h)})}
+const db=a=>{const v=a.length?a[a.length-1]:0;return v>0?(20*Math.log10(v)).toFixed(0)+' dBFS':'—'};
+// 音軌顯示：波形／頻譜／兩者，存在 localStorage；隱藏的 canvas 不重畫
+const TRK_KEY='presence.trackView',TRK=['wave','spec','both'];let trkView=TRK.includes(localStorage.getItem(TRK_KEY))?localStorage.getItem(TRK_KEY):'both';
+const showWave=()=>trkView!=='spec',showSpec=()=>trkView!=='wave';
+function setTrkView(v){trkView=TRK.includes(v)?v:'both';localStorage.setItem(TRK_KEY,trkView);$('sigStack').dataset.view=trkView;$('stage').dataset.view=trkView;
+ $('trkView').querySelectorAll('button').forEach(b=>{const on=b.dataset.v===trkView;b.classList.toggle('is-active',on);b.setAttribute('aria-checked',on)});if(typeof fit==='function')fit()}
+$('trkView').addEventListener('click',e=>{const b=e.target.closest('button[data-v]');if(b)setTrkView(b.dataset.v)});setTrkView(trkView);
+const dbv=a=>{const v=a.length?a[a.length-1]:0;return v>0?(20*Math.log10(v)).toFixed(0):'—'};
+setInterval(()=>{if(!running)return;$('dbRaw').textContent=dbv(WR);$('dbClean').textContent=dbv(WC)},250);
+setInterval(()=>{if(!running||!showWave())return;wave('wRaw',WR,K.viz_raw);wave('wClean',WC,aMeta&&aMeta.clean_vad?K.ok:K.viz_clean)},100);
+function monLat(){if(lastLat==null)return'—';const s=[...LATS].sort((x,y)=>x-y),p=q=>s[Math.min(s.length-1,Math.floor(q*s.length))];
+ const buf=pst?pst.buf_ms:0,tot=20+aMeta.algo_latency_ms+p(0.5)+buf+outLat();
+ return `約 ${tot.toFixed(0)} ms ＝ 擷取 20 + 演算法 ${aMeta.algo_latency_ms} + 往返 ${p(0.5).toFixed(0)}（p95 ${p(0.95).toFixed(0)}）+ 緩衝 ${buf.toFixed(0)} + 輸出 ${outLat().toFixed(0)} ms`+(pst?` · 斷音 ${pst.under} 次 · 追趕丟棄 ${pst.drop_ms.toFixed(0)} ms`:'')+` · 伺服器佇列 ${aMeta.queue}（最多 ${aMeta.backlog_max??0}）`}
+function renderAudio(){const a=aMeta;if(!a)return;
+ if(a.available===false){$('aSt').textContent='（無法使用）';$('aKv').innerHTML=`<span>原因</span><span>${a.error}</span>`;return}
+ const LB={agree:'✅ 一致',leak:'漏音',false_reject:'聲學誤判-漏收',false_accept:'聲學誤判-超出範圍',silence:'安靜',acoustic_only:'只看聲音'};
+ $('aSt').textContent=(LB[a.decision]||a.decision)+(a.speech?' · 🎙 算說話':'');
+ const kv={'判斷':`${LB[a.decision]||a.decision}${a.why?'（'+a.why+'）':''}`,
+  '次數':`漏音 ${a.counts.leak} · 聲學誤判-漏收 ${a.counts.false_reject} · 聲學誤判-超出範圍 ${a.counts.false_accept} · 一致 ${a.counts.agree}`,'VAD 乾淨 / 原始':`${a.clean_vad?'說話':'—'} / ${a.raw_vad?'說話':'—'} · 乾淨開頭 ${a.onsets} 次 · ${a.vad_source==='energy_on_enhanced'?'分離後能量':'模型 VAD'}`,
+  '電平 原始 / 乾淨':`${a.raw_db} / ${a.clean_db} dBFS（波形峰值 ${db(WR)} / ${db(WC)}）`,
+  '閘門':a.gain<0.5?`🔇 壓低（${(20*Math.log10(Math.max(a.gain,1e-4))).toFixed(0)} dB）`:'🔊 通過',
+  '混合 / 增益':`增強 ${(a.mix*100).toFixed(0)}% · 原聲 ${(100-a.mix*100).toFixed(0)}% · 增益 ${a.gain}`,
+  '影像對齊':a.t_vision_client!=null?`決策用的畫面比音訊早 ${((a.t_client-a.t_vision_client)/1000).toFixed(2)} s`:'—',
+  '語音辨識':a.asr?`${a.asr.provider==='none'?'關閉':a.asr.provider} · key ${a.asr.key_set?'已設定':'未設定'} · ${a.asr.connected?'連線中':'未連線'} · 已送 ${a.asr.sent_s} s`:'—',
+  '目標':a.target_track!=null?`#${a.target_track}${a.distance!=null?' · '+a.distance+' m':''}`:'—','P(group)':a.p_group??'—',
+  'RTF（單執行緒）':a.rtf??'—','處理 / 佇列':`${a.proc_ms} ms · 佇列 ${a.queue} · 丟棄 ${a.dropped} · 重置 ${a.resets}`,
+  '延遲':`演算法 ${a.algo_latency_ms} ms + 傳輸/處理 ${lastLat!=null?lastLat.toFixed(0):'—'} ms + 擷取 20 ms`,
+  '監聽延遲（擷取→播放）':monLat()};
+ $('aKv').innerHTML=Object.entries(kv).map(([k,v])=>`<span>${k}</span><span>${v}</span>`).join('')}
+const DC={};
+const SC={};pal();
+const TLH=[];
+function legend(){$('tlLeg').innerHTML=Object.entries({agree:'一致',leak:'漏音',false_reject:'聲學誤判-漏收',false_accept:'聲學誤判-超出範圍',silence:'安靜',acoustic_only:'只看聲音'}).map(([k,v])=>`<span style="color:${DC[k]}">■</span>${v}`).join(' ')}legend();
+function drawTL(){const c=$('tl'),d=devicePixelRatio||1,r=c.getBoundingClientRect();if(!r.width)return;c.width=r.width*d;c.height=r.height*d;const g=c.getContext('2d'),W=c.width,H=c.height,now=performance.now(),rows=5,rh=H/rows;
+ g.clearRect(0,0,W,H);TLH.forEach((e,i)=>{const n=TLH[i+1];const x0=(e.t-now+30000)/30000*W,x1=((n?n.t:now)-now+30000)/30000*W,w=Math.max(1,x1-x0);
+  if(e.raw){g.fillStyle=K.viz_raw;g.fillRect(x0,0,w,rh-1)}if(e.clean){g.fillStyle=K.viz_clean;g.fillRect(x0,rh,w,rh-1)}if(e.sp){g.fillStyle=K.ok;g.fillRect(x0,2*rh,w,rh-1)}
+  g.fillStyle=DC[e.dec]||K.viz_empty;g.fillRect(x0,3*rh,w,rh-1);g.fillStyle=SC[e.st]||K.viz_empty;g.fillRect(x0,4*rh,w,rh-1)});
+ g.strokeStyle=K.accent;g.lineWidth=1.5*d;g.beginPath();let on=false;TLH.forEach(e=>{if(e.p==null){on=false;return}const x=(e.t-now+30000)/30000*W,y=H-e.p*H;on?g.lineTo(x,y):g.moveTo(x,y);on=true});g.stroke();
+ g.fillStyle=K.viz_ink;g.font=`${9*d}px sans-serif`;['原始','乾淨','說話','判斷','狀態'].forEach((t,i)=>g.fillText(t,2*d,i*rh+rh*0.75))}
+let anRaw=null,anClean=null;const SGB=new Uint8Array(128);
+function sg(id,an){if(!an)return;const c=$(id),g=c.getContext('2d');const img=g.getImageData(1,0,c.width-1,c.height);g.putImageData(img,0,0);an.getByteFrequencyData(SGB);
+ for(let y=0;y<c.height;y++){const v=SGB[Math.floor((1-y/c.height)*SGB.length*0.5)];g.fillStyle=`hsl(${240-v*0.9},80%,${v/5.5}%)`;g.fillRect(c.width-1,y,1,1)}}
+setInterval(()=>{if(!running)return;if(showSpec()){sg('sgRaw',anRaw);sg('sgClean',anClean)}drawTL()},100);

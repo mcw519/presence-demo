@@ -1,4 +1,4 @@
-"""Regression tests for the v0.4.1 fixes found in the docs/ALGORITHM.md audit."""
+"""Tracker regression tests (behaviours fixed after an algorithm audit)."""
 
 import math
 

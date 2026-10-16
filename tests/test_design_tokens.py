@@ -1,9 +1,10 @@
-"""v0.10.2: the UI uses the PureSound web design system (vendored, pinned) instead of its own token copy."""
+"""The UI uses the PureSound web design system (vendored, pinned) instead of its own token copy."""
 
 import hashlib
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from sources import ui_source
 
 from presence_demo import server
 
@@ -30,7 +31,7 @@ def test_pin_matches_puresound_dependency():
 
 
 def test_index_uses_shared_tokens_and_component_classes():
-    html = (Path(server.STATIC) / "index.html").read_text()
+    html = ui_source()
     for href in ("tokens.css", "base.css", "components.css", "shell.css", "screens-shared.css"):
         assert f"/static/vendor/puresound/{href}" in html
     assert 'class="button button-primary"' in html

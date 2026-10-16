@@ -1,10 +1,12 @@
-"""UI v0.10.5: audio panel under the camera; live ASR caption overlay."""
+"""UI: audio panel under the camera and the live speech-recognition caption overlay."""
 
 import re
 from pathlib import Path
 
+from sources import ui_source
+
 ROOT = Path(__file__).parents[1] / "presence_demo" / "static"
-HTML = (ROOT / "index.html").read_text(encoding="utf-8")
+HTML = ui_source()
 CSS = (ROOT / "app.css").read_text(encoding="utf-8")
 
 

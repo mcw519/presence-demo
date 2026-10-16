@@ -1,4 +1,4 @@
-"""v0.10.1 regression: enabling pose mid-session while audio streams, concurrent connections, supervised task
+"""Watchdog and robustness: enabling pose mid-session while audio streams, concurrent connections, supervised task
 restart, non-blocking outbox, /debug/events protection and log redaction."""
 
 import asyncio

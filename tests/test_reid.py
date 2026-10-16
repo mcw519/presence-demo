@@ -1,4 +1,4 @@
-"""Cross-session re-ID (v0.11.0): mock Jev server; decisions, caps, TTL/wipe, privacy."""
+"""Cross-session re-ID: mock Jev server; decisions, caps, TTL/wipe, privacy."""
 
 import asyncio
 import json

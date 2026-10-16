@@ -8,18 +8,6 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
-# COCO-17 keypoint indices (shared by MoveNet and other COCO-17 pose models)
-KP = {
-    "nose": 0,
-    "l_eye": 1,
-    "r_eye": 2,
-    "l_ear": 3,
-    "r_ear": 4,
-    "l_shoulder": 5,
-    "r_shoulder": 6,
-    "l_hip": 11,
-    "r_hip": 12,
-}
 KP_CONF = 0.5
 
 

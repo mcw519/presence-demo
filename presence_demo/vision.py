@@ -369,9 +369,6 @@ class VisionPipeline:
         t2 = time.perf_counter()
         return out, {"detect": (t1 - t0) * 1000, "embed": (t2 - t1) * 1000}
 
-    def process_jpeg(self, data: bytes) -> list[Detection]:
-        return self.process_jpeg_timed(data)[0]
-
     def process_jpeg_timed(self, data: bytes) -> tuple[list[Detection], dict]:
         """Decode + process a JPEG entirely in memory.
 

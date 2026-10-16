@@ -1,4 +1,4 @@
-"""v0.9.0 audio: PureSound glue (smoke, skipped without the SDK/model), clean VAD, reset on group change,
+"""Audio: PureSound glue (smoke, skipped without the SDK/model), clean VAD, reset on group change,
 entry-onset rule, and audio privacy (no files written)."""
 
 import os

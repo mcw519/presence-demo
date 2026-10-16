@@ -7,13 +7,14 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from sources import ui_source
 
 ROOT = Path(__file__).parents[1]
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
 def test_player_buffer_stays_bounded(tmp_path):
-    html = (ROOT / "presence_demo" / "static" / "index.html").read_text(encoding="utf-8")
+    html = ui_source()
     src = re.search(r"const WORKLET=`(.*?)`;", html, re.S).group(1)
     w = tmp_path / "worklet.js"  # JS source only (no audio)
     w.write_text(src, encoding="utf-8")
