@@ -53,6 +53,8 @@ Checksums of the unmodified upstream files are pinned in `tests/test_design_toke
 | State machine | `.fsm-axis` > `.fsm-node` + `.fsm-edge`; `.fsm-hist` > `.fsm-tr` (app.css) | Nodes on an axis; current node filled with its state colour, last transition's source dashed and path in accent |
 | Audio signals | `.sig-group.raw` / `.sig-group.clean` (waveform + spectrogram) | One bundle per signal; mint / periwinkle edge |
 | ROI editor | `.segmented#roiPick` (臉部 / 身體 / 鎖定) + drag on `#view canvas` | Face cyan dashed, body purple dotted; only the selected ROI is draggable |
+| Live caption | `#view > .caption` (`.is-in` fade, `.is-final` white; `--nav` 78 % backing, `--on-nav` text) | Single bottom line over the camera, never mirrored |
+| Layout | Left column: camera + audio; right column: state, ASR, P(group), countdowns | |
 | Monitor off/raw/clean | `.segmented` `[role=radiogroup]` `.is-active` | |
 | Live camera chip | `.chip.is-live` | Accent border + pulse |
 | Recording indicator | `#recInd` (pill on `--bad-soft`) | |

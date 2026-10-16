@@ -163,3 +163,13 @@
 .sig-sw,.roi-sw{display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--viz-raw)}
 .sig-group.clean .sig-sw{background:var(--viz-clean)}
 .roi-sw{margin-right:5px}.roi-sw.face{background:#6fd3db}.roi-sw.body{background:#bdbbff}
+
+/* v0.10.5 Live ASR caption over the camera (outside the mirrored layers). */
+.caption{position:absolute;left:50%;bottom:16px;transform:translate(-50%,6px);max-width:calc(100% - 32px);z-index:2;pointer-events:none;
+  opacity:0;transition:opacity .25s ease,transform .25s ease}
+.caption.is-in{opacity:1;transform:translate(-50%,0)}
+.caption:not(.is-in){transition-duration:.6s}
+.caption span{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;direction:rtl;unicode-bidi:plaintext;
+  padding:6px 14px;border-radius:var(--radius-control);background:color-mix(in srgb,var(--nav) 78%,transparent);
+  color:var(--on-nav);font-family:var(--font-sans);font-size:clamp(14px,2.2vw,20px);line-height:1.4;text-align:center}
+.caption:not(.is-final) span{color:var(--on-nav-2)}

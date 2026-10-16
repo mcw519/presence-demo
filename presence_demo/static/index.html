@@ -66,21 +66,8 @@
             <span class="quiet" id="roiVal" style="font-size:var(--text-small);font-family:var(--font-mono)"></span>
           </div>
           <div id="view"><video id="v" autoplay muted playsinline></video><canvas id="c"></canvas>
-            <div id="placeholder"><strong>按「開始」開啟鏡頭與麥克風</strong><small>需 HTTPS 或 localhost</small></div></div>
-        </div>
-      </div>
-      <div class="presence-stack">
-        <div class="panel panel-pad">
-          <div class="panel-title"><div><h2>狀態機</h2><p class="panel-help" id="reason">—</p></div></div>
-          <div class="fsm-axis" id="sm" role="group" aria-label="狀態"></div>
-          <div class="fsm-hist" id="smHist" aria-label="最近的狀態轉換"></div>
-          <div class="metric-row" style="margin-top:12px">
-            <div class="metric"><span>說話</span><strong id="spk">—</strong></div>
-            <div class="metric"><span>靜默</span><strong id="sil">0s</strong></div>
-            <div class="metric"><span>ROI</span><strong id="roiSt">—</strong></div>
-            <div class="metric"><span>Session</span><strong id="sess">—</strong></div>
-          </div>
-          <div class="meter" title="麥克風音量（黃線＝說話門檻、灰線＝噪音底）"><div class="lvl" id="lvl"></div><div class="flo" id="flo"></div><div class="thr" id="thr"></div></div>
+            <div id="placeholder"><strong>按「開始」開啟鏡頭與麥克風</strong><small>需 HTTPS 或 localhost</small></div>
+            <div id="cap" class="caption" aria-live="polite" hidden><span id="capTxt"></span></div></div>
         </div>
         <div class="panel panel-pad" id="aCard">
           <div class="panel-title"><div><h2>乾淨音軌</h2><p class="panel-help" id="aSt">—</p></div></div>
@@ -109,6 +96,20 @@
           <canvas id="tl" class="scope" style="width:100%;height:84px;display:block;border-radius:var(--radius-control) var(--radius-control) 0 0"></canvas>
           <div id="tlLeg"></div>
           <div class="kv" id="aKv"></div>
+        </div>
+      </div>
+      <div class="presence-stack">
+        <div class="panel panel-pad">
+          <div class="panel-title"><div><h2>狀態機</h2><p class="panel-help" id="reason">—</p></div></div>
+          <div class="fsm-axis" id="sm" role="group" aria-label="狀態"></div>
+          <div class="fsm-hist" id="smHist" aria-label="最近的狀態轉換"></div>
+          <div class="metric-row" style="margin-top:12px">
+            <div class="metric"><span>說話</span><strong id="spk">—</strong></div>
+            <div class="metric"><span>靜默</span><strong id="sil">0s</strong></div>
+            <div class="metric"><span>ROI</span><strong id="roiSt">—</strong></div>
+            <div class="metric"><span>Session</span><strong id="sess">—</strong></div>
+          </div>
+          <div class="meter" title="麥克風音量（黃線＝說話門檻、灰線＝噪音底）"><div class="lvl" id="lvl"></div><div class="flo" id="flo"></div><div class="thr" id="thr"></div></div>
         </div>
         <div class="panel panel-pad" id="asrCard">
           <div class="panel-title"><div><h2>語音辨識</h2><p class="panel-help" id="asrSt">關閉</p></div></div>
@@ -431,7 +432,7 @@ function applyDeps(){for(const m of MODULES){
   if(gn){const bad=m.gateNeed&&!m.gateNeed[0](cfg)&&cfg[m.gate]!=='none';gn.textContent=bad?'⚠ '+m.gateNeed[1]:gateOff?'（關閉：下方參數不適用）':'';}
   const body=$('mod_'+m.id).querySelector('.mbody'),hid=m.keys.filter(k=>$('row_'+k)&&$('row_'+k).hidden).length;
   body.dataset.hidden=hid;}}
-function syncUI(skip){
+function syncUI(skip){if(cfg.asr_provider==='none')captionOff();
  document.querySelectorAll('#groups input,#groups select').forEach(inp=>{if(inp===skip)return;const k=inp.dataset.k;
   if(inp.type==='checkbox'){inp.checked=!!cfg[k];return}
   const v=BOXES.includes(k)?(+cfg[k][+inp.dataset.i]).toFixed(2):cfg[k];inp.value=v;
@@ -772,9 +773,17 @@ function sg(id,an){if(!an)return;const c=$(id),g=c.getContext('2d');const img=g.
  for(let y=0;y<c.height;y++){const v=SGB[Math.floor((1-y/c.height)*SGB.length*0.5)];g.fillStyle=`hsl(${240-v*0.9},80%,${v/5.5}%)`;g.fillRect(c.width-1,y,1,1)}}
 setInterval(()=>{if(!running)return;sg('sgRaw',anRaw);sg('sgClean',anClean);drawTL()},100);
 const ASR=[];
-function onAsr(m){if(m.kind==='status'){$('asrSt').textContent={connected:'（連線中）',begin:'（辨識中'+(m.model?' · '+m.model:'')+'）',terminated:'（已結束）'}[m.status]||'';return}
+// 影像字幕：單行、逐字更新（partial 原地覆寫）、新句淡入、final 後停留再淡出。放在 canvas 外，不受鏡像影響
+const CAP_HOLD_MS=2500;let capTimer=null,capKey=null;
+function caption(m){const el=$('cap');if(!el)return;if(cfg.asr_provider==='none'||!m||!m.text){el.hidden=true;return}
+ const key=m.session+':'+m.turn_order;if(key!==capKey){capKey=key;el.classList.remove('is-in');void el.offsetWidth}
+ el.hidden=false;$('capTxt').textContent=m.text;el.classList.add('is-in');el.classList.toggle('is-final',m.kind==='final');
+ clearTimeout(capTimer);capTimer=setTimeout(()=>el.classList.remove('is-in'),m.kind==='final'?CAP_HOLD_MS:CAP_HOLD_MS*3)}
+function captionOff(){const el=$('cap');if(el){el.classList.remove('is-in');el.hidden=true}capKey=null}
+function onAsr(m){if(m.kind==='status'&&m.status==='terminated')captionOff();if(m.kind==='status'){$('asrSt').textContent={connected:'（連線中）',begin:'（辨識中'+(m.model?' · '+m.model:'')+'）',terminated:'（已結束）'}[m.status]||'';return}
  if(m.kind==='error'){$('asrSt').textContent='（錯誤：'+m.error+'）';return}
  const key=m.session+':'+m.turn_order;let e=ASR.find(x=>x.key===key);if(!e){e={key};ASR.push(e);if(ASR.length>100)ASR.shift()}Object.assign(e,m);
+ caption(m);
  $('asrList').innerHTML=ASR.slice().reverse().map(x=>`<div style="padding:3px 0;border-bottom:1px solid var(--line);${x.kind==='partial'?'color:var(--mut)':''}"><small style="color:var(--mut)">#${x.session} · ${x.start_s!=null?x.start_s.toFixed(1)+'–'+(x.end_s??0).toFixed(1)+' s':''}${x.language?' · '+x.language:''}</small> ${x.text.replace(/[<&]/g,c=>c==='<'?'&lt;':'&amp;')}</div>`).join('')}
 function addAsrKey(){const det=$('mod_asr');if(!det)return;
  det.insertAdjacentHTML('beforeend',`<div class="row"><div class="top"><label>AssemblyAI API key</label><span id="keySt" class="def">—</span></div>
