@@ -234,3 +234,6 @@
 .rv-info{display:flex;flex-direction:column;gap:3px;font-size:var(--text-small);color:var(--ink-2);min-width:0}
 .rv-info b{color:var(--ink);font-weight:600;font-size:var(--text-ui)}.rv-info b.ok{color:var(--ok)}
 .rv-info code{font-family:var(--font-mono);font-size:11px;color:var(--ink)}
+
+/* Language and theme switches stacked in the sidebar footer. */
+.sidebar-controls{display:flex;flex-direction:column;gap:6px}

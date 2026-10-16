@@ -1,7 +1,6 @@
 // Core helpers and theme (tokens: docs/ui.md); charts read the same CSS variables.
 // Classic script; all files share one global scope and load in order from index.html.
 const $=id=>document.getElementById(id);
-// ---------- theme (tokens: docs/DESIGN.md); charts read the same CSS variables ----------
 const K={};
 function pal(){const cs=getComputedStyle(document.documentElement);
  for(const n of['ok','warn','bad','accent','ink','ink-muted','violet','end','idle','viz-raw','viz-clean','viz-grid','viz-empty','viz-ink','line-strong'])K[n.replace(/-/g,'_')]=cs.getPropertyValue('--'+n).trim();

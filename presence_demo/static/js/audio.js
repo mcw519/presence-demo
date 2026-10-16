@@ -39,23 +39,23 @@ async function startAudio(ac){await ac.audioWorklet.addModule(URL.createObjectUR
   if(cfg.audio_pipeline!=='puresound'||!ws||ws.readyState!==1)return;
   const b=new ArrayBuffer(9+pcm.byteLength),dv=new DataView(b);dv.setUint8(0,1);dv.setFloat64(1,performance.now(),true);new Uint8Array(b,9).set(new Uint8Array(pcm.buffer,pcm.byteOffset,pcm.byteLength));ws.send(b)}}
 function setMonitor(m){cfg.monitor=m;if(rawMon)rawMon.gain.value=m==='raw'?1:0;if(cleanMon)cleanMon.gain.value=m==='clean'?1:0;document.querySelectorAll('#monBtns button').forEach(b=>{const on=b.dataset.m===m;b.classList.toggle('is-active',on);b.setAttribute('aria-checked',String(on))})}
-document.querySelectorAll('#monBtns button').forEach(b=>b.onclick=()=>{setMonitor(b.dataset.m);if(b.dataset.m!=='off')toast('監聽中：請戴耳機')});
+document.querySelectorAll('#monBtns button').forEach(b=>b.onclick=()=>{setMonitor(b.dataset.m);if(b.dataset.m!=='off')toast(t('toast.monitoring'))});
 // ---------- optional client-side recording (opt-in, default off) ----------
 // PRIVACY: the three aligned tracks live only in this page's memory and are saved to the user's own computer as a
 // zip download. The server only streams them while recording is on; it never writes audio.
 const REC_MAX_S=600;let rec=null;
 function recToggle(){if(rec)return recStop();
- if(!running){toast('請先按「開始」');return}if(cfg.audio_pipeline!=='puresound'){toast('錄音需要「音訊」模組使用 PureSound 管線');return}
+ if(!running){toast(t('toast.press_start'));return}if(cfg.audio_pipeline!=='puresound'){toast(t('toast.rec_needs_ps'));return}
  rec={t0:new Date(),n:0,raw:[],vi:[],out:[],blocks:[],states:[],settings:JSON.parse(JSON.stringify(cfg)),dropped0:aMeta?aMeta.dropped:0};
  wsSend({type:'record',on:true});recUI();rec.timer=setInterval(recUI,500)}
 function onRec(dv,buf){if(!rec)return;const n=dv.getUint32(9,true),o=13;
  rec.out.push(new Int16Array(buf.slice(o,o+2*n)));rec.vi.push(new Int16Array(buf.slice(o+2*n,o+4*n)));rec.raw.push(new Int16Array(buf.slice(o+4*n,o+6*n)));rec.n+=n;
- if(rec.n>=REC_MAX_S*16000){recStop();toast('已達最長 10 分鐘，自動停止並下載')}}
+ if(rec.n>=REC_MAX_S*16000){recStop();toast(t('toast.rec_max'))}}
 function recMeta(s){if(!rec)return;const t=+(rec.n/16000).toFixed(3);
  if(s.type==='audio'&&s.available!==false)rec.blocks.push({t,decision:s.decision,why:s.why,speech:s.speech,clean_vad:s.clean_vad,raw_vad:s.raw_vad,gain:s.gain,mix:s.mix,state:s.state,p_group:s.p_group,target_track:s.target_track,distance:s.distance});
  if(s.type==='state'){const l=rec.states[rec.states.length-1];if(!l||l.state!==s.state||l.session!==s.session)rec.states.push({t,state:s.state,session:s.session,participants:(s.tracks||[]).filter(x=>x.participant).length})}}
-function recUI(){const on=!!rec;$('recInd').classList.toggle('on',on);$('recBtn').textContent=on?'停止並下載':'錄音';$('recBtn').classList.toggle('button-danger',on);
- if(on){const sec=rec.n/16000,f=x=>`${Math.floor(x/60)}:${String(Math.floor(x%60)).padStart(2,'0')}`;$('recInd').textContent=`● 錄音中 ${f(sec)} / ${f(REC_MAX_S)}`;$('recSt').textContent=`錄音中 ${f(sec)}（最長 ${f(REC_MAX_S)}）・只在瀏覽器記憶體`}}
+function recUI(){const on=!!rec;$('recInd').classList.toggle('on',on);$('recBtn').textContent=on?t('rec.stop'):t('rec.start');$('recBtn').classList.toggle('button-danger',on);
+ if(on){const sec=rec.n/16000,f=x=>`${Math.floor(x/60)}:${String(Math.floor(x%60)).padStart(2,'0')}`;$('recInd').textContent=t('rec.ind',{t:f(sec),m:f(REC_MAX_S)});$('recSt').textContent=t('rec.st',{t:f(sec),m:f(REC_MAX_S)})}}
 function wav(chunks,n){const b=new ArrayBuffer(44+2*n),v=new DataView(b),w=(o,t)=>[...t].forEach((c,i)=>v.setUint8(o+i,c.charCodeAt(0)));
  w(0,'RIFF');v.setUint32(4,36+2*n,true);w(8,'WAVEfmt ');v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);v.setUint32(24,16000,true);v.setUint32(28,32000,true);v.setUint16(32,2,true);v.setUint16(34,16,true);w(36,'data');v.setUint32(40,2*n,true);
  let o=44;const u=new Uint8Array(b);for(const c of chunks){u.set(new Uint8Array(c.buffer,c.byteOffset,c.byteLength),o);o+=c.byteLength}return u}
@@ -69,15 +69,15 @@ function zip(files){const parts=[],cd=[];let off=0;const enc=new TextEncoder();
  const cdl=cd.reduce((a,x)=>a+x.length,0),e=new DataView(new ArrayBuffer(22));e.setUint32(0,0x06054b50,true);e.setUint16(8,files.length,true);e.setUint16(10,files.length,true);e.setUint32(12,cdl,true);e.setUint32(16,off,true);
  return new Blob([...parts,...cd,new Uint8Array(e.buffer)],{type:'application/zip'})}
 function recStop(){const r=rec;if(!r)return;rec=null;clearInterval(r.timer);wsSend({type:'record',on:false});recUI();
- $('recSt').textContent='已停止，正在產生下載…';
- if(!r.n){toast('沒有錄到聲音（PureSound 是否在運作？）');$('recSt').textContent='';return}
+ $('recSt').textContent=t('rec.stopping');
+ if(!r.n){toast(t('toast.rec_empty'));$('recSt').textContent='';return}
  const p=x=>String(x).padStart(2,'0'),d=r.t0,stamp=`${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`,base='presence-'+stamp;
- const side={format:'16 kHz mono PCM16 WAV',tracks:{raw:'麥克風輸入（已補償 PureSound 延遲，與 vi/out 逐樣本對齊）',vi:'PureSound 人聲分離輸出（未經影像交叉確認）',out:'最終輸出（影像交叉確認後，即監聽的乾淨音軌）'},
+ const side={format:'16 kHz mono PCM16 WAV',tracks:{raw:'microphone input (PureSound latency compensated, sample-aligned with vi/out)',vi:'PureSound voice isolation output (before the vision cross-check)',out:'final output (after the vision cross-check; the clean monitored track)'},
   started_at:d.toISOString(),duration_s:+(r.n/16000).toFixed(3),samples:r.n,algo_latency_ms:aMeta?aMeta.algo_latency_ms:null,
-  server_dropped_chunks:aMeta?aMeta.dropped-r.dropped0:null,note:'t＝相對錄音開頭的秒數（以樣本數計）；伺服器丟棄的區塊不在檔案中。',blocks:r.blocks,states:r.states,settings:r.settings};
+  server_dropped_chunks:aMeta?aMeta.dropped-r.dropped0:null,note:'t = seconds from the start of the recording (by sample count); blocks dropped by the server are not in the files.',blocks:r.blocks,states:r.states,settings:r.settings};
  const enc=new TextEncoder(),z=zip([[base+'_raw.wav',wav(r.raw,r.n)],[base+'_vi.wav',wav(r.vi,r.n)],[base+'_out.wav',wav(r.out,r.n)],[base+'.json',enc.encode(JSON.stringify(side,null,1))]]);
  const a=document.createElement('a');a.href=URL.createObjectURL(z);a.download=base+'.zip';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),60000);
- $('recSt').textContent=`已下載 ${base}.zip（${(r.n/16000).toFixed(1)} s，三軌＋JSON）`;toast('錄音已下載到你的電腦')}
+ $('recSt').textContent=t('rec.done',{f:base,s:(r.n/16000).toFixed(1)});toast(t('toast.rec_done'))}
 $('recBtn').onclick=recToggle;
 let lastLat=null,pst=null;const LATS=[];
 const outLat=()=>ac?((ac.baseLatency||0)+(ac.outputLatency||0))*1000:0;
@@ -88,7 +88,7 @@ function meterPush(arr,pcm){let mx=0;for(let i=0;i<pcm.length;i+=4)mx=Math.max(m
 function wave(id,arr,col){const c=$(id),d=devicePixelRatio||1,r=c.getBoundingClientRect();if(!r.width)return;c.width=r.width*d;c.height=r.height*d;const x=c.getContext('2d'),W=c.width,H=c.height;
  x.fillStyle=col;arr.forEach((v,i)=>{const h=Math.max(1,Math.sqrt(v)*H);x.fillRect(i/250*W,(H-h)/2,Math.max(1,W/250),h)})}
 const db=a=>{const v=a.length?a[a.length-1]:0;return v>0?(20*Math.log10(v)).toFixed(0)+' dBFS':'—'};
-// 音軌顯示：波形／頻譜／兩者，存在 localStorage；隱藏的 canvas 不重畫
+// Tracks view: waveform / spectrogram / both, kept in localStorage; hidden canvases are not redrawn
 const TRK_KEY='presence.trackView',TRK=['wave','spec','both'];let trkView=TRK.includes(localStorage.getItem(TRK_KEY))?localStorage.getItem(TRK_KEY):'both';
 const showWave=()=>trkView!=='spec',showSpec=()=>trkView!=='wave';
 function setTrkView(v){trkView=TRK.includes(v)?v:'both';localStorage.setItem(TRK_KEY,trkView);$('sigStack').dataset.view=trkView;$('stage').dataset.view=trkView;
@@ -99,33 +99,34 @@ setInterval(()=>{if(!running)return;$('dbRaw').textContent=dbv(WR);$('dbClean').
 setInterval(()=>{if(!running||!showWave())return;wave('wRaw',WR,K.viz_raw);wave('wClean',WC,aMeta&&aMeta.clean_vad?K.ok:K.viz_clean)},100);
 function monLat(){if(lastLat==null)return'—';const s=[...LATS].sort((x,y)=>x-y),p=q=>s[Math.min(s.length-1,Math.floor(q*s.length))];
  const buf=pst?pst.buf_ms:0,tot=20+aMeta.algo_latency_ms+p(0.5)+buf+outLat();
- return `約 ${tot.toFixed(0)} ms ＝ 擷取 20 + 演算法 ${aMeta.algo_latency_ms} + 往返 ${p(0.5).toFixed(0)}（p95 ${p(0.95).toFixed(0)}）+ 緩衝 ${buf.toFixed(0)} + 輸出 ${outLat().toFixed(0)} ms`+(pst?` · 斷音 ${pst.under} 次 · 追趕丟棄 ${pst.drop_ms.toFixed(0)} ms`:'')+` · 伺服器佇列 ${aMeta.queue}（最多 ${aMeta.backlog_max??0}）`}
+ return t('lat.mon',{tot:tot.toFixed(0),a:aMeta.algo_latency_ms,rt:p(0.5).toFixed(0),p95:p(0.95).toFixed(0),b:buf.toFixed(0),o:outLat().toFixed(0)})+(pst?t('lat.mon_under',{u:pst.under,d:pst.drop_ms.toFixed(0)}):'')+t('lat.mon_queue',{q:aMeta.queue,m:aMeta.backlog_max??0})}
 function renderAudio(){const a=aMeta;if(!a)return;
- if(a.available===false){$('aSt').textContent='（無法使用）';$('aKv').innerHTML=`<span>原因</span><span>${a.error}</span>`;return}
- const LB={agree:'✅ 一致',leak:'漏音',false_reject:'聲學誤判-漏收',false_accept:'聲學誤判-超出範圍',silence:'安靜',acoustic_only:'只看聲音'};
- $('aSt').textContent=(LB[a.decision]||a.decision)+(a.speech?' · 🎙 算說話':'');
- const kv={'判斷':`${LB[a.decision]||a.decision}${a.why?'（'+a.why+'）':''}`,
-  '次數':`漏音 ${a.counts.leak} · 聲學誤判-漏收 ${a.counts.false_reject} · 聲學誤判-超出範圍 ${a.counts.false_accept} · 一致 ${a.counts.agree}`,'VAD 乾淨 / 原始':`${a.clean_vad?'說話':'—'} / ${a.raw_vad?'說話':'—'} · 乾淨開頭 ${a.onsets} 次 · ${a.vad_source==='energy_on_enhanced'?'分離後能量':'模型 VAD'}`,
-  '電平 原始 / 乾淨':`${a.raw_db} / ${a.clean_db} dBFS（波形峰值 ${db(WR)} / ${db(WC)}）`,
-  '閘門':a.gain<0.5?`🔇 壓低（${(20*Math.log10(Math.max(a.gain,1e-4))).toFixed(0)} dB）`:'🔊 通過',
-  '混合 / 增益':`增強 ${(a.mix*100).toFixed(0)}% · 原聲 ${(100-a.mix*100).toFixed(0)}% · 增益 ${a.gain}`,
-  '影像對齊':a.t_vision_client!=null?`決策用的畫面比音訊早 ${((a.t_client-a.t_vision_client)/1000).toFixed(2)} s`:'—',
-  '語音辨識':a.asr?`${a.asr.provider==='none'?'關閉':a.asr.provider} · key ${a.asr.key_set?'已設定':'未設定'} · ${a.asr.connected?'連線中':'未連線'} · 已送 ${a.asr.sent_s} s`:'—',
-  '目標':a.target_track!=null?`#${a.target_track}${a.distance!=null?' · '+a.distance+' m':''}`:'—','P(group)':a.p_group??'—',
-  'RTF（單執行緒）':a.rtf??'—','處理 / 佇列':`${a.proc_ms} ms · 佇列 ${a.queue} · 丟棄 ${a.dropped} · 重置 ${a.resets}`,
-  '延遲':`演算法 ${a.algo_latency_ms} ms + 傳輸/處理 ${lastLat!=null?lastLat.toFixed(0):'—'} ms + 擷取 20 ms`,
-  '監聽延遲（擷取→播放）':monLat()};
+ if(a.available===false){$('aSt').textContent=t('a.unavailable');$('aKv').innerHTML=`<span>${t('a.reason')}</span><span>${a.error}</span>`;return}
+ const LB=XC_LABEL;
+ $('aSt').textContent=(LB[a.decision]||a.decision)+(a.speech?t('a.speech'):'');
+ const kv={[t('akv.decision')]:`${LB[a.decision]||a.decision}${a.why?' ('+a.why+')':''}`,
+  [t('akv.counts')]:t('akv.counts_v',{l:a.counts.leak,fr:a.counts.false_reject,fa:a.counts.false_accept,a:a.counts.agree}),[t('akv.vad')]:`${a.clean_vad?t('akv.speaking'):'—'} / ${a.raw_vad?t('akv.speaking'):'—'}${t('akv.onsets',{n:a.onsets})}${a.vad_source==='energy_on_enhanced'?t('akv.vad_energy'):t('akv.vad_model')}`,
+  [t('akv.level')]:t('akv.level_v',{r:a.raw_db,c:a.clean_db,wr:db(WR),wc:db(WC)}),
+  [t('akv.gate')]:a.gain<0.5?t('akv.gate_down',{db:(20*Math.log10(Math.max(a.gain,1e-4))).toFixed(0)}):t('akv.gate_pass'),
+  [t('akv.mix')]:t('akv.mix_v',{e:(a.mix*100).toFixed(0),o:(100-a.mix*100).toFixed(0),g:a.gain}),
+  [t('akv.align')]:a.t_vision_client!=null?t('akv.align_v',{s:((a.t_client-a.t_vision_client)/1000).toFixed(2)}):'—',
+  [t('akv.asr')]:a.asr?t('akv.asr_v',{p:a.asr.provider==='none'?t('akv.asr_off'):a.asr.provider,k:a.asr.key_set?t('key.set'):t('key.unset'),c:a.asr.connected?t('akv.connected'):t('akv.disconnected'),s:a.asr.sent_s}):'—',
+  [t('akv.target')]:a.target_track!=null?`#${a.target_track}${a.distance!=null?' · '+a.distance+' m':''}`:'—','P(group)':a.p_group??'—',
+  [t('akv.rtf')]:a.rtf??'—',[t('akv.proc')]:t('akv.proc_v',{ms:a.proc_ms,q:a.queue,d:a.dropped,r:a.resets}),
+  [t('akv.latency')]:t('akv.latency_v',{a:a.algo_latency_ms,l:lastLat!=null?lastLat.toFixed(0):'—'}),
+  [t('akv.mon_latency')]:monLat()};
  $('aKv').innerHTML=Object.entries(kv).map(([k,v])=>`<span>${k}</span><span>${v}</span>`).join('')}
+const XC_LABEL={get agree(){return t('xc.agree')},get leak(){return t('xc.leak')},get false_reject(){return t('xc.false_reject')},get false_accept(){return t('xc.false_accept')},get silence(){return t('xc.silence')},get acoustic_only(){return t('xc.acoustic_only')}};
 const DC={};
 const SC={};pal();
 const TLH=[];
-function legend(){$('tlLeg').innerHTML=Object.entries({agree:'一致',leak:'漏音',false_reject:'聲學誤判-漏收',false_accept:'聲學誤判-超出範圍',silence:'安靜',acoustic_only:'只看聲音'}).map(([k,v])=>`<span style="color:${DC[k]}">■</span>${v}`).join(' ')}legend();
+function legend(){$('tlLeg').innerHTML=Object.entries(XC_LABEL).map(([k,v])=>[k,v.replace(/^✅ /,'')]).map(([k,v])=>`<span style="color:${DC[k]}">■</span>${v}`).join(' ')}legend();
 function drawTL(){const c=$('tl'),d=devicePixelRatio||1,r=c.getBoundingClientRect();if(!r.width)return;c.width=r.width*d;c.height=r.height*d;const g=c.getContext('2d'),W=c.width,H=c.height,now=performance.now(),rows=5,rh=H/rows;
  g.clearRect(0,0,W,H);TLH.forEach((e,i)=>{const n=TLH[i+1];const x0=(e.t-now+30000)/30000*W,x1=((n?n.t:now)-now+30000)/30000*W,w=Math.max(1,x1-x0);
   if(e.raw){g.fillStyle=K.viz_raw;g.fillRect(x0,0,w,rh-1)}if(e.clean){g.fillStyle=K.viz_clean;g.fillRect(x0,rh,w,rh-1)}if(e.sp){g.fillStyle=K.ok;g.fillRect(x0,2*rh,w,rh-1)}
   g.fillStyle=DC[e.dec]||K.viz_empty;g.fillRect(x0,3*rh,w,rh-1);g.fillStyle=SC[e.st]||K.viz_empty;g.fillRect(x0,4*rh,w,rh-1)});
  g.strokeStyle=K.accent;g.lineWidth=1.5*d;g.beginPath();let on=false;TLH.forEach(e=>{if(e.p==null){on=false;return}const x=(e.t-now+30000)/30000*W,y=H-e.p*H;on?g.lineTo(x,y):g.moveTo(x,y);on=true});g.stroke();
- g.fillStyle=K.viz_ink;g.font=`${9*d}px sans-serif`;['原始','乾淨','說話','判斷','狀態'].forEach((t,i)=>g.fillText(t,2*d,i*rh+rh*0.75))}
+ g.fillStyle=K.viz_ink;g.font=`${9*d}px sans-serif`;['raw','clean','speech','decision','state'].forEach((k,i)=>g.fillText(t('tl.'+k),2*d,i*rh+rh*0.75))}
 let anRaw=null,anClean=null;const SGB=new Uint8Array(128);
 function sg(id,an){if(!an)return;const c=$(id),g=c.getContext('2d');const img=g.getImageData(1,0,c.width-1,c.height);g.putImageData(img,0,0);an.getByteFrequencyData(SGB);
  for(let y=0;y<c.height;y++){const v=SGB[Math.floor((1-y/c.height)*SGB.length*0.5)];g.fillStyle=`hsl(${240-v*0.9},80%,${v/5.5}%)`;g.fillRect(c.width-1,y,1,1)}}
