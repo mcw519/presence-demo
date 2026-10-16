@@ -53,29 +53,27 @@
     </header>
     <div class="presence-workbench">
       <div class="workbench-main presence-stack">
+        <div class="stage-head">
+          <div><h2>監看</h2><p class="panel-help">影像與音軌同一時間；上：原始 noisy・下：輸出 output</p></div>
+          <div class="segmented" id="trkView" role="radiogroup" aria-label="音軌顯示">
+            <button type="button" role="radio" data-v="wave" aria-checked="false">波形</button>
+            <button type="button" role="radio" data-v="spec" aria-checked="false">頻譜</button>
+            <button type="button" role="radio" data-v="both" aria-checked="true" class="is-active">兩者</button>
+          </div>
+        </div>
         <section class="panel monitor-stage" id="stage" data-view="both" aria-label="監看：影像與音訊">
           <div id="view"><video id="v" autoplay muted playsinline></video><canvas id="c"></canvas>
             <div id="placeholder"><strong>按「開始」開啟鏡頭與麥克風</strong><small>需 HTTPS 或 localhost</small></div>
             <div id="cap" class="caption" aria-live="polite" hidden><span id="capTxt"></span></div></div>
-          <div class="stage-bar">
-            <span class="stage-bar-title">音軌<small>上：原始 noisy・下：輸出 output・同一時間軸</small></span>
-            <div class="segmented" id="trkView" role="radiogroup" aria-label="音軌顯示">
-              <button type="button" role="radio" data-v="wave" aria-checked="false">波形</button>
-              <button type="button" role="radio" data-v="spec" aria-checked="false">頻譜</button>
-              <button type="button" role="radio" data-v="both" aria-checked="true" class="is-active">兩者</button>
-            </div>
-          </div>
           <div class="sig-stack" id="sigStack" data-view="both" aria-label="音訊：原始與輸出">
-          <div class="sig-group raw" id="grpRaw">
-            <p class="sig-head"><i class="sig-sw"></i>原始 noisy<span>麥克風 16 kHz</span></p>
-            <canvas id="wRaw" class="scope trk-wave"></canvas>
-            <canvas id="sgRaw" class="scope trk-spec" width="300" height="64"></canvas>
-          </div>
-          <div class="sig-group clean" id="grpClean">
-            <p class="sig-head"><i class="sig-sw"></i>輸出 output<span>PureSound</span></p>
-            <canvas id="wClean" class="scope trk-wave"></canvas>
-            <canvas id="sgClean" class="scope trk-spec" width="300" height="64"></canvas>
-          </div>
+            <div class="sig-lane raw" id="grpRaw">
+              <div class="lane-label"><i></i><span>原始</span><small>noisy</small><b class="lane-db" id="dbRaw">—</b></div>
+              <div class="lane-plots"><canvas id="wRaw" class="scope trk-wave"></canvas><canvas id="sgRaw" class="scope trk-spec" width="300" height="64"></canvas></div>
+            </div>
+            <div class="sig-lane clean" id="grpClean">
+              <div class="lane-label"><i></i><span>輸出</span><small>output</small><b class="lane-db" id="dbClean">—</b></div>
+              <div class="lane-plots"><canvas id="wClean" class="scope trk-wave"></canvas><canvas id="sgClean" class="scope trk-spec" width="300" height="64"></canvas></div>
+            </div>
           </div>
         </section>
         <div class="panel panel-pad" id="roiCard">
@@ -756,6 +754,8 @@ const showWave=()=>trkView!=='spec',showSpec=()=>trkView!=='wave';
 function setTrkView(v){trkView=TRK.includes(v)?v:'both';localStorage.setItem(TRK_KEY,trkView);$('sigStack').dataset.view=trkView;$('stage').dataset.view=trkView;
  $('trkView').querySelectorAll('button').forEach(b=>{const on=b.dataset.v===trkView;b.classList.toggle('is-active',on);b.setAttribute('aria-checked',on)});if(typeof fit==='function')fit()}
 $('trkView').addEventListener('click',e=>{const b=e.target.closest('button[data-v]');if(b)setTrkView(b.dataset.v)});setTrkView(trkView);
+const dbv=a=>{const v=a.length?a[a.length-1]:0;return v>0?(20*Math.log10(v)).toFixed(0):'—'};
+setInterval(()=>{if(!running)return;$('dbRaw').textContent=dbv(WR);$('dbClean').textContent=dbv(WC)},250);
 setInterval(()=>{if(!running||!showWave())return;wave('wRaw',WR,K.viz_raw);wave('wClean',WC,aMeta&&aMeta.clean_vad?K.ok:K.viz_clean)},100);
 function monLat(){if(lastLat==null)return'—';const s=[...LATS].sort((x,y)=>x-y),p=q=>s[Math.min(s.length-1,Math.floor(q*s.length))];
  const buf=pst?pst.buf_ms:0,tot=20+aMeta.algo_latency_ms+p(0.5)+buf+outLat();

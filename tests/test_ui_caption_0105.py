@@ -15,7 +15,7 @@ def test_audio_panel_is_in_left_column_below_camera():
 
 
 def test_caption_overlay_outside_mirrored_layers():
-    view = re.search(r'<div id="view">(.*?)</div>\s*<div class="stage-bar"', HTML, re.S).group(1)
+    view = re.search(r'<div id="view">(.*?)</div>\s*<div class="sig-stack"', HTML, re.S).group(1)
     assert 'id="cap"' in view and "hidden" in view
     assert "#view video.mirror" in CSS and ".caption" in CSS and "scaleX" not in CSS[CSS.index("v0.10.5") :]
 
@@ -48,9 +48,20 @@ def test_tracks_stacked_with_view_switch_0107():
     stage = HTML[HTML.index('id="stage"') : HTML.index("</section>", HTML.index('id="stage"'))]
     assert stage.index('id="grpRaw"') < stage.index('id="grpClean"')  # noisy on top, output below
     assert "sig-pair" not in HTML and "grid-template-columns:1fr 1fr" not in CSS[CSS.index("v0.10.6") :]
-    pick = re.search(r'id="trkView".*?</div>', stage, re.S).group(0)
+    pick = re.search(r'id="trkView".*?</div>', HTML, re.S).group(0)
     assert all(f'data-v="{v}"' in pick for v in ("wave", "spec", "both"))
     assert "localStorage.setItem(TRK_KEY" in HTML
     assert "if(!running||!showWave())return;wave(" in HTML and "if(showSpec()){sg(" in HTML  # hidden canvases not drawn
     for v in ("wave", "spec"):
         assert f".monitor-stage[data-view={v}]" in CSS  # per-mode track heights keep the frame in the viewport
+
+
+def test_view_switch_outside_frame_and_lane_gutters_0108():
+    a = HTML.index('id="stage"'); stage = HTML[a : HTML.index("</section>", a)]
+    assert 'id="trkView"' not in stage and HTML.index('id="trkView"') < a  # switch sits in the header above the frame
+    for lane, db in (("grpRaw", "dbRaw"), ("grpClean", "dbClean")):
+        block = stage[stage.index(f'id="{lane}"') :]
+        assert block.index('class="lane-label"') < block.index('class="lane-plots"') and f'id="{db}"' in block
+    css = CSS[CSS.index("v0.10.6") :]
+    assert "grid-template-columns:var(--lane-gutter) minmax(0,1fr)" in css  # same gutter => aligned time axes
+    assert ".monitor-stage{display:grid;gap:10px;padding:12px" in css  # inner gutter, not full-bleed

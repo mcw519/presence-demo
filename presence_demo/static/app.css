@@ -174,25 +174,32 @@
   color:var(--on-nav);font-family:var(--font-sans);font-size:clamp(14px,2.2vw,20px);line-height:1.4;text-align:center}
 .caption:not(.is-final) span{color:var(--on-nav-2)}
 
-/* v0.10.6–0.10.7 Monitor stage: one dark frame = camera (+caption), a toolbar, and the
- * raw/output tracks stacked full width (shared time axis). The frame width follows the
- * viewport height minus the chrome + track height of the current view, so it always fits. */
-.monitor-stage{--trk-wave:28px;--trk-spec:36px;--trk-total:178px;
-  background:var(--nav);border-color:var(--nav-line);overflow:hidden;padding:0;
-  width:min(100%,calc((100vh - 154px - var(--trk-total)) * 4 / 3));min-width:min(100%,380px);margin-inline:auto}
-.monitor-stage[data-view=wave]{--trk-wave:44px;--trk-total:134px}
-.monitor-stage[data-view=spec]{--trk-spec:56px;--trk-total:158px}
-.monitor-stage #view{border:0;border-radius:0}
-.stage-bar{display:flex;align-items:center;justify-content:space-between;gap:8px;height:30px;padding:0 8px;border-top:1px solid var(--nav-line);border-bottom:1px solid var(--nav-line)}
-.stage-bar-title{color:var(--on-nav);font-size:var(--text-small);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.stage-bar-title small{margin-left:8px;font-weight:400;color:var(--on-nav-2)}
-.stage-bar .segmented{transform:scale(.86);transform-origin:right center}
-.sig-stack{display:grid;gap:1px;background:var(--nav-line)}
-.monitor-stage .sig-group{position:relative;display:grid;gap:2px;margin:0;padding:4px 8px 4px 8px;border:0;border-radius:0;background:var(--nav);box-shadow:inset 3px 0 0 var(--viz-raw)}
-.monitor-stage .sig-group.clean{box-shadow:inset 3px 0 0 var(--viz-clean)}
-.monitor-stage .sig-head{position:absolute;z-index:1;left:14px;top:6px;margin:0;padding:1px 6px;border-radius:4px;background:color-mix(in srgb,var(--nav) 70%,transparent);
-  font-size:11px;color:var(--on-nav);pointer-events:none}
-.monitor-stage .sig-head span{color:var(--on-nav-2);font-size:11px}
-.monitor-stage .scope{display:block;width:100%;background:var(--nav-2)}
-.trk-wave{height:var(--trk-wave)}.trk-spec{height:var(--trk-spec)}
+/* v0.10.6–0.10.8 Monitor stage, modelled on PureSound's CompareDeck (deck.css): a dark
+ * frame with an inner gutter; the video is a rounded inset; the tracks sit in an inset
+ * panel as time-aligned lanes with a fixed label gutter. Video and lanes share the same
+ * left/right edges. The frame width follows the viewport height so it always fits. */
+.stage-head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;
+  width:min(100%,calc((100vh - var(--stage-chrome)) * 4 / 3 + 24px));min-width:min(100%,404px);margin:0 auto -6px}
+.stage-head h2{margin:0;font-size:var(--text-lead)}
+.stage-head .panel-help{margin:2px 0 0;font-size:var(--text-small)}
+:root{--stage-chrome:378px;--lane-gutter:92px;--lane-wave:26px;--lane-spec:34px}
+:root:has(.monitor-stage[data-view=wave]){--stage-chrome:344px;--lane-wave:40px}
+:root:has(.monitor-stage[data-view=spec]){--stage-chrome:344px;--lane-spec:40px}
+.monitor-stage{display:grid;gap:10px;padding:12px;background:var(--nav-2);border-color:var(--nav-line);color:var(--on-nav);
+  width:min(100%,calc((100vh - var(--stage-chrome)) * 4 / 3 + 24px));min-width:min(100%,404px);margin-inline:auto}
+.monitor-stage #view{border:1px solid var(--nav-line);border-radius:var(--radius-control)}
+.sig-stack{display:grid;padding:6px 8px;background:var(--nav);border:1px solid var(--nav-line);border-radius:var(--radius-control)}
+.sig-lane{display:grid;grid-template-columns:var(--lane-gutter) minmax(0,1fr);align-items:center;gap:10px;padding:4px 0}
+.sig-lane + .sig-lane{border-top:1px solid rgba(255,255,255,.06)}
+.lane-label{display:grid;grid-template-columns:8px 1fr auto;grid-template-rows:auto auto;column-gap:6px;align-items:center;min-width:0}
+.lane-label i{grid-row:1;width:8px;height:8px;border-radius:50%;background:var(--viz-raw)}
+.sig-lane.clean .lane-label i{background:var(--viz-clean)}
+.lane-label span{grid-row:1;grid-column:2;color:var(--on-nav);font-size:var(--text-small);font-weight:600}
+.lane-label small{grid-row:2;grid-column:2 / 4;overflow:hidden;color:var(--on-nav-2);font-family:var(--font-mono);font-size:9.5px;white-space:nowrap;text-overflow:ellipsis}
+.lane-db{grid-row:1;grid-column:3;color:var(--on-nav-2);font-family:var(--font-mono);font-size:10px;font-weight:500;font-variant-numeric:tabular-nums}
+.lane-db::after{content:" dB";opacity:.6}
+.lane-plots{display:grid;gap:3px;min-width:0}
+.monitor-stage .scope{display:block;width:100%;border-radius:3px;background:var(--nav-2)}
+.trk-wave{height:var(--lane-wave)}.trk-spec{height:var(--lane-spec)}
 .sig-stack[data-view=wave] .trk-spec,.sig-stack[data-view=spec] .trk-wave{display:none}
+@media (max-width:640px){:root{--lane-gutter:64px}.lane-label small{display:none}}
