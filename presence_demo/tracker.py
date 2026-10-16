@@ -154,6 +154,7 @@ class Config:
     # optional cross-session re-ID ("is this a new user?"), docs/REID.md. Off by default; cloud; needs consent.
     reid_enabled: bool = False
     reid_consent: bool = False  # the operator confirmed users are informed (face crops kept in memory + sent out)
+    reid_show_crops: bool = True  # send small display thumbnails of the compared faces to this browser only
     reid_provider: str = "jev"
     reid_model: str = "jev-latest"
     reid_threshold: float = 0.9  # >= -> same person -> resume the previous conversation
@@ -369,6 +370,7 @@ RANGES = {
     "asr_max_turn_silence": (100, 10000, int),
     "reid_enabled": (False, True, bool),
     "reid_consent": (False, True, bool),
+    "reid_show_crops": (False, True, bool),
     "reid_provider": (("jev",), None, str),
     "reid_model": (("jev-latest", "jev-1.13.0"), None, str),
     "reid_threshold": (0.5, 0.99, float),

@@ -19,7 +19,9 @@ def _snapshot(*dirs: Path) -> dict[str, tuple[int, float]]:
     out = {}
     for d in dirs:
         for root, dnames, files in os.walk(d):
-            dnames[:] = [x for x in dnames if x not in {".venv", ".git", "__pycache__", ".pytest_cache"}]
+            dnames[:] = [
+                x for x in dnames if x not in {".venv", ".git", "__pycache__", ".pytest_cache", "logs"}
+            ]  # logs/: the live dev server
             for f in files:
                 p = os.path.join(root, f)
                 try:

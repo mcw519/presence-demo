@@ -221,6 +221,7 @@ API key 不是設定值：用環境變數 `ASSEMBLYAI_API_KEY` 或 UI 的密碼�
 |---|---|---|---|
 | `reid_enabled` | 關 | 開/關 | 新 session 時判斷是否為上一位使用者 |
 | `reid_consent` | 關 | 開/關 | 部署者確認已告知使用者並取得同意；沒開就不運作 |
+| `reid_show_crops` | 開 | 開/關 | 「顯示比對照片」：在「使用者比對」卡片顯示這次的臉和參考臉的小縮圖（112 px，只送到這個瀏覽器，不寫磁碟或 log） |
 | `reid_provider` *進階* | `jev` | `jev` | 雲端後端（可抽換介面） |
 | `reid_model` | `jev-latest` | `jev-latest` / `jev-1.13.0` | 固定版本可確保結果可重現 |
 | `reid_threshold` | 0.9 | 0.5–0.99 | ≥ 門檻＝同一人 → 接續 |

@@ -261,7 +261,7 @@ def test_ws_audio_round_trip_writes_no_files():
         out = {}
         for d in dirs:
             for root, dn, files in os.walk(d):
-                dn[:] = [x for x in dn if x not in {".venv", ".git", "__pycache__", ".pytest_cache"}]
+                dn[:] = [x for x in dn if x not in {".venv", ".git", "__pycache__", ".pytest_cache", "logs"}]
                 for f in files:
                     p = os.path.join(root, f)
                     try:

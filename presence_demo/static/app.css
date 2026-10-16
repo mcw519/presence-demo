@@ -209,3 +209,28 @@
 .reid-line b{color:var(--ink);font-weight:600}.reid-line b.ok{color:var(--ok)}
 .reid-line code{font-family:var(--font-mono);font-size:11px;color:var(--ink-2)}
 .reid-line .sp{margin-left:auto;font-family:var(--font-mono);font-size:11px}
+
+/* v0.11.2 Settings: inserted rows (API keys, calibration) get the module body's inner padding; inputs never touch
+   the card edge; buttons use PureSound .button classes; key status badge. */
+.mod > .row{padding:10px 12px}
+.row .control{box-sizing:border-box;max-width:100%}
+.row.keyrow .control{width:100%;margin-top:8px}
+.row.keyrow .btns{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.row .top .control[type=number]{width:84px;flex:none}
+.kbadge{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 9px;border:1px solid var(--line);border-radius:var(--radius-pill);font-size:11px;color:var(--ink-2);background:var(--canvas);white-space:nowrap}
+.kbadge::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--ink-3)}
+.kbadge.is-set{color:var(--ok);border-color:currentColor}.kbadge.is-set::before{background:var(--ok)}
+
+/* v0.11.2 Re-ID comparison card (display-only thumbnails, memory only). */
+#reidCard .panel-title{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+.rv-list{display:flex;flex-direction:column;gap:10px;margin-top:8px}
+.rv-row{display:grid;grid-template-columns:auto auto auto 1fr;align-items:center;gap:8px;padding-top:10px;border-top:1px solid var(--line)}
+.rv-row:first-child{border-top:0;padding-top:0}
+.rv-row figure{margin:0;text-align:center}
+.rv-row img,.rv-ph{display:block;width:72px;height:72px;border-radius:10px;object-fit:cover;background:var(--sunken);border:1px solid var(--line)}
+.rv-ph{display:flex;align-items:center;justify-content:center;text-align:center;font-size:11px;color:var(--ink-3);line-height:1.3}
+.rv-row figcaption{font-size:11px;color:var(--ink-2);margin-top:3px;font-family:var(--font-mono)}
+.rv-vs{color:var(--ink-3);font-size:14px}
+.rv-info{display:flex;flex-direction:column;gap:3px;font-size:var(--text-small);color:var(--ink-2);min-width:0}
+.rv-info b{color:var(--ink);font-weight:600;font-size:var(--text-ui)}.rv-info b.ok{color:var(--ok)}
+.rv-info code{font-family:var(--font-mono);font-size:11px;color:var(--ink)}

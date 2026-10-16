@@ -122,6 +122,10 @@
           </div>
           <div class="meter" title="麥克風音量（黃線＝說話門檻、灰線＝噪音底）"><div class="lvl" id="lvl"></div><div class="flo" id="flo"></div><div class="thr" id="thr"></div></div>
         </div>
+        <div class="panel panel-pad" id="reidCard" hidden>
+          <div class="panel-title"><div><h2>使用者比對</h2><p class="panel-help" id="reidHelp">跨 session：這次的臉 ↔ 參考臉</p></div><button class="button button-ghost button-small" id="reidViewClr" type="button">清除</button></div>
+          <div class="rv-list" id="reidList"><p class="panel-help">還沒有比對紀錄</p></div>
+        </div>
         <div class="panel panel-pad" id="asrCard">
           <div class="panel-title"><div><h2>語音辨識</h2><p class="panel-help" id="asrSt">關閉</p></div></div>
           <p class="form-note is-error" style="min-height:0">⚠ 雲端服務：開啟後聲音會送到 AssemblyAI。文字只顯示在這裡，不會儲存。</p>
@@ -219,7 +223,7 @@ const DEF={face_roi:[0.2,0.05,0.8,0.95],mirror_view:true,show_face_roi:true,pose
  distance_calib:1,distance_ema:0.3,zone_min:0.4,zone_max:2,leave_distance:2.5,min_conf:0.4,embed_backend:'fp32',npu_precision:'int8',cos_match_int8:0.4,cos_match:0.4,cos_weak:0.2,iou_match:0.3,embed_ema:0.15,join_seconds:2,grace_seconds:15,
  present_frames:2,absent_frames:3,idle_after:3,present_timeout:15,empty_timeout:5,base_timeout:20,maybe_away_frac:0.5,end_after_away:5,new_group_seconds:3,
  priority_mode:'vision',speech_join:'auto',presence_model:'rules',intent_model:'rules',intent_tau:1,join_threshold:0.6,drop_threshold:0.35,drop_seconds:8,intent_weighted_presence:false,w_facing:0.45,w_distance:0.1,w_dwell:0.1,w_approach:0.05,w_still:0.15,w_center:0.15,leave_halflife:1.5,detect_gain:4,lowconf_factor:0.15,p_active:0.8,p_maybe:0.6,p_away:0.3,away_hold_seconds:1,tracker_mode:'legacy',coast_seconds:2,coast_present_conf:0.4,gate_mahalanobis:9.21,appearance_min_sim:0.6,appearance_ema:0.2,body_min_conf:0.4,present_max_silence:0,motion_gate:true,motion_threshold:0.015,force_detect_seconds:2,embed_throttle:true,embed_interval:3,embed_move_thresh:0.15,adaptive_fps:true,fps_low:0.5,fps_high:2,roi_crop:true,crop_margin:0.1,max_width:640,fps:1,vad_k:2.5,vad_min:0.005,vad_hang:400,
- audio_pipeline:'energy_vad',iso_onset_guard:false,iso_reset_on_change:true,onset_needs_vision:true,onset_entry_only:true,clean_vad_margin_db:10,clean_vad_min_db:-50,clean_vad_hang:0.3,xcheck_enabled:true,near_range:1,xcheck_hold:0.75,xcheck_stale:2,xcheck_require_calib:false,xcheck_floor_db:-40,xcheck_recover_mix:0.3,xcheck_attack:0.01,xcheck_release:0.05,asr_provider:'none',asr_source:'clean',asr_feed:'speech',asr_region:'global',asr_speech_model:'universal-3-6-pro',asr_language_codes:'zh,en',asr_keyterms:'',asr_format_turns:true,asr_eot_confidence:0.4,asr_min_turn_silence:400,asr_max_turn_silence:1280,reid_enabled:false,reid_consent:false,reid_provider:'jev',reid_model:'jev-latest',reid_threshold:0.9,reid_uncertain_low:0.4,reid_ttl:600,reid_max_refs:3,reid_min_face:0.06,reid_decision_timeout:10,reid_face_wait:3,reid_timeout:2,reid_cooldown:5,reid_cap_per_hour:30,reid_cap_total:200,reid_cost_per_call:0,monitor:'off'};
+ audio_pipeline:'energy_vad',iso_onset_guard:false,iso_reset_on_change:true,onset_needs_vision:true,onset_entry_only:true,clean_vad_margin_db:10,clean_vad_min_db:-50,clean_vad_hang:0.3,xcheck_enabled:true,near_range:1,xcheck_hold:0.75,xcheck_stale:2,xcheck_require_calib:false,xcheck_floor_db:-40,xcheck_recover_mix:0.3,xcheck_attack:0.01,xcheck_release:0.05,asr_provider:'none',asr_source:'clean',asr_feed:'speech',asr_region:'global',asr_speech_model:'universal-3-6-pro',asr_language_codes:'zh,en',asr_keyterms:'',asr_format_turns:true,asr_eot_confidence:0.4,asr_min_turn_silence:400,asr_max_turn_silence:1280,reid_enabled:false,reid_consent:false,reid_show_crops:true,reid_provider:'jev',reid_model:'jev-latest',reid_threshold:0.9,reid_uncertain_low:0.4,reid_ttl:600,reid_max_refs:3,reid_min_face:0.06,reid_decision_timeout:10,reid_face_wait:3,reid_timeout:2,reid_cooldown:5,reid_cap_per_hour:30,reid_cap_total:200,reid_cost_per_call:0,monitor:'off'};
 const CLIENT=['monitor','mirror_view','fps','vad_k','vad_min','vad_hang','show_face_roi','show_pose_roi'];
 const BOXES=['face_roi','pose_roi'];
 const S=(l,h,min,max,step,u='')=>({l,h,min,max,step,u});
@@ -345,7 +349,8 @@ GROUPS.push(['語音辨識（雲端，選用）',{asr_provider:{l:'語音辨識�
    asr_min_turn_silence:S('最短句尾靜默','靜默多久開始檢查是否句尾。',50,10000,50,'ms'),
    asr_max_turn_silence:S('最長句尾靜默','靜默這麼久一定結束這句話。',100,10000,50,'ms')}]);
 GROUPS.push(['跨 session 使用者判斷（雲端，選用）',{reid_enabled:B('跨 session 使用者判斷','新的 session 開始時，把這次第一張清楚的臉和上一位（最近幾位）使用者的參考臉送到雲端比對：同一人就接續上一段對話（沿用 conversation_id），不同人或不確定就開新對話。session 進行中不會呼叫；沒有保存中的參考臉（第一次使用或已過期）就直接開新對話，不呼叫。⚠ 外部雲端服務：人臉裁切會離開這台裝置。'),
-   reid_consent:B('我已告知使用者並取得同意','必須勾選才會運作：參考臉（每位使用者一張臉部裁切）只保存在伺服器記憶體、最多保存期限內，並會送到第三方雲端比對。不寫入磁碟或 log，也不傳回瀏覽器。'),
+   reid_consent:B('我已告知使用者並取得同意','必須勾選才會運作：參考臉（每位使用者一張臉部裁切）只保存在伺服器記憶體、最多保存期限內，並會送到第三方雲端比對。不寫入磁碟或 log；只有開啟「顯示比對照片」時，才會把小縮圖送到這個瀏覽器顯示。'),
+   reid_show_crops:B('顯示比對照片','在「使用者比對」卡片顯示這次送去比對的臉和比對到的參考臉（小縮圖，約 112 px）。縮圖只經這個連線送到這個瀏覽器顯示，不寫入磁碟、log、除錯事件或錄音；「清除參考臉」或重設時一併清除。'),
    reid_provider:{l:'雲端服務',h:'比對用的雲端後端（可抽換）。目前提供 Jev（Typesafe）。',opts:{jev:'Jev（Typesafe）'}},
    reid_model:{l:'模型',h:'jev-latest 會跟著服務更新；固定 jev-1.13.0 可確保結果可重現。',opts:{'jev-latest':'jev-latest','jev-1.13.0':'jev-1.13.0'}},
    reid_threshold:S('同一人門檻','分數達到這個值才視為同一人並接續對話。認錯人的代價較高，預設 0.9（LFW 評測：FAR 0%、FRR 14%）。',0.5,0.99,0.01),
@@ -417,7 +422,7 @@ const MODULES=[
    asr_language_codes:{show:c=>c.asr_provider==='assemblyai'&&c.asr_speech_model.endsWith('-pro')},
    asr_format_turns:{show:c=>c.asr_provider==='assemblyai'&&c.asr_speech_model.startsWith('universal-streaming')},asr_eot_confidence:{show:c=>c.asr_provider==='assemblyai'&&c.asr_speech_model.startsWith('universal-streaming')}},
   gateNeed:[PS,'需要「音訊」模組使用 PureSound 管線'],status:c=>c.asr_provider==='none'?'關':(PS(c)?'AssemblyAI':'AssemblyAI（需要 PureSound）')},
- {id:'reid',name:'跨 session 使用者判斷（雲端，選用）',gate:'reid_enabled',keys:['reid_consent','reid_provider','reid_model','reid_threshold','reid_uncertain_low','reid_ttl','reid_max_refs','reid_min_face','reid_face_wait','reid_decision_timeout','reid_timeout','reid_cooldown','reid_cap_per_hour','reid_cap_total','reid_cost_per_call'],
+ {id:'reid',name:'跨 session 使用者判斷（雲端，選用）',gate:'reid_enabled',keys:['reid_consent','reid_show_crops','reid_provider','reid_model','reid_threshold','reid_uncertain_low','reid_ttl','reid_max_refs','reid_min_face','reid_face_wait','reid_decision_timeout','reid_timeout','reid_cooldown','reid_cap_per_hour','reid_cap_total','reid_cost_per_call'],
   adv:['reid_provider','reid_uncertain_low','reid_min_face','reid_face_wait','reid_decision_timeout','reid_timeout','reid_cooldown','reid_cap_total'],rules:{},
   status:c=>!c.reid_enabled?'關':c.reid_consent?'開':'未同意'},
  {id:'perf',name:'效能',keys:['motion_gate','motion_threshold','force_detect_seconds','embed_throttle','embed_interval','embed_move_thresh','adaptive_fps','fps_low','fps_high','roi_crop','crop_margin','max_width'],
@@ -505,6 +510,7 @@ function connect(){ws=new WebSocket((location.protocol==='https:'?'wss://':'ws:/
   if(s.type==='event')return addEv(s);
   if(s.type==='error'){addEv(Object.assign({level:'error'},s));return showErr((s.where?s.where+': ':'')+(s.error||s.message||'error'))}
   if(s.type==='asr')return onAsr(s);
+  if(s.type==='reid_view'||s.type==='reid_view_clear')return onReidView(s);
   if(s.type==='handoff'||s.type==='reid')return onReid(s);
   if(rec&&(s.type==='audio'||s.type==='state'))recMeta(s);
   if(s.type==='audio'){aMeta=s;if(s.available!==false)TLH.push({t:performance.now(),raw:s.raw_vad,clean:s.clean_vad,sp:s.speech,dec:s.decision,st:s.state,p:s.p_group});while(TLH.length&&performance.now()-TLH[0].t>31000)TLH.shift();return renderAudio()}
@@ -691,7 +697,7 @@ function renderStats(s){const y=s.system,c=s.conn,L=c.latency_ms,i=s.info;
  $('mKv').innerHTML=Object.entries(kv).map(([k,v])=>`<span>${k}</span><span>${v}</span>`).join('');
 }
 function addCalib(){const det=$('mod_distance');if(!det)return;
- det.insertAdjacentHTML('beforeend',`<div class="row"><div class="top"><label>距離校正</label><input type="number" id="calM" min="0.2" max="10" step="0.1" value="1.0"><span class="def">m</span><button id="calB" style="padding:5px 10px">我站在這個距離</button></div>
+ det.insertAdjacentHTML('beforeend',`<div class="row"><div class="top"><label>距離校正</label><input type="number" id="calM" class="control" min="0.2" max="10" step="0.1" value="1.0"><span class="def">m</span><button class="button button-secondary button-small" id="calB" type="button">我站在這個距離</button></div>
   <div class="tip">站在鏡頭前已知的距離（例如用捲尺量 1.0 m），然後按按鈕。系統會用目前最近那個人的估計值算出校正係數。需要先啟用距離估計並開始偵測。</div></div>`);
  $('calB').onclick=()=>{if(!running){toast('請先按「開始」');return}wsSend({type:'calibrate',meters:+$('calM').value})}}
 // ---------- audio: AudioWorklet capture (16 kHz PCM16, 20 ms) -> WS binary; clean audio back -> player ----------
@@ -837,34 +843,40 @@ function onAsr(m){if(m.kind==='status'&&m.status==='terminated')captionOff();if(
  const key=m.session+':'+m.turn_order;let e=ASR.find(x=>x.key===key);if(!e){e={key};ASR.push(e);if(ASR.length>100)ASR.shift()}Object.assign(e,m);
  caption(m);
  $('asrList').innerHTML=ASR.slice().reverse().map(x=>`<div style="padding:3px 0;border-bottom:1px solid var(--line);${x.kind==='partial'?'color:var(--mut)':''}"><small style="color:var(--mut)">#${x.session} · ${x.start_s!=null?x.start_s.toFixed(1)+'–'+(x.end_s??0).toFixed(1)+' s':''}${x.language?' · '+x.language:''}</small> ${x.text.replace(/[<&]/g,c=>c==='<'?'&lt;':'&amp;')}</div>`).join('')}
-// 跨 session 使用者判斷：只顯示決策、呼叫數與估計成本，從不顯示參考臉影像
-let REID={};
+// 跨 session 使用者判斷：決策、呼叫數與估計成本；比對縮圖只在「顯示比對照片」開啟時顯示（只在記憶體）
+let REID={};const RV=[];const RV_MAX=4;
+const RVR={match:'同一人',no_reference:'無前一位資料',below_threshold:'不同人',uncertain:'不確定',error:'呼叫失敗',cap:'已達上限',cooldown:'冷卻中',no_face_timeout:'沒有清楚的臉',decision_timeout:'等待逾時',no_key:'未設定 key',breaker:'暫停中'};
+function rvClear(){RV.length=0;renderRV()}
+function renderRV(){const card=$('reidCard');card.hidden=!(cfg.reid_enabled&&cfg.reid_show_crops);if(card.hidden){RV.length=0}
+ const img=(b,l)=>b?`<img src="data:image/jpeg;base64,${b}" alt="${l}" width="72" height="72">`:`<span class="rv-ph">${l}<br>無</span>`;
+ $('reidList').innerHTML=RV.length?RV.map(v=>`<div class="rv-row"><figure>${img(v.probe,'這次')}<figcaption>這次 #${v.session}</figcaption></figure><span class="rv-vs">↔</span><figure>${img(v.ref,'參考')}<figcaption>${v.ref_session!=null?'參考 #'+v.ref_session:'參考'}</figcaption></figure>
+  <div class="rv-info"><b class="${v.decision==='resume'?'ok':''}">${v.decision==='resume'?'↩ 接續 #'+v.resumed_from_session:'＋ 新對話'}</b>
+  <span>分數 <code>${v.score!=null?v.score.toFixed(2):'—'}</code> / 門檻 <code>${(+v.threshold).toFixed(2)}</code></span>
+  <span>${RVR[v.reason]||v.reason} · ${new Date(v.t*1000).toLocaleTimeString()}</span></div></div>`).join(''):'<p class="panel-help">還沒有比對紀錄</p>'}
+function onReidView(m){if(m.type==='reid_view_clear')return rvClear();if(!cfg.reid_show_crops)return;RV.unshift(m);RV.length=Math.min(RV.length,RV_MAX);renderRV()}
 function onReid(m){const el=$('reidSt');if(m.type==='handoff'){REID.handoff=m}else REID.st=m;
  const st=REID.st||{},h=REID.handoff;if(!cfg.reid_enabled&&!st.calls){el.hidden=true;return}el.hidden=false;
  const dec=st.phase==='await_query'||st.phase==='calling'||st.phase==='await_retry'?'<b>辨識使用者中…</b>':h?(h.decision==='resume'?`<b class="ok">↩ 接續 #${h.resumed_from_session}</b>${h.score!=null?' （'+h.score.toFixed(2)+'）':''}`:`<b>＋ 新對話</b> <small>${({no_reference:'無前一位資料',below_threshold:'不同人',uncertain:'不確定',error:'呼叫失敗',cap:'已達上限',cooldown:'冷卻中',no_face_timeout:'沒有清楚的臉',no_key:'未設定 key',breaker:'暫停中'})[h.reason]||h.reason}</small>`):'—';
  el.innerHTML=`<span>跨 session</span>${dec}${h?` <code>${h.conversation_id.slice(0,8)}</code>`:''}<span class="sp">呼叫 ${st.calls||0} · ${st.tokens||0} tok${st.cost_est?` · 估計 ${st.cost_est}`:''} · 參考臉 ${st.refs||0}${st.refs?`（${Math.round((st.ttl_left||0)/60)} 分）`:''}</span>`;
- const ks=$('reidKeySt');if(ks&&st.key_set!=null&&!ks.dataset.manual)ks.textContent=st.key_set?'已設定':'未設定'}
-function addReidKey(){const det=$('mod_reid');if(!det)return;
- det.insertAdjacentHTML('beforeend',`<div class="row"><div class="top"><label>雲端 API key</label><span id="reidKeySt" class="def">—</span></div>
-  <input type="password" id="reidKeyIn" class="control" autocomplete="off" placeholder="貼上 API key" style="width:100%;margin-top:6px">
-  <div style="margin-top:6px;display:flex;gap:6px"><button class="button button-secondary button-small" id="reidKeySet" type="button">設定</button><button class="button button-ghost button-small" id="reidKeyClr" type="button">清除 key</button><button class="button button-ghost button-small" id="reidWipe" type="button">清除參考臉</button></div>
-  <div class="tip">key 只存在伺服器記憶體（重啟就消失），不寫檔、不寫 log、不會傳回瀏覽器。也可以設定環境變數 TYPESAFE_API_KEY。「清除參考臉」會立即刪除記憶體中保存的所有臉部裁切。</div></div>`);
- const st=j=>{$('reidKeySt').textContent=j.set?('已設定'+(j.source==='env'?'（環境變數）':'')):'未設定'};
- const post=k=>fetch('/api/reid_key'+location.search,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:k})}).then(r=>r.json()).then(st);
- $('reidKeySet').onclick=()=>{const v=$('reidKeyIn').value;$('reidKeyIn').value='';post(v).then(()=>toast('已設定 API key'))};$('reidKeyClr').onclick=()=>post('');
- $('reidWipe').onclick=()=>{if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'reid_wipe'}));toast('已清除參考臉')};
- fetch('/api/reid_status'+location.search).then(r=>r.json()).then(st).catch(()=>{})}
-function addAsrKey(){const det=$('mod_asr');if(!det)return;
- det.insertAdjacentHTML('beforeend',`<div class="row"><div class="top"><label>AssemblyAI API key</label><span id="keySt" class="def">—</span></div>
-  <input type="password" id="keyIn" autocomplete="off" placeholder="貼上 API key" style="width:100%;margin-top:6px;background:var(--bg);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:7px">
-  <div style="margin-top:6px;display:flex;gap:6px"><button id="keySet">設定</button><button id="keyClr">清除</button></div>
-  <div class="tip">key 只存在伺服器記憶體（重啟就消失），不寫檔、不寫 log、不會傳回瀏覽器，這裡只顯示「已設定」。也可以在伺服器設定環境變數 ASSEMBLYAI_API_KEY。</div></div>`);
- const st=j=>{$('keySt').textContent=j.set?('已設定'+(j.source==='env'?'（環境變數）':'')):'未設定'};
- const post=k=>fetch('/api/asr_key'+location.search,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:k})}).then(r=>r.json()).then(st);
- $('keySet').onclick=()=>{const v=$('keyIn').value;$('keyIn').value='';post(v).then(()=>toast('已設定 API key'))};$('keyClr').onclick=()=>post('');
- fetch('/api/asr_status'+location.search).then(r=>r.json()).then(st).catch(()=>{})}
+ if(st.key_set!=null&&$('reidKeySt')&&!/環境/.test($('reidKeySt').textContent))keyBadge('reidKey',{set:st.key_set});renderRV()}
+function keyRow(mod,id,label,tip,extra=''){const det=$('mod_'+mod);if(!det)return false;const host=det.querySelector('.mbody')||det;
+ host.insertAdjacentHTML('beforeend',`<div class="row keyrow"><div class="top"><label for="${id}In">${label}</label><span id="${id}St" class="kbadge">—</span></div>
+  <input type="password" id="${id}In" class="control" autocomplete="off" placeholder="貼上 API key">
+  <div class="btns"><button class="button button-secondary button-small" id="${id}Set" type="button">設定</button><button class="button button-ghost button-small" id="${id}Clr" type="button">清除 key</button>${extra}</div>
+  <div class="tip">${tip}</div></div>`);return true}
+function keyBadge(id,j){const e=$(id+'St');if(!e)return;e.textContent=j.set?('已設定'+(j.source==='env'?'（環境變數）':'')):'未設定';e.classList.toggle('is-set',!!j.set)}
+function wireKey(id,api){const post=k=>fetch('/api/'+api+'_key'+location.search,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:k})}).then(r=>r.json()).then(j=>keyBadge(id,j));
+ $(id+'Set').onclick=()=>{const v=$(id+'In').value;$(id+'In').value='';post(v).then(()=>toast('已設定 API key'))};$(id+'Clr').onclick=()=>post('');
+ fetch('/api/'+api+'_status'+location.search).then(r=>r.json()).then(j=>keyBadge(id,j)).catch(()=>{})}
+function addReidKey(){if(!keyRow('reid','reidKey','雲端 API key','key 只存在伺服器記憶體（重啟就消失），不寫檔、不寫 log、不會傳回瀏覽器。也可以設定環境變數 TYPESAFE_API_KEY。「清除參考臉」會立即刪除記憶體中保存的所有臉部裁切和這裡顯示的比對縮圖。',
+  '<button class="button button-ghost button-small" id="reidWipe" type="button">清除參考臉</button>'))return;
+ wireKey('reidKey','reid');
+ $('reidWipe').onclick=()=>{if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'reid_wipe'}));rvClear();toast('已清除參考臉')}}
+function addAsrKey(){if(!keyRow('asr','asrKey','AssemblyAI API key','key 只存在伺服器記憶體（重啟就消失），不寫檔、不寫 log、不會傳回瀏覽器，這裡只顯示「已設定」。也可以在伺服器設定環境變數 ASSEMBLYAI_API_KEY。'))return;
+ wireKey('asrKey','asr')}
+$('reidViewClr').onclick=rvClear;
 setTheme(document.documentElement.dataset.themeChoice||localStorage.getItem('presence-theme')||'auto');document.querySelectorAll('#theme button').forEach(b=>b.onclick=()=>setTheme(b.dataset.t));$('navSet').onclick=()=>$('openSet').click();
-$('navEv').onclick=()=>{const p=$('evPanel');p.open=!p.open;if(p.open)p.scrollIntoView({block:'nearest'})};buildUI();addCalib();addAsrKey();addReidKey();setMonitor('off');new ResizeObserver(fit).observe(cv);connect();
+$('navEv').onclick=()=>{const p=$('evPanel');p.open=!p.open;if(p.open)p.scrollIntoView({block:'nearest'})};buildUI();addCalib();addAsrKey();addReidKey();renderRV();setMonitor('off');new ResizeObserver(fit).observe(cv);connect();
 
 const EVL=[];function addEv(s){EVL.push(s);if(EVL.length>200)EVL.shift();const ul=document.getElementById('evList');const li=document.createElement('li');li.className=s.level||'info';
 const kv=Object.entries(s).filter(([k])=>!['type','level','event','ts','t'].includes(k)).map(([k,v])=>k+'='+(typeof v==='object'?JSON.stringify(v):v)).join(' ');

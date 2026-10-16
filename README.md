@@ -23,7 +23,7 @@
 - **資源監控**：CPU、記憶體、各階段延遲 avg/p95、fps、頻寬、RTT、跳過比例、姿勢耗時。
 - **開始／停止**：停止時真正關閉鏡頭與麥克風；切換分頁自動暫停。
 - **效能最佳化**：移動偵測閘門、embedding 節流、自適應 fps、ROI 裁切＋縮小，可個別開關（見 [PERFORMANCE](docs/PERFORMANCE.md)）。
-- **隱私**：影像只在記憶體中解碼處理，**不寫入磁碟**（`tests/test_privacy.py` 檢查）；embedding 只存在記憶體，ENDED 時清除。唯一例外是選用的跨 session 使用者判斷：需要明確同意，參考臉裁切只在記憶體保存，最多 10 分鐘（見 [REID](docs/REID.md)）。伺服器也不寫入任何聲音。選用的錄音（預設關閉、使用者自己按）只在瀏覽器記憶體，停止後下載到使用者自己的電腦（見 [AUDIO.md](docs/AUDIO.md)）；影像從不錄製。
+- **隱私**：影像只在記憶體中解碼處理，**不寫入磁碟**（`tests/test_privacy.py` 檢查）；embedding 只存在記憶體，ENDED 時清除。唯一例外是選用的跨 session 使用者判斷：需要明確同意，參考臉裁切只在記憶體保存，最多 10 分鐘；可選擇在瀏覽器顯示比對用的小縮圖（見 [REID](docs/REID.md)）。伺服器也不寫入任何聲音。選用的錄音（預設關閉、使用者自己按）只在瀏覽器記憶體，停止後下載到使用者自己的電腦（見 [AUDIO.md](docs/AUDIO.md)）；影像從不錄製。
 - **跨 session 使用者判斷（選用，雲端，預設關閉）**：新 session 開始時，判斷是不是上一位使用者回來（接續對話或開新對話），輸出 `conversation_id` 給下游系統。session 進行中不呼叫；參考臉只在記憶體保存，最多 10 分鐘。見 [REID](docs/REID.md)。
 - **存取權杖**：設定 `PRESENCE_TOKEN` 後，頁面、API、WebSocket 都需要 `?token=`。
 

@@ -41,7 +41,7 @@ def test_monitor_stage_holds_only_video_and_tracks_0106():
 
 def test_ids_referenced_by_script_exist():
     """Every static $('id') lookup has a matching element (catches broken layout moves)."""
-    dynamic = ("st_", "se_", "fs_", "mod_", "row_")
+    dynamic = ("st_", "se_", "fs_", "mod_", "row_", "reidKey", "asrKey")  # key rows built by keyRow()
     missing = [
         i
         for i in set(re.findall(r"\$\('([A-Za-z0-9_]+)'\)", HTML))

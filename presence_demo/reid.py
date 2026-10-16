@@ -11,6 +11,8 @@ PRIVACY (documented exception to "the server never stores images", see docs/REID
   connection, for ``reid_ttl`` seconds (default 600) and at most ``reid_max_refs`` users. They are wiped on
   expiry, disable, reset, the UI "clear" button, ``POST /api/reid_reset``, connection close and shutdown.
   Never written to disk, never logged, never sent back to the browser.
+* With ``reid_show_crops`` (default on) a 112 px thumbnail of the probe and compared reference is sent to this
+  connection's browser only for display (``reid_view``); never written to disk, logs or diagnostic events.
 * Only face crops (never whole frames) are sent to the backend. The API key is memory-only (env
   ``TYPESAFE_API_KEY`` or set from the UI) and never logged or echoed.
 """
@@ -160,6 +162,22 @@ class JevClient(CloudReid):
         }
 
 
+THUMB_PX = 112
+
+
+def thumb(jpeg: bytes | None, px: int = THUMB_PX) -> str | None:
+    """Small display thumbnail (base64 JPEG) for this connection's browser only (``reid_show_crops``).
+    Never written to disk, logs or diagnostic events."""
+    if not jpeg:
+        return None
+    img = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
+    if img is None:
+        return None
+    img = cv2.resize(img, (px, px), interpolation=cv2.INTER_AREA)
+    ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 70])
+    return base64.b64encode(buf.tobytes()).decode("ascii") if ok else None
+
+
 # ---------------------------------------------------------------------------------------------- store
 @dataclass
 class Ref:
@@ -253,6 +271,8 @@ class CrossSessionReid:
         self.last: dict | None = None
         self.committed = True
         self.was_on = False
+        self.view_probe: bytes | None = None  # last query crop and best-scoring compared ref (display only)
+        self.view_ref: tuple[float, Ref] | None = None
 
     # -- helpers
     def on(self) -> bool:
@@ -277,6 +297,8 @@ class CrossSessionReid:
     def wipe(self, reason: str) -> None:
         n = self.store.wipe()
         self.best = None
+        self.view_probe = self.view_ref = None
+        self.emit({"type": "reid_view_clear"})
         if n:
             self.event("reid_store", action="wipe", reason=reason, count=n)
 
@@ -307,6 +329,26 @@ class CrossSessionReid:
         self.last = {k: d[k] for k in ("session", "decision", "resumed_from_session", "score", "reason")}
         self.event("reid_decision", **{k: v for k, v in d.items() if k != "type"})
         self.emit(d)
+        probe, vr = self.view_probe, self.view_ref
+        self.view_probe = self.view_ref = None
+        if self.cfg.reid_show_crops:  # display-only thumbnails, to this connection's websocket; never logged
+            r = ref if ref is not None else (vr[1] if vr else None)
+            self.emit(
+                {
+                    "type": "reid_view",
+                    "session": self.session,
+                    "decision": decision,
+                    "reason": reason,
+                    "score": d["score"] if d["score"] is not None else (round(vr[0], 3) if vr else None),
+                    "threshold": self.cfg.reid_threshold,
+                    "resumed_from_session": d["resumed_from_session"],
+                    "ref_session": r.session if r else None,
+                    "conversation_id": self.conversation_id,
+                    "t": time.time(),
+                    "probe": thumb(probe),
+                    "ref": thumb(r.jpeg if r else None),
+                }
+            )
 
     def _budget(self, now: float) -> str | None:
         while self.hour and now - self.hour[0] > 3600:
@@ -421,6 +463,7 @@ class CrossSessionReid:
 
     async def _run(self, query: bytes, refs: list[Ref], session: int) -> None:
         best_unc: tuple[float, Ref] | None = None
+        self.view_probe = query
         for ref in refs:
             now = self.clock()
             why = self._budget(now)
@@ -448,6 +491,8 @@ class CrossSessionReid:
             self.calls += 1
             self.hour.append(now)
             self.tokens += int(meta.get("in_tok") or 0)
+            if self.view_ref is None or score > self.view_ref[0]:
+                self.view_ref = (score, ref)
             self.event(
                 "reid_call",
                 session=session,

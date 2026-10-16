@@ -382,3 +382,70 @@ def test_endpoints_never_echo_key(caplog):
     assert SECRET not in caplog.text
     c.post("/api/reid_key" + q, json={"key": ""})
     assert reid.key_status()["set"] is False
+
+
+# ---- v0.11.2: display-only comparison thumbnails (reid_show_crops)
+def _jpeg(v):
+    ok, b = cv2.imencode(".jpg", np.full((320, 320, 3), v, np.uint8))
+    return b.tobytes()
+
+
+async def drive_img(r, s, clk, dt=1.0, v=120):
+    clk.t += dt
+    for kind, _bbox, q in r.observe(s):
+        r.on_crop(kind, _jpeg(v), quality=q)
+    if r.task:
+        await r.task
+        r.task = None
+
+
+def _views(out):
+    return [o for o in out if o.get("type") == "reid_view"]
+
+
+def test_view_thumbnails_sent_to_browser_only(mock, caplog):
+    async def go(r, clk):
+        for st in ("ACTIVE", "ACTIVE", "ENDED"):
+            await drive_img(r, snap(1, st, [] if st == "ENDED" else None), clk, v=60)
+        for _ in range(3):
+            await drive_img(r, snap(2), clk, v=200)
+
+    mock.scores = [0.95]
+    r, out, ev, clk = make(mock.url)
+    caplog.set_level(logging.DEBUG)
+    run(go(r, clk))
+    v = _views(out)[-1]
+    assert v["decision"] == "resume" and v["score"] == 0.95 and v["threshold"] == 0.9 and v["ref_session"] == 1
+    for k in ("probe", "ref"):
+        img = cv2.imdecode(np.frombuffer(__import__("base64").b64decode(v[k]), np.uint8), cv2.IMREAD_COLOR)
+        assert img.shape[:2] == (reid.THUMB_PX, reid.THUMB_PX)
+    assert abs(int(cv2.imdecode(np.frombuffer(__import__("base64").b64decode(v["ref"]), np.uint8), 0).mean()) - 60) < 8
+    blob = json.dumps(ev, default=str) + caplog.text
+    assert v["probe"][:40] not in blob and v["ref"][:40] not in blob  # never in log/diag events
+    out.clear()
+    r.wipe("ui")
+    assert out == [{"type": "reid_view_clear"}]
+
+
+def test_view_off_sends_no_thumbnails(mock):
+    async def go(r, clk):
+        for st in ("ACTIVE", "ACTIVE", "ENDED"):
+            await drive_img(r, snap(1, st, [] if st == "ENDED" else None), clk)
+        for _ in range(3):
+            await drive_img(r, snap(2), clk)
+
+    mock.scores = [0.95]
+    r, out, _ev, clk = make(mock.url, reid_show_crops=False)
+    run(go(r, clk))
+    assert any(o["type"] == "handoff" for o in out) and not _views(out)
+
+
+def test_view_new_conversation_without_reference(mock):
+    async def go(r, clk):
+        for _ in range(3):
+            await drive_img(r, snap(1), clk)
+
+    r, out, _ev, clk = make(mock.url)
+    run(go(r, clk))
+    v = _views(out)[-1]
+    assert v["decision"] == "new" and v["reason"] == "no_reference" and v["ref"] is None and v["probe"] is None

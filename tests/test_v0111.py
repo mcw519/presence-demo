@@ -100,3 +100,20 @@ def test_client_report_and_normal_close_over_ws():
     assert ev and ev[-1]["what"] == "visibility" and ev[-1]["level"] == "info" and len(ev[-1]["big"]) <= 64
     crashes = [e for e in diag.recent(50) if e["event"] == "task_crash" and e.get("task") == "sender"]
     assert not crashes
+
+
+def test_settings_key_rows_styled_v0112():
+    # API-key rows share one builder: PureSound buttons, .control input, padded module body, status badge
+    assert "function keyRow(" in HTML and "keyRow('asr'" in HTML and "keyRow('reid'" in HTML
+    assert "det.querySelector('.mbody')" in HTML and 'class="kbadge"' in HTML
+    assert (
+        re.search(
+            r"<button(?![^>]*class=)[^>]*>",
+            HTML[HTML.index("function addCalib") : HTML.index("function addCalib") + 900]
+            + HTML[HTML.index("function keyRow") : HTML.index("$('reidViewClr')")],
+        )
+        is None
+    )
+    css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
+    assert ".mod > .row{padding:10px 12px}" in css and ".kbadge" in css and ".rv-row" in css
+    assert 'id="reidCard"' in HTML and "RV_MAX=4" in HTML and "reid_show_crops:true" in HTML
