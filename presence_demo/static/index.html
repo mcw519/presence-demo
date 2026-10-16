@@ -173,7 +173,8 @@
       <p class="eyebrow">預設組合</p>
       <div class="segmented" id="presets" style="flex-wrap:wrap">
         <button type="button" data-p="reset">預設</button>
-        <button type="button" data-p="recommended" title="Kalman 追蹤＋機率在場判斷＋意圖分數">推薦</button>
+        <button type="button" data-p="recommended" title="實測調校：Kalman＋機率在場＋意圖分數、姿勢、距離、PureSound（收音 1.6 m）">推薦</button>
+        <button type="button" data-p="lowcam" title="推薦＋低角度鏡頭：更低偵測門檻、更慢判定離開、ROI 放大">低角度鏡頭</button>
         <button type="button" data-p="lowpower" title="移動閘門、embedding 節流、低 fps、偵測寬度 480">低功耗</button>
         <button type="button" data-p="single">單人</button>
         <button type="button" data-p="group">多人圍觀</button>
@@ -215,10 +216,10 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change',()=>{if((lo
 // ---------- settings schema ----------
 const DEF={face_roi:[0.2,0.05,0.8,0.95],mirror_view:true,show_face_roi:true,pose_enabled:false,pose_conf:0.4,pose_roi:[0,0,1,1],show_pose_roi:true,roi_rule:'either',
  turned_away_early:true,turned_away_seconds:2,recede_ratio:0.1,distance_enabled:false,camera_hfov:60,face_width_m:0.15,shoulder_width_m:0.38,
- distance_calib:1,distance_ema:0.3,zone_min:0.4,zone_max:2,leave_distance:2.5,min_conf:0.6,embed_backend:'fp32',npu_precision:'int8',cos_match_int8:0.4,cos_match:0.4,cos_weak:0.2,iou_match:0.3,embed_ema:0.15,join_seconds:2,grace_seconds:15,
+ distance_calib:1,distance_ema:0.3,zone_min:0.4,zone_max:2,leave_distance:2.5,min_conf:0.4,embed_backend:'fp32',npu_precision:'int8',cos_match_int8:0.4,cos_match:0.4,cos_weak:0.2,iou_match:0.3,embed_ema:0.15,join_seconds:2,grace_seconds:15,
  present_frames:2,absent_frames:3,idle_after:3,present_timeout:15,empty_timeout:5,base_timeout:20,maybe_away_frac:0.5,end_after_away:5,new_group_seconds:3,
- priority_mode:'vision',speech_join:'auto',presence_model:'rules',intent_model:'rules',intent_tau:1,join_threshold:0.6,drop_threshold:0.35,drop_seconds:8,intent_weighted_presence:false,w_facing:0.45,w_distance:0.1,w_dwell:0.1,w_approach:0.05,w_still:0.15,w_center:0.15,leave_halflife:0.6,detect_gain:4,lowconf_factor:0.15,p_active:0.8,p_maybe:0.6,p_away:0.3,away_hold_seconds:1,tracker_mode:'legacy',coast_seconds:2,coast_present_conf:0.4,gate_mahalanobis:9.21,appearance_min_sim:0.6,appearance_ema:0.2,body_min_conf:0.4,present_max_silence:0,motion_gate:true,motion_threshold:0.015,force_detect_seconds:3,embed_throttle:true,embed_interval:3,embed_move_thresh:0.15,adaptive_fps:true,fps_low:0.5,fps_high:2,roi_crop:true,crop_margin:0.1,max_width:640,fps:1,vad_k:2.5,vad_min:0.005,vad_hang:400,
- audio_pipeline:'energy_vad',iso_onset_guard:false,iso_reset_on_change:true,onset_needs_vision:true,onset_entry_only:true,clean_vad_margin_db:10,clean_vad_min_db:-50,clean_vad_hang:0.3,xcheck_enabled:true,near_range:1,xcheck_hold:0.75,xcheck_stale:2,xcheck_require_calib:false,xcheck_floor_db:-40,xcheck_recover_mix:0.3,xcheck_attack:0.01,xcheck_release:0.05,asr_provider:'none',asr_source:'clean',asr_feed:'speech',asr_region:'global',asr_speech_model:'universal-3-6-pro',asr_language_codes:'zh,en',asr_keyterms:'',asr_format_turns:true,asr_eot_confidence:0.4,asr_min_turn_silence:400,asr_max_turn_silence:1280,reid_enabled:false,reid_consent:false,reid_provider:'jev',reid_model:'jev-latest',reid_threshold:0.9,reid_uncertain_low:0.4,reid_ttl:600,reid_max_refs:3,reid_min_face:0.06,reid_decision_timeout:3,reid_timeout:2,reid_cooldown:5,reid_cap_per_hour:30,reid_cap_total:200,reid_cost_per_call:0,monitor:'off'};
+ priority_mode:'vision',speech_join:'auto',presence_model:'rules',intent_model:'rules',intent_tau:1,join_threshold:0.6,drop_threshold:0.35,drop_seconds:8,intent_weighted_presence:false,w_facing:0.45,w_distance:0.1,w_dwell:0.1,w_approach:0.05,w_still:0.15,w_center:0.15,leave_halflife:1.5,detect_gain:4,lowconf_factor:0.15,p_active:0.8,p_maybe:0.6,p_away:0.3,away_hold_seconds:1,tracker_mode:'legacy',coast_seconds:2,coast_present_conf:0.4,gate_mahalanobis:9.21,appearance_min_sim:0.6,appearance_ema:0.2,body_min_conf:0.4,present_max_silence:0,motion_gate:true,motion_threshold:0.015,force_detect_seconds:2,embed_throttle:true,embed_interval:3,embed_move_thresh:0.15,adaptive_fps:true,fps_low:0.5,fps_high:2,roi_crop:true,crop_margin:0.1,max_width:640,fps:1,vad_k:2.5,vad_min:0.005,vad_hang:400,
+ audio_pipeline:'energy_vad',iso_onset_guard:false,iso_reset_on_change:true,onset_needs_vision:true,onset_entry_only:true,clean_vad_margin_db:10,clean_vad_min_db:-50,clean_vad_hang:0.3,xcheck_enabled:true,near_range:1,xcheck_hold:0.75,xcheck_stale:2,xcheck_require_calib:false,xcheck_floor_db:-40,xcheck_recover_mix:0.3,xcheck_attack:0.01,xcheck_release:0.05,asr_provider:'none',asr_source:'clean',asr_feed:'speech',asr_region:'global',asr_speech_model:'universal-3-6-pro',asr_language_codes:'zh,en',asr_keyterms:'',asr_format_turns:true,asr_eot_confidence:0.4,asr_min_turn_silence:400,asr_max_turn_silence:1280,reid_enabled:false,reid_consent:false,reid_provider:'jev',reid_model:'jev-latest',reid_threshold:0.9,reid_uncertain_low:0.4,reid_ttl:600,reid_max_refs:3,reid_min_face:0.06,reid_decision_timeout:10,reid_face_wait:3,reid_timeout:2,reid_cooldown:5,reid_cap_per_hour:30,reid_cap_total:200,reid_cost_per_call:0,monitor:'off'};
 const CLIENT=['monitor','mirror_view','fps','vad_k','vad_min','vad_hang','show_face_roi','show_pose_roi'];
 const BOXES=['face_roi','pose_roi'];
 const S=(l,h,min,max,step,u='')=>({l,h,min,max,step,u});
@@ -352,17 +353,23 @@ GROUPS.push(['跨 session 使用者判斷（雲端，選用）',{reid_enabled:B(
    reid_ttl:S('參考臉保存時間','上一位使用者的參考臉在記憶體中保存多久，到期自動刪除（最長 10 分鐘）。',30,600,30,'s'),
    reid_max_refs:S('比對最近幾位','保存並比對最近幾位使用者（最新的先比，命中就停）。每位比對都算一次呼叫。',1,5,1,'位'),
    reid_min_face:S('最小臉寬','臉的寬度至少佔畫面這個比例才拿來比對。',0.02,0.5,0.01),
-   reid_decision_timeout:S('等待臉的時間','新 session 開始後這麼久還沒有清楚的臉，就直接開新對話。',0.5,30,0.5,'s'),
+   reid_face_wait:S('等待清楚的臉','第一位參與者出現後，最多等這麼久拿到一張清楚的臉；等不到就開新對話。',0.5,15,0.5,'s'),
+   reid_decision_timeout:S('最長等待時間','新 session 開始後最多等這麼久（MAYBE_AWAY／AWAY 期間暫停計時）；超過就開新對話。',0.5,30,0.5,'s'),
    reid_timeout:S('單次呼叫逾時','雲端呼叫超過這個時間就放棄並開新對話。',0.3,10,0.1,'s'),
    reid_cooldown:S('冷卻時間','兩次判斷之間至少間隔這麼久；session 快速重開時直接開新對話，不呼叫。',0,120,1,'s'),
    reid_cap_per_hour:S('每小時上限','每小時最多呼叫次數，達到後一律開新對話。',1,600,1,'次'),
    reid_cap_total:S('每連線上限','這個連線最多呼叫次數。',1,10000,1,'次'),
    reid_cost_per_call:S('每次呼叫單價','自行填入的單價，只用來估算成本（0＝只顯示 tokens）。',0,10,0.0001)}]);
 const META=Object.assign({},...GROUPS.map(g=>g[1]));
+// 推薦組合＝實測（低角度機器人鏡頭、單人近距離對話）調好的整套設定；情境組合都以它為基礎再微調
+const REC={tracker_mode:'kalman',presence_model:'hmm',intent_model:'score',pose_enabled:true,distance_enabled:true,
+ audio_pipeline:'puresound',xcheck_enabled:true,near_range:1.6,min_conf:0.4,leave_halflife:1.5,force_detect_seconds:2,
+ join_seconds:1.5,grace_seconds:10,face_roi:[0.25,0.1,0.8,0.89],pose_roi:[0.18,0.04,0.85,0.92]};
 const PRESETS={
- single:{face_roi:[0.25,0.05,0.75,0.95],join_seconds:1.5,grace_seconds:10,present_timeout:45,empty_timeout:5,new_group_seconds:3,absent_frames:3},
- group:{face_roi:[0.08,0.02,0.92,0.98],join_seconds:3,grace_seconds:20,present_frames:2,absent_frames:4,present_timeout:90,empty_timeout:8,new_group_seconds:5,cos_match:0.42,fps:2},
- noisy:{priority_mode:'vision',vad_k:3.5,vad_min:0.02,vad_hang:300,min_conf:0.7,base_timeout:15,present_timeout:45,empty_timeout:5}};
+ lowcam:{...REC,min_conf:0.35,leave_halflife:2,force_detect_seconds:1.5,face_roi:[0.2,0.05,0.85,0.95],pose_roi:[0.1,0,0.9,1],body_min_conf:0.35},
+ single:{...REC,face_roi:[0.25,0.05,0.75,0.95],present_timeout:45,empty_timeout:5,new_group_seconds:3,absent_frames:3},
+ group:{...REC,face_roi:[0.08,0.02,0.92,0.98],join_seconds:3,grace_seconds:20,present_frames:2,absent_frames:4,present_timeout:90,empty_timeout:8,new_group_seconds:5,cos_match:0.42,fps:2,near_range:2},
+ noisy:{...REC,priority_mode:'vision',vad_k:3.5,vad_min:0.02,vad_hang:300,min_conf:0.5,near_range:1.2,base_timeout:15,present_timeout:45,empty_timeout:5}};
 const KEY='presence-cfg-v1';
 const migrate=o=>{o={...o};if(!o._v091){if(o.max_width===320)o.max_width=640;o._v091=1}if(o.roi&&!o.face_roi)o.face_roi=o.roi;delete o.roi;return o};
 let cfg=Object.assign(structuredClone({...DEF,_v091:1}),migrate(JSON.parse(localStorage.getItem(KEY)||'{}')));cfg.monitor='off';// 監聽每次都預設關閉（避免回授）
@@ -410,8 +417,8 @@ const MODULES=[
    asr_language_codes:{show:c=>c.asr_provider==='assemblyai'&&c.asr_speech_model.endsWith('-pro')},
    asr_format_turns:{show:c=>c.asr_provider==='assemblyai'&&c.asr_speech_model.startsWith('universal-streaming')},asr_eot_confidence:{show:c=>c.asr_provider==='assemblyai'&&c.asr_speech_model.startsWith('universal-streaming')}},
   gateNeed:[PS,'需要「音訊」模組使用 PureSound 管線'],status:c=>c.asr_provider==='none'?'關':(PS(c)?'AssemblyAI':'AssemblyAI（需要 PureSound）')},
- {id:'reid',name:'跨 session 使用者判斷（雲端，選用）',gate:'reid_enabled',keys:['reid_consent','reid_provider','reid_model','reid_threshold','reid_uncertain_low','reid_ttl','reid_max_refs','reid_min_face','reid_decision_timeout','reid_timeout','reid_cooldown','reid_cap_per_hour','reid_cap_total','reid_cost_per_call'],
-  adv:['reid_provider','reid_uncertain_low','reid_min_face','reid_decision_timeout','reid_timeout','reid_cooldown','reid_cap_total'],rules:{},
+ {id:'reid',name:'跨 session 使用者判斷（雲端，選用）',gate:'reid_enabled',keys:['reid_consent','reid_provider','reid_model','reid_threshold','reid_uncertain_low','reid_ttl','reid_max_refs','reid_min_face','reid_face_wait','reid_decision_timeout','reid_timeout','reid_cooldown','reid_cap_per_hour','reid_cap_total','reid_cost_per_call'],
+  adv:['reid_provider','reid_uncertain_low','reid_min_face','reid_face_wait','reid_decision_timeout','reid_timeout','reid_cooldown','reid_cap_total'],rules:{},
   status:c=>!c.reid_enabled?'關':c.reid_consent?'開':'未同意'},
  {id:'perf',name:'效能',keys:['motion_gate','motion_threshold','force_detect_seconds','embed_throttle','embed_interval','embed_move_thresh','adaptive_fps','fps_low','fps_high','roi_crop','crop_margin','max_width'],
   adv:['motion_threshold','force_detect_seconds','embed_interval','embed_move_thresh','crop_margin'],
@@ -419,7 +426,7 @@ const MODULES=[
   status:c=>`閘門${c.motion_gate?'開':'關'} · ${c.max_width}px`},
  {id:'display',name:'顯示（只影響這個瀏覽器）',keys:['mirror_view','show_face_roi','show_pose_roi'],adv:[],rules:{show_pose_roi:{show:ON('pose_enabled')}},status:c=>c.mirror_view?'鏡像':'原始'}];
 const MOD_PRESETS={
- recommended:{tracker_mode:'kalman',presence_model:'hmm',intent_model:'score'},
+ recommended:{...REC},
  lowpower:{motion_gate:true,embed_throttle:true,embed_interval:5,adaptive_fps:true,fps_low:0.5,fps_high:1,roi_crop:true,max_width:480,pose_enabled:false,distance_enabled:false}};
 let ADV=localStorage.getItem('presence-adv')==='1';
 function ruleOf(m,k){return(m.rules||{})[k]||{}}
@@ -486,10 +493,15 @@ const drawer=(o)=>{$('drawer').classList.toggle('is-open',o);$('scrim').classLis
 $('openSet').onclick=()=>drawer(true);$('closeSet').onclick=$('scrim').onclick=()=>drawer(false);
 // ---------- websocket ----------
 let ws,last=null,aMeta=null;
+// 瀏覽器端事件回報（server log：event=client）＋連線存活檢查：半開的連線（例如主機休眠後）會被主動關閉並重連
+let wsTries=0,wsDownAt=0,lastRx=performance.now(),REPQ=[];
+function report(what,info={}){const m={type:'client',what,...info};if(ws&&ws.readyState===1)ws.send(JSON.stringify(m));else if(REPQ.length<20)REPQ.push(m)}
+setInterval(()=>{if(ws&&ws.readyState===1&&performance.now()-lastRx>8000){REPQ.push({type:'client',what:'stale_socket',silent_s:Math.round((performance.now()-lastRx)/1000)});lastRx=performance.now();try{ws.close()}catch(e){}}},2000);
+let wallPrev=Date.now();setInterval(()=>{const n=Date.now(),gap=(n-wallPrev)/1000;wallPrev=n;if(gap>5)report('client_suspend',{gap_s:Math.round(gap)})},1000);
 function connect(){ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws'+location.search);ws.binaryType='arraybuffer';
- ws.onopen=()=>{if(rec)setTimeout(()=>wsSend({type:'record',on:true}),0);$('conn').classList.add('is-ok');$('conn').classList.remove('is-err');$('connTxt').textContent='已連線';sendCfg();if(running)ws.send(JSON.stringify({type:'start'}))};
- ws.onclose=()=>{$('conn').classList.remove('is-ok');$('conn').classList.add('is-err');$('connTxt').textContent='未連線・重新連線中';setTimeout(connect,1500)};
- ws.onmessage=e=>{if(typeof e.data!=='string')return onClean(e.data);const s=JSON.parse(e.data);
+ ws.onopen=()=>{lastRx=performance.now();if(wsTries)report('reconnect',{tries:wsTries,down_s:Math.round((performance.now()-wsDownAt)/1000),running});wsTries=0;REPQ.splice(0).forEach(m=>ws.send(JSON.stringify(m)));if(rec)setTimeout(()=>wsSend({type:'record',on:true}),0);$('conn').classList.add('is-ok');$('conn').classList.remove('is-err');$('connTxt').textContent='已連線';sendCfg();if(running)ws.send(JSON.stringify({type:'start'}))};
+ ws.onclose=()=>{if(!wsTries)wsDownAt=performance.now();wsTries++;$('conn').classList.remove('is-ok');$('conn').classList.add('is-err');$('connTxt').textContent='未連線・重新連線中';setTimeout(connect,1500)};
+ ws.onmessage=e=>{lastRx=performance.now();if(typeof e.data!=='string')return onClean(e.data);const s=JSON.parse(e.data);
   if(s.type==='event')return addEv(s);
   if(s.type==='error'){addEv(Object.assign({level:'error'},s));return showErr((s.where?s.where+': ':'')+(s.error||s.message||'error'))}
   if(s.type==='asr')return onAsr(s);
@@ -621,6 +633,7 @@ async function start(){
  if(running)return;
  stream=await navigator.mediaDevices.getUserMedia({video:{width:{ideal:640},height:{ideal:480},facingMode:'user'},audio:{echoCancellation:true,noiseSuppression:true}});
  v.srcObject=stream;running=true;autoPaused=false;setUI();wsSend({type:'start'});
+ stream.getTracks().forEach(t=>t.onended=()=>{report('media_ended',{kind:t.kind});if(running){stop(true);setTimeout(()=>start().then(()=>report('media_resumed',{kind:t.kind})).catch(e=>toast('鏡頭/麥克風中斷，請按「開始」：'+e.message)),1000)}});
  ac=new (window.AudioContext||window.webkitAudioContext)({latencyHint:'interactive'});await ac.resume();
  const an=ac.createAnalyser();an.fftSize=1024;ac.createMediaStreamSource(stream).connect(an);
  const buf=new Float32Array(an.fftSize);let floor=0.01,until=0,prev=false;
@@ -645,7 +658,8 @@ function stop(auto){
 }
 $('start').onclick=()=>running?(stop(),toast('已停止：鏡頭與麥克風已關閉')):start().catch(e=>{stop();toast('無法開啟鏡頭/麥克風：'+e.message+'（需 HTTPS 或 localhost）')});
 document.addEventListener('visibilitychange',()=>{
- if(document.hidden&&running){stop(true)}
+ report('visibility',{hidden:document.hidden,running,auto_paused:autoPaused});
+ if(document.hidden&&running){report('autopause');stop(true)}
  else if(!document.hidden&&autoPaused){start().then(()=>toast('已自動恢復')).catch(()=>toast('分頁切回來了，按「開始」繼續'))}});
 // ---------- resource monitor ----------
 const H={cpu:[],sys:[],lat:[],p95:[]},HN=60,push=(a,x)=>{a.push(x);if(a.length>HN)a.shift()};

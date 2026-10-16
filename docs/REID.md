@@ -18,12 +18,15 @@ session 開始（tracker 的 session 編號增加）
  ├─ 沒有未過期的參考臉 → 新對話（reason=no_reference，不呼叫）
  ├─ 距離上次判斷 < reid_cooldown → 新對話（reason=cooldown，不呼叫）
  └─ 等第一位參與者出現清楚的臉（正面或側面、寬度 ≥ reid_min_face）
+      （MAYBE_AWAY／AWAY 期間暫停計時）
       → 依序和參考臉比對（最新的先，最多 reid_max_refs 位）
           分數 ≥ reid_threshold（0.9）       → 接續（reason=match）
           reid_uncertain_low ≤ 分數 < 門檻    → 再取一張新畫面比對一次；仍未達門檻 → 新對話（reason=uncertain）
           分數 < reid_uncertain_low          → 新對話（reason=below_threshold）
           逾時／錯誤／沒有 key／達上限       → 新對話（reason=error / no_key / cap / breaker）
-      reid_decision_timeout 內一直沒有清楚的臉 → 新對話（reason=no_face_timeout）
+      參與者出現後 reid_face_wait（3 s）內沒有清楚的臉 → 新對話（reason=no_face_timeout）
+      整體超過 reid_decision_timeout（10 s）→ 新對話（reason=decision_timeout）
+      結束等待時記錄 `reid_wait`（等了多久、有沒有看到人、為什麼沒有可用的臉）
 ```
 
 判斷在背景執行，**不會延遲** session 開啟、影像或聲音處理；結果出來後才送出 `handoff` 事件。session 進行中，伺服器會保留這位使用者品質最好的一張臉部裁切（只在記憶體），session 結束時成為下一次比對用的參考臉。

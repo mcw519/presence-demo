@@ -45,7 +45,7 @@
 | 參數 | 預設 | 範圍 | 說明 |
 |---|---|---|---|
 | `face_roi` | (0.2, 0.05, 0.8, 0.95) | 各值 0–1；寬、高至少 0.05 | 臉部 ROI（藍色），正規化座標 x0,y0,x1,y1；臉的中心點要在框內才算。會自動排序。**舊的 `roi` 會自動轉成 `face_roi`**（伺服器 API、localStorage、匯入 JSON 都相容） |
-| `min_conf` | 0.6 | 0–1 | 低於這個值的偵測視為低信心 |
+| `min_conf` | 0.4 | 0–1 | 低於這個值的偵測視為低信心（v0.11.1 由 0.6 調低：低角度鏡頭的實測中，很多真實的臉信心只有 0.4–0.6） |
 | `embed_backend` | `fp32` | `fp32`／`int8`／`npu` | SFace 的計算方式：fp32 ONNX、官方 int8 ONNX（OpenCV DNN），或 TFLite（LiteRT，可以掛 NPU delegate） |
 | `npu_precision` *進階* | `int8` | `int8`／`fp16` | npu 後端使用的 TFLite 模型。沒有 delegate 時，int8 會自動改用 fp16（CPU 上比較快） |
 | `cos_match_int8` *進階* | 0.40 | 0–1 | 使用 int8 或 npu int8 時的「同一人」門檻（實測不需要調整） |
@@ -139,7 +139,7 @@
 | `speech_join` *進階* | `auto` | `auto`／`off`／`single_candidate`／`all` | 有人說話時是否不等 `join_seconds` 就立即加入（聲音沒有位置資訊）。`auto`：vision 模式為 `off`，其他模式為 `single_candidate`。`single_candidate`：只有一位可見、非 far 的候選人，臉在 `face_roi` 內、朝向為正面，而且開啟距離時在 `zone_max` 以內，才立即加入。`all`：所有可見候選人立即加入（v0.4.0 以前的行為） |
 | `present_frames` | 2 | 1–20（整數） | 連續幾張有人才算「有人」 |
 | `absent_frames` | 3 | 1–20（整數） | 連續幾張沒人才算「ROI 空」 |
-| `leave_halflife` | 0.6 | 0.1–30 s | 完全沒看到人時，在場勝算減半的時間。預設約 5 s 判定 AWAY |
+| `leave_halflife` | 1.5 | 0.1–30 s | 完全沒看到人時，在場勝算減半的時間。v0.11.1 由 0.6 調高，偵測偶爾漏掉時比較不會誤判離開（判定 AWAY 約慢 2.5 倍） |
 | `detect_gain` *進階* | 4.0 | 0.1–20 | 偵測證據強度（每秒，乘上信心） |
 | `lowconf_factor` *進階* | 0.15 | 0–1 | 只有低信心偵測時，下降速度是「完全沒看到」的幾倍 |
 | `p_active` *進階* | 0.8 | 0.05–0.99 | 群組 P ≥ 這個值才回到 ACTIVE |
@@ -228,7 +228,8 @@ API key 不是設定值：用環境變數 `ASSEMBLYAI_API_KEY` 或 UI 的密碼�
 | `reid_ttl` | 600 | 30–600 s | 參考臉保存時間（最長 10 分鐘） |
 | `reid_max_refs` | 3 | 1–5 | 比對最近幾位 |
 | `reid_min_face` *進階* | 0.06 | 0.02–0.5 | 最小臉寬（畫面比例） |
-| `reid_decision_timeout` *進階* | 3 | 0.5–30 s | 新 session 後等清楚的臉的時間 |
+| `reid_face_wait` *進階* | 3 | 0.5–15 s | 第一位參與者出現後，等清楚的臉的時間（從參與者出現才開始計時） |
+| `reid_decision_timeout` *進階* | 10 | 0.5–30 s | 新 session 後整體最長等待；MAYBE_AWAY／AWAY 期間暫停計時 |
 | `reid_timeout` *進階* | 2 | 0.3–10 s | 單次呼叫逾時 |
 | `reid_cooldown` *進階* | 5 | 0–120 s | 兩次判斷的最小間隔 |
 | `reid_cap_per_hour` | 30 | 1–600 | 每小時呼叫上限 |
@@ -243,7 +244,7 @@ API key 不是設定值：用環境變數 `ASSEMBLYAI_API_KEY` 或 UI 的密碼�
 |---|---|---|---|
 | `motion_gate` | 開 | 開/關 | 移動偵測閘門：畫面幾乎沒變而且狀態穩定時跳過偵測 |
 | `motion_threshold` *進階* | 0.015 | 0–0.2 | 64×48 灰階縮圖的平均差異門檻（0–1） |
-| `force_detect_seconds` *進階* | 3 | 0.5–30 s | 至少每隔這麼久完整偵測一次 |
+| `force_detect_seconds` *進階* | 2 | 0.5–30 s | 至少每隔這麼久完整偵測一次 |
 | `embed_throttle` | 開 | 開/關 | Embedding 節流 |
 | `embed_interval` *進階* | 3 | 0–30 s | 每張臉至少每隔這麼久重算一次 |
 | `embed_move_thresh` *進階* | 0.15 | 0–1 | 中心位移或大小變化（相對臉框）超過這個值就重算 |
@@ -275,14 +276,17 @@ API key 不是設定值：用環境變數 `ASSEMBLYAI_API_KEY` 或 UI 的密碼�
 
 ## 預設組合
 
-預設組合是套用在預設值之上的差異（另有「推薦新組合」＝`tracker_mode=kalman`、`presence_model=hmm`、`intent_model=score`；「低功耗」＝移動閘門、embedding 節流 5 s、自適應 fps 0.5–1、`max_width` 480、姿勢與距離關閉）：
+v0.11.1 起，「推薦」是 2026-10-16 實測所用的設定；「低角度」「單人」「多人圍觀」「吵雜環境」都建立在「推薦」之上，只列出差異。「低功耗」只改效能相關的值，套用在目前設定上。
 
 | 組合 | 內容 |
 |---|---|
-| 單人 | face_roi (0.25,0.05,0.75,0.95)、join 1.5 s、grace 10 s、present_timeout 45、empty_timeout 5 |
-| 多人圍觀 | face_roi (0.08,0.02,0.92,0.98)、join 3 s、grace 20 s、absent_frames 4、present_timeout 90、empty_timeout 8、new_group 5 s、cos_match 0.42、fps 2 |
-| 吵雜環境 | priority_mode vision、vad_k 3.5、vad_min 0.02、vad_hang 300 ms、min_conf 0.7、base_timeout 15、present_timeout 45 |
-| 重設預設值 | 回到上表預設值 |
+| 推薦（預設值以外的全部） | tracker kalman、presence hmm、intent score、姿勢開、距離開、audio_pipeline puresound、交叉確認開、near_range 1.6 m、min_conf 0.4、leave_halflife 1.5 s、force_detect 2 s、join 1.5 s、grace 10 s、face_roi (0.25,0.1,0.8,0.89)、pose_roi (0.18,0.04,0.85,0.92) |
+| 低角度鏡頭 | 推薦 + min_conf 0.35、leave_halflife 2 s、force_detect 1.5 s、face_roi (0.2,0.05,0.85,0.95)、pose_roi (0.1,0,0.9,1)、body_min_conf 0.35 |
+| 單人 | 推薦 + face_roi (0.25,0.05,0.75,0.95)、present_timeout 45、empty_timeout 5、new_group 3 s、absent_frames 3 |
+| 多人圍觀 | 推薦 + face_roi (0.08,0.02,0.92,0.98)、join 3 s、grace 20 s、present_frames 2、absent_frames 4、present_timeout 90、empty_timeout 8、new_group 5 s、cos_match 0.42、fps 2、near_range 2 m |
+| 吵雜環境 | 推薦 + priority_mode vision、vad_k 3.5、vad_min 0.02、vad_hang 300 ms、min_conf 0.5、near_range 1.2 m、base_timeout 15、present_timeout 45、empty_timeout 5 |
+| 低功耗 | 移動閘門、embedding 節流 5 s、自適應 fps 0.5–1、roi_crop、max_width 480、姿勢與距離關閉 |
+| 重設預設值 | 回到各表的預設值 |
 
 設定會存在瀏覽器的 localStorage（`presence-cfg-v1`），每次連線都會重送；也可以匯出或匯入 JSON。注意：存過的設定會蓋過新版的預設值，需要時請按「重設預設值」。
 

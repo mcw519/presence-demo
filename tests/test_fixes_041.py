@@ -94,7 +94,7 @@ def test_body_only_detection_counts_as_present():
 
 
 def test_face_detection_still_uses_min_conf():
-    tr, clk = mk()
+    tr, clk = mk(min_conf=0.6)
     for _ in range(3):
         step(tr, clk, 1, [face(1, conf=0.5)])
     assert tr.state == State.ENDED

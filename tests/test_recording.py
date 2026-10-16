@@ -46,7 +46,13 @@ def test_tracks_are_sample_aligned_and_equal_length():
 
 
 @needs_ps
-def test_ws_record_streams_three_tracks_and_writes_no_files():
+def test_ws_record_streams_three_tracks_and_writes_no_files(tmp_path, monkeypatch):
+    # Watch a private temp dir (not the shared system /tmp, where unrelated processes write files and made
+    # this test flaky) and the repo minus logs/.
+    priv = tmp_path / "tmp"
+    priv.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(priv))
+    monkeypatch.setenv("TMPDIR", str(priv))
     from fastapi.testclient import TestClient
 
     from presence_demo import server
@@ -54,7 +60,7 @@ def test_ws_record_streams_three_tracks_and_writes_no_files():
     def snap(d):
         out = {}
         for root, dn, files in os.walk(d):
-            dn[:] = [x for x in dn if x not in {".venv", ".git", "__pycache__", ".pytest_cache"}]
+            dn[:] = [x for x in dn if x not in {".venv", ".git", "__pycache__", ".pytest_cache", "logs", ".ruff_cache"}]
             for f in files:
                 p = os.path.join(root, f)
                 try:

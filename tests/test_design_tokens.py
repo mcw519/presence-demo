@@ -35,7 +35,7 @@ def test_index_uses_shared_tokens_and_component_classes():
         assert f"/static/vendor/puresound/{href}" in html
     assert 'class="button button-primary"' in html
     assert 'class="panel panel-pad"' in html
-    assert 'class="inspector"' in html and 'inspector-section' in html
+    assert 'class="inspector"' in html and "inspector-section" in html
     assert 'class="segmented"' in html and 'class="toast"' in html
     assert 'class="toggle-row"' in html or "toggle-row" in html  # built in rowHTML
     css = (Path(server.STATIC) / "app.css").read_text()

@@ -237,6 +237,10 @@ class CrossSessionReid:
         self.best_t = -1e9
         self.phase = "idle"  # idle | await_query | calling | await_retry
         self.opened_t = 0.0
+        self.waited = 0.0  # seconds waited for a usable face (ACTIVE/IDLE only; paused in MAYBE_AWAY/AWAY)
+        self.first_part_t: float | None = None  # waited-time when a participant first appeared
+        self.wait_t = 0.0
+        self.wait_why: dict = {}
         self.retry_ref: Ref | None = None
         self.retried = False
         self.task: asyncio.Task | None = None
@@ -335,6 +339,7 @@ class CrossSessionReid:
             self.session, self.committed, self.best, self.best_t = sess, False, None, -1e9
             self.retried, self.retry_ref = False, None
             self.opened_t = now
+            self.waited, self.first_part_t, self.wait_t, self.wait_why = 0.0, None, now, {}
             if not self.store.valid(now, self.cfg.reid_ttl):
                 self._decide("new", "no_reference", now)  # no previous-round data: brand-new, no call
             elif now - self.last_decision_t < self.cfg.reid_cooldown:
@@ -351,10 +356,45 @@ class CrossSessionReid:
         )
         good = [(q, t) for q, t in cands if q > 0 and (t["bbox"][2] - t["bbox"][0]) >= self.cfg.reid_min_face]
         if self.phase in ("await_query", "await_retry"):
+            dt, self.wait_t = max(0.0, now - self.wait_t), now
+            paused = state in ("MAYBE_AWAY", "AWAY")  # nobody to look at: do not burn the face-wait budget
+            if not paused:
+                self.waited += dt
+            parts = [t for t in snap.get("tracks", []) if t.get("participant") and t.get("visible")]
+            if parts and self.first_part_t is None:
+                self.first_part_t = self.waited
             if good:
                 reqs.append(("query", good[0][1]["bbox"], good[0][0]))
-            elif now - self.opened_t > self.cfg.reid_decision_timeout:
-                self._decide("new", "no_face_timeout", now)
+            elif not paused:
+                if parts:  # remember why the visible participant's face is not usable (for reid_wait)
+                    t = parts[0]
+                    b = t.get("bbox") or [0, 0, 0, 0]
+                    self.wait_why = {
+                        "why": "facing_away"
+                        if t.get("facing") == "away"
+                        else (
+                            "no_face"
+                            if t.get("has_face") is False
+                            else (
+                                "predicted"
+                                if t.get("visible_kind") == "predicted"
+                                else ("face_too_small" if b[2] - b[0] < self.cfg.reid_min_face else "low_quality")
+                            )
+                        ),
+                        "face_w": round(b[2] - b[0], 3),
+                    }
+                face_wait = self.first_part_t is not None and self.waited - self.first_part_t > self.cfg.reid_face_wait
+                if face_wait or self.waited > self.cfg.reid_decision_timeout:
+                    reason = "no_face_timeout" if face_wait else "decision_timeout"
+                    self.event(
+                        "reid_wait",
+                        session=self.session,
+                        result=reason,
+                        waited_s=round(self.waited, 1),
+                        participant_seen=self.first_part_t is not None,
+                        **(self.wait_why or {"why": "no_participant"}),
+                    )
+                    self._decide("new", reason, now)
         if good and not self.committed and now - self.best_t >= 1.0:
             q = good[0][0]
             if self.best is None or q > self.best[0] * 1.1:

@@ -14,7 +14,7 @@ HTML = (Path(__file__).parents[1] / "presence_demo" / "static" / "index.html").r
 def test_state_machine_is_an_axis_with_history():
     assert 'class="fsm-axis" id="sm"' in HTML and 'id="smHist"' in HTML
     assert "fsm-edge" in HTML and "is-current" in HTML
-    assert 'segmented sm' not in HTML
+    assert "segmented sm" not in HTML
 
 
 def _group(cls):

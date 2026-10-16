@@ -34,7 +34,7 @@ class Config:
     """Tracker parameters. All coordinates are normalized; times in seconds. See docs/CONFIGURATION.md."""
 
     face_roi: tuple = (0.2, 0.05, 0.8, 0.95)  # face ROI (formerly `roi`), normalized
-    min_conf: float = 0.6  # detections below are "low confidence"
+    min_conf: float = 0.4  # detections below are "low confidence" (0.4: tuned for a low robot camera, v0.11.1)
     iou_match: float = 0.3
     cos_match: float = 0.40  # cosine >= this => same person (SFace ~0.363)
     cos_weak: float = 0.20  # with good IoU, this weaker cosine is accepted
@@ -61,7 +61,7 @@ class Config:
     # --- performance / power (see presence_demo/optimizer.py) ---
     motion_gate: bool = True  # skip detection when the (downscaled) frame barely changed
     motion_threshold: float = 0.015  # mean abs gray diff (0..1) below which a frame is "static"
-    force_detect_seconds: float = 3.0  # full detection at least this often even if static
+    force_detect_seconds: float = 2.0  # full detection at least this often even if static
     embed_throttle: bool = True  # reuse a face embedding when the face barely moved
     embed_interval: float = 3.0  # recompute each face embedding at least this often
     embed_move_thresh: float = 0.15  # center shift / size change (relative to box) forcing recompute
@@ -99,7 +99,7 @@ class Config:
     appearance_ema: float = 0.2  # kalman: appearance template update rate
     # --- presence model (Layer 2) ---
     presence_model: str = "rules"  # rules (counters + timeouts) | hmm (per-track Bayes filter)
-    leave_halflife: float = 0.6  # hmm: with nobody seen, odds of "present" halve every this many seconds
+    leave_halflife: float = 1.5  # hmm: with nobody seen, odds of "present" halve every this many seconds
     detect_gain: float = 4.0  # hmm: evidence rate per second for a detection (x confidence)
     lowconf_factor: float = 0.15  # hmm: low-confidence frames decay this fraction of the normal rate
     p_active: float = 0.8  # hmm: group P >= this -> ACTIVE/IDLE (from MAYBE_AWAY/AWAY)
@@ -161,7 +161,8 @@ class Config:
     reid_ttl: float = 600.0  # seconds a past user's reference crop is kept (memory only)
     reid_max_refs: int = 3  # last N users compared (newest first)
     reid_min_face: float = 0.06  # min face width (fraction of frame) to use as query/reference
-    reid_decision_timeout: float = 3.0  # no usable face within this after session open -> new conversation
+    reid_decision_timeout: float = 10.0  # overall cap on waiting for a usable face (paused in MAYBE_AWAY/AWAY)
+    reid_face_wait: float = 3.0  # after the first participant appears, wait this long for a usable face
     reid_timeout: float = 2.0  # per HTTP call
     reid_cooldown: float = 5.0  # min seconds between decisions (rapid re-opens -> new, no call)
     reid_cap_per_hour: int = 30
@@ -376,6 +377,7 @@ RANGES = {
     "reid_max_refs": (1, 5, int),
     "reid_min_face": (0.02, 0.5, float),
     "reid_decision_timeout": (0.5, 30.0, float),
+    "reid_face_wait": (0.5, 15.0, float),
     "reid_timeout": (0.3, 10.0, float),
     "reid_cooldown": (0.0, 120.0, float),
     "reid_cap_per_hour": (1, 600, int),

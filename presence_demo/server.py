@@ -222,7 +222,9 @@ class Outbox:
     """Non-blocking outbound queue for one WebSocket: processing never awaits the network (a slow client used to
     block the vision/audio workers on ``send``). Audio and droppable JSON are dropped when the backlog grows."""
 
-    def __init__(self, sock: WebSocket):
+    def __init__(self, sock: WebSocket, conn: str | None = None):
+        self.conn = conn
+        self.closed = False
         self.sock, self.q = sock, collections.deque()
         self.ev = asyncio.Event()
         self.n_audio = self.n_json = 0
@@ -258,10 +260,15 @@ class Outbox:
                 self.dropped_audio += 1  # catch up: playback latency matters more than completeness
                 continue
             t0 = time.perf_counter()
-            if isinstance(item, bytes):
-                await self.sock.send_bytes(item)
-            else:
-                await self.sock.send_text(json.dumps(item, separators=(",", ":")))
+            try:
+                if isinstance(item, bytes):
+                    await self.sock.send_bytes(item)
+                else:
+                    await self.sock.send_text(json.dumps(item, separators=(",", ":")))
+            except (WebSocketDisconnect, RuntimeError) as e:  # client went away: a normal close, not a crash
+                self.closed = True
+                diag.event("sender_closed", conn=self.conn, reason=type(e).__name__)
+                return
             ms = (time.perf_counter() - t0) * 1000
             self.send_ms_max = max(self.send_ms_max, ms)
             self.sent += 1
@@ -288,7 +295,7 @@ async def ws(sock: WebSocket):
     lock = asyncio.Lock()
     slot: dict = {"frame": None}
     wake = asyncio.Event()
-    out = Outbox(sock)
+    out = Outbox(sock, cid)
     # audio (audio_pipeline=puresound): binary PCM16 chunks in, clean PCM16 + "audio" meta out; memory only
     aud: dict = {
         "stream": None,
@@ -321,6 +328,10 @@ async def ws(sock: WebSocket):
         "state": None,
         "session": None,
         "warn_t": {},
+        "tracks": {},  # id -> {"visible": bool, "since": t}  (track lifecycle events)
+        "fm": {"frames": 0, "detected": 0, "confs": [], "widths": [], "out_roi": 0, "coast": 0, "t0": time.monotonic()},
+        "wall0": time.time(),
+        "mono0": time.monotonic(),
     }
     rd = reidmod.CrossSessionReid(
         st["tr"].cfg,
@@ -349,17 +360,73 @@ async def ws(sock: WebSocket):
 
     def track_state(snap: dict) -> None:
         s, sess = snap.get("state"), snap.get("session")
+        tracks = snap.get("tracks", [])
         if s != mon["state"] or sess != mon["session"]:
+            tr_ev = [e for e in snap.get("log") or [] if e.get("event") == "transition" and e.get("to") == s]
             diag.event(
                 "state",
                 conn=cid,
                 frm=mon["state"],
                 to=s,
                 session=sess,
-                participants=sum(1 for x in snap.get("tracks", []) if x.get("participant")),
+                reason=tr_ev[-1].get("reason") if tr_ev else None,
+                participants=sum(1 for x in tracks if x.get("participant")),
+                faces=sum(1 for x in tracks if x.get("visible") and x.get("has_face") is not False),
+                speech=snap.get("speaking"),
                 p_group=snap.get("p_group"),
             )
+            if s == "ACTIVE" and mon["state"] == "ENDED":
+                diag.event(
+                    "session_open",
+                    conn=cid,
+                    session=sess,
+                    reason=tr_ev[-1].get("reason") if tr_ev else None,
+                    participants=sum(1 for x in tracks if x.get("participant")),
+                    faces=sum(1 for x in tracks if x.get("visible") and x.get("has_face") is not False),
+                    tracks=len(tracks),
+                    speech=snap.get("speaking"),
+                )
             mon["state"], mon["session"] = s, sess
+        # track lifecycle: new / lost (missing) / recovered / dropped
+        now_t, seen = time.monotonic(), set()
+        for t in tracks:
+            tid, vis = t.get("id"), bool(t.get("visible")) and t.get("visible_kind") != "predicted"
+            seen.add(tid)
+            prev = mon["tracks"].get(tid)
+            if prev is None:
+                mon["tracks"][tid] = {"visible": vis, "since": now_t}
+                diag.event(
+                    "track_new",
+                    conn=cid,
+                    track=tid,
+                    participant=t.get("participant"),
+                    has_face=t.get("has_face"),
+                    session=sess,
+                )
+            elif prev["visible"] != vis:
+                if vis:
+                    diag.event(
+                        "track_recovered",
+                        conn=cid,
+                        track=tid,
+                        missing_s=round(now_t - prev["since"], 1),
+                        participant=t.get("participant"),
+                    )
+                else:
+                    diag.event(
+                        "track_lost",
+                        conn=cid,
+                        track=tid,
+                        kind=t.get("visible_kind") or "missing",
+                        visible_s=round(now_t - prev["since"], 1),
+                        participant=t.get("participant"),
+                    )
+                prev.update(visible=vis, since=now_t)
+        for tid in [k for k in mon["tracks"] if k not in seen]:
+            prev = mon["tracks"].pop(tid)
+            diag.event(
+                "track_dropped", conn=cid, track=tid, was_visible=prev["visible"], for_s=round(now_t - prev["since"], 1)
+            )
         for e in snap.get("events") or []:
             name = e.get("event") if isinstance(e, dict) else str(e)
             if name in ("NEW_GROUP", "ENDED", "SESSION_START", "JOIN", "LEAVE"):
@@ -433,6 +500,21 @@ async def ws(sock: WebSocket):
                 tr = st["tr"]
                 tr.speech_source = "clean" if clean_active() else "browser"
                 snap = tr.update(dets, speaking=None if clean_active() else msg.get("speech"))
+                if not tm.get("skipped"):
+                    fm = mon["fm"]
+                    fm["frames"] += 1
+                    faces = [d for d in dets if d.face_bbox is not None]
+                    if faces:
+                        fm["detected"] += 1
+                        r_ = tr.cfg.face_roi
+                        for d in faces:
+                            fm["confs"].append(float(d.conf))
+                            fm["widths"].append(float(d.face_bbox[2] - d.face_bbox[0]))
+                            cx, cy = (d.face_bbox[0] + d.face_bbox[2]) / 2, (d.face_bbox[1] + d.face_bbox[3]) / 2
+                            fm["out_roi"] += not (r_[0] <= cx <= r_[2] and r_[1] <= cy <= r_[3])
+                    fm["coast"] += any(
+                        t.get("participant") and t.get("visible_kind") == "predicted" for t in snap["tracks"]
+                    )
                 tm["tracker"] = (time.perf_counter() - t1) * 1000
                 aud["vis_t"] = time.monotonic()
                 aud["vis_tc"] = msg.get("t")
@@ -502,6 +584,13 @@ async def ws(sock: WebSocket):
             and st["running"]
             and tr.state.value != "ENDED"
         )
+        if (
+            c.asr_provider == "assemblyai"
+            and not asrmod.key_status()["set"]
+            and st["running"]
+            and tr.state.value != "ENDED"
+        ):
+            warn("asr_skip", 60, reason="no_key")
         if aud["asr"] is not None and (not want or aud["asr_sess"] != tr.session):
             await asr_close()
         if not want:
@@ -658,6 +747,30 @@ async def ws(sock: WebSocket):
                     dropped_json=out.dropped_json,
                     last_send_s=round(now - out.last_send, 1),
                 )
+            wall_d, mono_d = time.time() - mon["wall0"], now - mon["mono0"]
+            if wall_d - mono_d > 2.0:  # CLOCK_MONOTONIC does not advance while the host is suspended
+                diag.event("host_suspend", "warning", cid, gap_s=round(wall_d - mono_d, 1))
+            mon["wall0"], mon["mono0"] = time.time(), now
+            fm = mon["fm"]
+            if run and now - fm["t0"] >= 30 and fm["frames"]:
+                rate = fm["detected"] / fm["frames"]
+                cs, ws_ = fm["confs"], fm["widths"]
+                diag.event(
+                    "face_miss_summary",
+                    "warning" if rate < 0.6 else "info",
+                    cid,
+                    window_s=round(now - fm["t0"]),
+                    frames=fm["frames"],
+                    face_frames=fm["detected"],
+                    hit_rate=round(rate, 2),
+                    conf_avg=round(sum(cs) / len(cs), 2) if cs else None,
+                    conf_min=round(min(cs), 2) if cs else None,
+                    face_w_avg=round(sum(ws_) / len(ws_), 3) if ws_ else None,
+                    out_of_roi=fm["out_roi"],
+                    coast_frames=fm["coast"],
+                    min_conf=st["tr"].cfg.min_conf,
+                )
+                mon["fm"] = {"frames": 0, "detected": 0, "confs": [], "widths": [], "out_roi": 0, "coast": 0, "t0": now}
             if now - last_hb >= HEARTBEAT_S:
                 fr = {"received": stats.received, "processed": stats.processed, "dropped": stats.dropped}
                 c = proc.counts
@@ -754,6 +867,20 @@ async def ws(sock: WebSocket):
                     aud["calibrated"] = aud["calibrated"] or any(w.startswith("calibrated") for w in warns)
                     diag.event("calibrate", conn=cid, result="; ".join(warns)[:200])
                     send(tr.tick() if st["running"] else tr.snapshot(), {"config_ack": True, "warnings": warns}, False)
+                elif kind == "client":  # browser-side report: visibility / auto-pause / media ended / reconnect
+                    what = str(msg.get("what") or "")[:32]
+                    info = {
+                        k: (v if isinstance(v, (int, float, bool)) else str(v)[:64])
+                        for k, v in msg.items()
+                        if k not in ("type", "what", "level", "conn", "_event")
+                    }
+                    diag.event(
+                        "client",
+                        "warning" if what in ("media_ended", "reconnect") else "info",
+                        cid,
+                        what=what,
+                        **dict(list(info.items())[:8]),
+                    )
                 elif kind == "reid_wipe":
                     rd.wipe("ui")
                     out.post({"type": "reid", **rd.status()})

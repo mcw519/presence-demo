@@ -40,13 +40,21 @@ Every record is also kept in an in-memory ring buffer that feeds the UI **事件
 | `config` | info | Config diff (`changed` keys and new values; secrets masked) |
 | `config_warnings` | warning | Config combination that will not behave as expected |
 | `start`, `stop`, `calibrate`, `record_stream` | info | User actions |
-| `state` | info | State-machine transition (`frm`, `to`, `session`, participant count) |
+| `state` | info | State-machine transition (`frm`, `to`, `session`, participant count, `reason`, `faces`, `speech`) |
 | `session_event` | info | Session start / end |
 | `audio_init` | info | Audio isolation ready (`ms`) |
 | `asr` | info/warning | ASR status changes and errors (never text) |
 | `reid_start`, `reid_call`, `reid_retry`, `reid_decision` | info | Cross-session re-ID (docs/REID.md): refs compared, score, latency, model, tokens, running call count and cost estimate, final decision and `conversation_id`. Never images, base64 or keys |
 | `reid_skip`, `reid_error`, `reid_breaker` | info/warning | Re-ID skipped (cap, cooldown, no key, breaker) or failed (timeout, HTTP code); breaker open after 3 errors |
 | `reid_store` | info | In-memory reference faces added / expired / wiped (count only) |
+| `session_open` | info | A session started: `reason` (the tracker transition reason), participants, faces, tracks, `speech` |
+| `track_new`, `track_lost`, `track_recovered`, `track_dropped` | info | Track lifecycle (id, age, last confidence) |
+| `face_miss_summary` | info/warning | Every 30 s while running: detection attempts, hits, hit rate (warning below 0.6) |
+| `reid_wait` | info | Re-ID wait ended: `result`, `waited_s`, `participant_seen`, `why` (no_participant / face_too_small / facing_away / no_face / predicted / low_quality), `face_w` |
+| `asr_skip` | warning | ASR enabled but no key (`reason=no_key`, at most once a minute) |
+| `client` | info/warning | Browser reports: `what` = visibility, autopause, media_ended (camera/mic track ended), reconnect (`tries`, `down_s`), stale_socket, client_suspend. Fields are clamped to 64 chars |
+| `host_suspend` | warning | Wall clock jumped ahead of the monotonic clock by > 2 s (the host was suspended); `gap_s` |
+| `sender_closed` | info | The browser went away while a message was being sent; treated as a normal close (no `task_crash`) |
 | `heartbeat` | info | Every 10 s per connection: frames received/processed/dropped, audio chunks, backlog, outbox drops, max send time, loop lag, cross-check counters, `reid_calls` / `reid_tokens` / `reid_cost_est` / `reid_refs` |
 | `slow_frame` | warning | A frame took > 500 ms (per-stage timings) |
 | `loop_lag` | warning | The event loop was blocked |

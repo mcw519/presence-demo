@@ -31,6 +31,8 @@ def face(i, conf=0.9):
 
 def mk(mode="vision", **kw):
     clk = Clock()
+    kw.setdefault("leave_halflife", 0.6)  # model math below was derived for the pre-v0.11.1 default
+    kw.setdefault("min_conf", 0.6)
     return PresenceTracker(Config(presence_model="hmm", priority_mode=mode, **kw), clock=clk), clk
 
 

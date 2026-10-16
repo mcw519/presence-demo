@@ -245,13 +245,49 @@ def test_timeout_falls_back(mock):
     run(go())
 
 
-def test_no_face_times_out_to_new(mock):
+def test_no_participant_hits_overall_cap(mock):
     async def go():
         r, out, ev, clk = make(mock.url, reid_decision_timeout=2)
         await end_session(r, clk, 1)
         await drive(r, snap(2, tracks=[]), clk)
         await drive(r, snap(2, tracks=[]), clk, 3)
-        assert out[-1]["reason"] == "no_face_timeout" and mock.reqs == []
+        assert out[-1]["reason"] == "decision_timeout" and mock.reqs == []
+        w = [k for n, k in ev if n == "reid_wait"][-1]
+        assert w["why"] == "no_participant" and w["participant_seen"] is False
+
+    run(go())
+
+
+def test_face_wait_starts_at_first_participant(mock):
+    async def go():
+        r, out, ev, clk = make(mock.url, reid_decision_timeout=10, reid_face_wait=3)
+        await end_session(r, clk, 1)
+        small = [face(w=0.03)]  # participant visible but face too small to use
+        await drive(r, snap(2, tracks=[]), clk)  # 1 s: nobody yet
+        await drive(r, snap(2, tracks=[]), clk, 2)  # 3 s waited: would have timed out under the old rule
+        assert r.phase == "await_query"
+        await drive(r, snap(2, tracks=small), clk)  # participant appears -> 3 s face wait starts
+        await drive(r, snap(2, tracks=small), clk, 2)
+        assert r.phase == "await_query"
+        await drive(r, snap(2, tracks=small), clk, 2)
+        assert out[-1]["reason"] == "no_face_timeout"
+        w = [k for n, k in ev if n == "reid_wait"][-1]
+        assert w["why"] == "face_too_small" and w["participant_seen"] is True
+
+    run(go())
+
+
+def test_wait_paused_while_away(mock):
+    async def go():
+        r, out, ev, clk = make(mock.url, reid_decision_timeout=3)
+        await end_session(r, clk, 1)
+        await drive(r, snap(2, tracks=[]), clk)
+        for _ in range(5):  # 5 s in AWAY do not count
+            await drive(r, snap(2, "AWAY", []), clk)
+        assert r.phase == "await_query"
+        mock.scores = [0.95]
+        await drive(r, snap(2), clk)  # the person is back with a good face -> one call, resume
+        assert out[-1]["decision"] == "resume" and len(mock.reqs) == 1
 
     run(go())
 

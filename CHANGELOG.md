@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.11.1 — 2026-10-16
+
+依 2026-10-16 實測記錄分析的修正。
+- **預設值調整**：`min_conf` 0.6 → 0.4、`leave_halflife` 0.6 → 1.5 s、`force_detect_seconds` 3 → 2 s。
+- **預設組合**：「推薦」改成實測所用的設定（kalman＋hmm＋score、姿勢與距離開、PureSound＋交叉確認、near_range 1.6 m 與上述調整）；單人／多人圍觀／吵雜環境改成建立在「推薦」之上；新增「低角度鏡頭」。每個組合都寫在 `docs/CONFIGURATION.md`。
+- **re-ID 等待**：新增 `reid_face_wait`（3 s），從第一位參與者出現才開始計時；`reid_decision_timeout` 改成整體上限 10 s；MAYBE_AWAY／AWAY 期間暫停計時（修正：上次 session 2 在 AWAY 時就逾時了）。
+- **記錄**：新增 `session_open`（開啟原因）、`track_*` 生命週期、`face_miss_summary`、`reid_wait`、`asr_skip`（沒有 key）、`client`（瀏覽器回報分頁隱藏、鏡頭／麥克風中斷、重連、休眠）、`host_suspend`、`sender_closed`。見 `docs/LOGGING.md`。
+- **瀏覽器自動重連並續跑**：8 s 沒收到訊息就判定連線失效並重連；鏡頭或麥克風中斷時自動重啟擷取。
+- 瀏覽器斷線視為正常關閉，不再記成 `task_crash`。
+- 修正偶爾失敗的測試 `test_ws_record_streams_three_tracks_and_writes_no_files`：改成檢查私有暫存目錄，不受其他程序在 /tmp 寫檔影響。
+
 ## 0.11.0 — 2026-10-16
 
 - **新功能：跨 session 使用者判斷（雲端 re-ID，選用，預設關閉）**。新 session 開始時，把第一張清楚的臉和最近幾位使用者的參考臉送到可抽換的雲端後端比對（內建 Jev／Typesafe images API）。

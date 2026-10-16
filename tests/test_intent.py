@@ -51,7 +51,7 @@ def person(i, cx, cy=0.4, frontal=0.95, view="facing", face=True):
 
 def mk(**kw):
     clk = Clock()
-    base = dict(intent_model="score", pose_enabled=True)
+    base = dict(intent_model="score", pose_enabled=True, leave_halflife=0.6, min_conf=0.6)  # pre-v0.11.1 tuning
     base.update(kw)
     return PresenceTracker(Config(**base), clock=clk), clk
 
