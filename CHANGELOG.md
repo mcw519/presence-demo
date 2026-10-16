@@ -1,5 +1,28 @@
 # Changelog
 
+> From 0.12.0 on, entries are written in English. Older entries are kept as written (Traditional Chinese) and may
+> mention the previous upper-case doc names (e.g. `docs/REID.md` is now `docs/reid.md`).
+
+## 0.12.0 — 2026-10-16
+
+Clean-up release: no change in tracking, presence or audio behaviour.
+
+- **English UI with i18n.** Every visible string (labels, settings and help texts, module names, state
+  descriptions, panel captions, buttons, event-log labels, presets) comes from string tables in
+  `static/i18n/en.js` and `static/i18n/zh-TW.js`. A language switch (EN / 中文) in the sidebar; the choice is kept in
+  `localStorage`, defaults to the browser language and falls back to English; `?lang=` overrides it.
+  `tests/test_i18n.py` checks identical keys and placeholders, that every used key exists, and that no text is
+  hard-coded in the scripts. The recording sidecar JSON is now in English.
+- **Code structure.** `config.py` (Config, RANGES, State) split out of `tracker.py`; the web server split into
+  `server.py` (app and routes) and `web/` (`runtime.py`, `outbox.py`, `session.py`); the front end split into
+  `index.html` (markup only) and `static/js/*.js`. Dead code removed; tests renamed by topic instead of version.
+- **Documentation rewritten** as a bilingual set (English in `docs/`, Traditional Chinese in `docs/zh-TW/`) with an
+  index, plain-language algorithm pages (detection, tracking, intent, presence, state machine, audio, re-ID) and
+  new figures generated from the real code (`scripts/make_figures.py`, `scripts/render_diagrams.sh`). The parameter
+  reference is generated from the code and string tables (`scripts/gen_config_docs.py`) and checked by
+  `tests/test_docs.py`. README rewritten as a project landing page, plus `README.zh-TW.md`.
+- **Community files**: English `CONTRIBUTING.md` (+ zh-TW), `CODE_OF_CONDUCT.md`, `SECURITY.md`.
+
 ## 0.11.2 — 2026-10-16
 
 - **新的「使用者比對」卡片**（在狀態機卡片下方）：每次跨 session 判斷後，並排顯示這次送去比對的臉和比對到的參考臉，加上分數、門檻、決策（↩ 接續 #n／＋ 新對話）、原因、時間；保留最近 4 筆。
