@@ -23,6 +23,7 @@
 | 狀態機／逾時 | — | `present_max_silence` 只在 `priority_mode = vision`；`present_timeout` 用於 balanced |
 | 音訊（PureSound＋影像交叉確認） | `audio_pipeline` | 其餘參數只在 `audio_pipeline = puresound`；`xcheck_*` 需要 `xcheck_enabled`；情況 3（聲學誤判-超出範圍）與 `xcheck_require_calib` 需要距離，距離關閉時跳過 |
 | 語音辨識（雲端，選用） | `asr_provider` | 需要 `audio_pipeline = puresound`；`asr_language_codes` 只適用 3.x Pro；`asr_format_turns`／`asr_eot_confidence` 只適用 Universal-Streaming |
+| 跨 session 使用者判斷（雲端，選用） | `reid_enabled` | 還需要 `reid_consent`；需要 API key（`TYPESAFE_API_KEY` 或設定頁） |
 | 效能 | — | `motion_threshold`／`force_detect_seconds` 需要 `motion_gate`；`embed_*` 需要 `embed_throttle`；`fps_low/high` 需要 `adaptive_fps`；`crop_margin` 需要 `roi_crop` |
 | 顯示（只影響這個瀏覽器） | — | 只影響瀏覽器；`show_pose_roi` 需要姿勢 |
 
@@ -211,6 +212,28 @@ API key 不是設定值：用環境變數 `ASSEMBLYAI_API_KEY` 或 UI 的密碼�
 | `asr_eot_confidence` *進階* | 0.4 | 0–1 | Universal-Streaming 才有效 |
 | `asr_min_turn_silence` *進階* | 400 | 50–10000 ms | |
 | `asr_max_turn_silence` *進階* | 1280 | 100–10000 ms | |
+
+## 10b. 跨 session 使用者判斷（雲端，選用）
+
+詳見 [REID.md](REID.md)。人臉裁切會離開裝置；參考臉只在伺服器記憶體保存。
+
+| 參數 | 預設 | 範圍 | 說明 |
+|---|---|---|---|
+| `reid_enabled` | 關 | 開/關 | 新 session 時判斷是否為上一位使用者 |
+| `reid_consent` | 關 | 開/關 | 部署者確認已告知使用者並取得同意；沒開就不運作 |
+| `reid_provider` *進階* | `jev` | `jev` | 雲端後端（可抽換介面） |
+| `reid_model` | `jev-latest` | `jev-latest` / `jev-1.13.0` | 固定版本可確保結果可重現 |
+| `reid_threshold` | 0.9 | 0.5–0.99 | ≥ 門檻＝同一人 → 接續 |
+| `reid_uncertain_low` *進階* | 0.4 | 0–0.95 | 介於下限和門檻之間時再比一次，仍未達門檻 → 新對話 |
+| `reid_ttl` | 600 | 30–600 s | 參考臉保存時間（最長 10 分鐘） |
+| `reid_max_refs` | 3 | 1–5 | 比對最近幾位 |
+| `reid_min_face` *進階* | 0.06 | 0.02–0.5 | 最小臉寬（畫面比例） |
+| `reid_decision_timeout` *進階* | 3 | 0.5–30 s | 新 session 後等清楚的臉的時間 |
+| `reid_timeout` *進階* | 2 | 0.3–10 s | 單次呼叫逾時 |
+| `reid_cooldown` *進階* | 5 | 0–120 s | 兩次判斷的最小間隔 |
+| `reid_cap_per_hour` | 30 | 1–600 | 每小時呼叫上限 |
+| `reid_cap_total` *進階* | 200 | 1–10000 | 每連線呼叫上限 |
+| `reid_cost_per_call` | 0 | 0–10 | 自填單價，只用於成本估算 |
 
 ## 11. 效能
 

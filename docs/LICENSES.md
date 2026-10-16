@@ -22,6 +22,7 @@
 
 | 服務 | 條款 | 說明 |
 |---|---|---|
+| Jev（Typesafe）images API（`reid_enabled`，跨 session 使用者判斷） | Typesafe 服務條款（付費 API，非開源；**商用條款與 `TypeSafe-Danger-Zone-Images` header 的意義尚未確認**） | 預設關閉，需要 `reid_consent`。開啟後人臉裁切送到 Typesafe。使用前請確認條款、資料保留與使用者同意。見 [REID.md](REID.md)。 |
 | AssemblyAI Universal-Streaming v3（`asr_provider=assemblyai`） | AssemblyAI 服務條款（付費 API，非開源） | 預設關閉。開啟後聲音送到 AssemblyAI（可選美國／歐盟資料區域）。使用前請確認條款、資料保留與使用者同意。 |
 
 ## Python 套件（執行時）

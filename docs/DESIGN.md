@@ -54,6 +54,7 @@ Checksums of the unmodified upstream files are pinned in `tests/test_design_toke
 | Audio signals | `.sig-group.raw` / `.sig-group.clean` (waveform + spectrogram) | One bundle per signal; mint / periwinkle edge |
 | ROI editor | `.segmented#roiPick` (臉部 / 身體 / 鎖定) + drag on `#view canvas` | Face cyan dashed, body purple dotted; only the selected ROI is draggable |
 | Live caption | `#view > .caption` (`.is-in` fade, `.is-final` white; `--nav` 78 % backing, `--on-nav` text) | Single bottom line over the camera, never mirrored |
+| Cross-session re-ID line | `.reid-line#reidSt` in the state card: decision (`↩ 接續 #n` in `--ok`, `＋ 新對話` + reason), short `conversation_id` (mono), calls · tokens · cost · refs (mono, right) | Hidden when the feature is off; never shows face images |
 | Monitor stage | `.stage-head` (title + `.segmented#trkView` 波形／頻譜／兩者, outside the frame) + `section.panel.monitor-stage` (12 px gutter on `--nav-2`) = `#view` rounded inset + `.sig-stack` inset panel of `.sig-lane`s (`.lane-label` gutter: chip, name, dB; `.lane-plots` rounded canvases) | Modelled on PureSound CompareDeck; shared gutter keeps video edges and time axes aligned; `--stage-chrome` per view keeps it inside the viewport |
 | Layout | Left column: monitor stage, then ROI card, then monitor/record/timeline card; right column: state, ASR, P(group), countdowns | |
 | Monitor off/raw/clean | `.segmented` `[role=radiogroup]` `.is-active` | |

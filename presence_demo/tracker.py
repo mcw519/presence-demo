@@ -151,6 +151,22 @@ class Config:
     asr_eot_confidence: float = 0.4  # Universal-Streaming only
     asr_min_turn_silence: int = 400  # ms
     asr_max_turn_silence: int = 1280  # ms
+    # optional cross-session re-ID ("is this a new user?"), docs/REID.md. Off by default; cloud; needs consent.
+    reid_enabled: bool = False
+    reid_consent: bool = False  # the operator confirmed users are informed (face crops kept in memory + sent out)
+    reid_provider: str = "jev"
+    reid_model: str = "jev-latest"
+    reid_threshold: float = 0.9  # >= -> same person -> resume the previous conversation
+    reid_uncertain_low: float = 0.4  # [low, threshold): one more frame, else new conversation
+    reid_ttl: float = 600.0  # seconds a past user's reference crop is kept (memory only)
+    reid_max_refs: int = 3  # last N users compared (newest first)
+    reid_min_face: float = 0.06  # min face width (fraction of frame) to use as query/reference
+    reid_decision_timeout: float = 3.0  # no usable face within this after session open -> new conversation
+    reid_timeout: float = 2.0  # per HTTP call
+    reid_cooldown: float = 5.0  # min seconds between decisions (rapid re-opens -> new, no call)
+    reid_cap_per_hour: int = 30
+    reid_cap_total: int = 200  # per connection
+    reid_cost_per_call: float = 0.0  # user-entered unit price, for the cost estimate only
 
     @property
     def match_cos(self) -> float:
@@ -350,6 +366,21 @@ RANGES = {
     "asr_eot_confidence": (0.0, 1.0, float),
     "asr_min_turn_silence": (50, 10000, int),
     "asr_max_turn_silence": (100, 10000, int),
+    "reid_enabled": (False, True, bool),
+    "reid_consent": (False, True, bool),
+    "reid_provider": (("jev",), None, str),
+    "reid_model": (("jev-latest", "jev-1.13.0"), None, str),
+    "reid_threshold": (0.5, 0.99, float),
+    "reid_uncertain_low": (0.0, 0.95, float),
+    "reid_ttl": (30.0, 600.0, float),
+    "reid_max_refs": (1, 5, int),
+    "reid_min_face": (0.02, 0.5, float),
+    "reid_decision_timeout": (0.5, 30.0, float),
+    "reid_timeout": (0.3, 10.0, float),
+    "reid_cooldown": (0.0, 120.0, float),
+    "reid_cap_per_hour": (1, 600, int),
+    "reid_cap_total": (1, 10000, int),
+    "reid_cost_per_call": (0.0, 10.0, float),
 }
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import atexit
 import base64
 import collections
 import concurrent.futures
@@ -24,6 +25,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import asr as asrmod
 from . import diag
+from . import reid as reidmod
 from .audio import AudioStream, puresound_available
 from .body import calibration_factor
 from .optimizer import FrameProcessor, recommend_fps
@@ -178,6 +180,29 @@ async def asr_key(request: Request):
     return asrmod.set_key(str(body.get("key") or "")[:256])
 
 
+@app.get("/api/reid_status")
+def reid_status():
+    return reidmod.key_status()  # never the key itself
+
+
+@app.post("/api/reid_key")
+async def reid_key(request: Request):
+    """Set/clear the re-ID backend key in server memory (token-protected). Not logged/stored."""
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    return reidmod.set_key(str(body.get("key") or "")[:512])
+
+
+@app.post("/api/reid_reset")
+def reid_reset():
+    """Wipe every connection's in-memory reference faces."""
+    n = reidmod.wipe_all()
+    diag.event("reid_store", action="wipe", reason="api", count=n)
+    return {"wiped": n}
+
+
 @app.get("/debug/events")
 def debug_events(n: int = 200, conn: str | None = None):
     """Recent structured events (token-protected by the middleware; no media, keys or transcript text)."""
@@ -297,6 +322,11 @@ async def ws(sock: WebSocket):
         "session": None,
         "warn_t": {},
     }
+    rd = reidmod.CrossSessionReid(
+        st["tr"].cfg,
+        emit=lambda d: out.post(d),
+        event=lambda name, level="info", **kv: diag.event(name, level, cid, **kv),
+    )
     diag.event("conn_ready", conn=cid, vision_ms=round((time.perf_counter() - t) * 1000, 1), pipeline=pipe.name)
 
     def warn(name: str, every: float = 30.0, level: str = "warning", **kv) -> None:  # rate-limited warnings
@@ -357,7 +387,12 @@ async def ws(sock: WebSocket):
             n += 1
             async with lock:
                 tr = st["tr"]
-                send(tr.tick() if st["running"] else tr.snapshot())
+                snap_t = tr.tick() if st["running"] else tr.snapshot()
+                send(snap_t)
+                if st["running"]:
+                    rd.observe(snap_t)  # timeouts / TTL only; crops come from the frame worker
+                if n % 2 == 0 and (rd.on() or rd.calls):
+                    out.post({"type": "reid", **rd.status()}, droppable=True)
                 if st["running"] and n % 2 == 0:
                     out.post(
                         build_stats(
@@ -386,10 +421,11 @@ async def ws(sock: WebSocket):
             data = base64.b64decode(msg["data"].split(",")[-1])
             stable = st["tr"].state.value not in ("MAYBE_AWAY", "AWAY")
             r = await asyncio.to_thread(_vision_job, proc, data, st["tr"].cfg, stable, cid)
-            del data
             if r is None:
+                del data
                 continue
             dets, tm = r
+            reqs: list = []
             async with lock:
                 if not st["running"]:
                     continue
@@ -426,6 +462,12 @@ async def ws(sock: WebSocket):
                         "skipped": tm.get("skipped", False),
                     },
                 )
+                reqs = rd.observe(snap, now)
+            # cross-session re-ID: crop faces in memory only when the driver asks (never stored to disk)
+            for kind, bbox, q in reqs:
+                crop = await asyncio.to_thread(reidmod.face_crop, data, bbox)
+                rd.on_crop(kind, crop, quality=q)
+            del data
 
     def asr_event(ev: dict, sess_t0: float, session: int):
         # session-relative turn times: stream start (monotonic) - session start + word offset
@@ -645,6 +687,10 @@ async def ws(sock: WebSocket):
                     send_ms_max=round(out.send_ms_max, 1),
                     loop_lag_ms=round(mon["loop_lag_max"], 1),
                     vision_lock_held=VISION_LOCK.locked(),
+                    reid_calls=rd.calls,
+                    reid_tokens=rd.tokens,
+                    reid_cost_est=round(rd.calls * st["tr"].cfg.reid_cost_per_call, 4),
+                    reid_refs=len(rd.store.refs),
                 )
                 mon["loop_lag_max"] = 0.0
                 out.send_ms_max = 0.0
@@ -708,6 +754,9 @@ async def ws(sock: WebSocket):
                     aud["calibrated"] = aud["calibrated"] or any(w.startswith("calibrated") for w in warns)
                     diag.event("calibrate", conn=cid, result="; ".join(warns)[:200])
                     send(tr.tick() if st["running"] else tr.snapshot(), {"config_ack": True, "warnings": warns}, False)
+                elif kind == "reid_wipe":
+                    rd.wipe("ui")
+                    out.post({"type": "reid", **rd.status()})
                 elif kind == "record":  # client-side recording on/off (PRIVACY: the server never writes audio)
                     aud["rec"] = bool(msg.get("on"))
                     diag.event("record_stream", conn=cid, on=aud["rec"])
@@ -723,6 +772,9 @@ async def ws(sock: WebSocket):
                         aud["rec"] = False
                     diag.event(kind, conn=cid)
                     st["tr"] = PresenceTracker(tr.cfg)  # clears tracks + embeddings
+                    rd.session = 0  # the new tracker counts sessions from 1 again
+                    if kind == "reset":
+                        rd.wipe("reset")
                     slot["frame"] = None
                     send(st["tr"].snapshot(), {"detections": []}, False)
     except WebSocketDisconnect as e:
@@ -732,6 +784,7 @@ async def ws(sock: WebSocket):
         diag.log.exception("receive loop failed conn=%s", cid)
     finally:
         unsub()
+        rd.close()  # wipes this connection's reference faces
         for t in tasks.values():
             t.cancel()
         with contextlib.suppress(Exception):
@@ -745,6 +798,9 @@ async def ws(sock: WebSocket):
             audio_chunks=aud["processed"],
             send_dropped=out.dropped_audio + out.dropped_json,
         )
+
+
+atexit.register(reidmod.wipe_all)  # shutdown: wipe in-memory reference faces
 
 
 def main():

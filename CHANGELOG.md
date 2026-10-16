@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.11.0 — 2026-10-16
+
+- **新功能：跨 session 使用者判斷（雲端 re-ID，選用，預設關閉）**。新 session 開始時，把第一張清楚的臉和最近幾位使用者的參考臉送到可抽換的雲端後端比對（內建 Jev／Typesafe images API）。
+  - 結果：分數 ≥ 0.9 → 接續上一段對話（沿用 `conversation_id`）；介於 0.4 和 0.9 之間 → 再比一張；其他情況或任何失敗 → 開新對話。
+  - session 進行中不呼叫；沒有未過期的參考臉時直接開新對話，不呼叫。
+  - 新的 WebSocket 事件 `handoff`（`conversation_id`、`decision`、`resumed_from_session`、`score`、`reason`），以及每秒的 `reid` 狀態。presence-demo 本身不做對話記憶。
+  - 成本控制：冷卻、每小時與每連線上限、斷路器；呼叫數、tokens、估計成本顯示在狀態機卡片，並寫進 heartbeat 與 `reid_*` 記錄事件。
+  - **隱私例外（明文）**：參考臉（每位一張 320×320 裁切）只在伺服器記憶體保存，最長 10 分鐘；到期、關閉、清除、reset、`POST /api/reid_reset`、斷線、關機時清除。不寫磁碟或 log，也不傳回瀏覽器。需要同時開啟 `reid_enabled` 和 `reid_consent`。
+  - key 來自 `TYPESAFE_API_KEY` 或設定頁，只存在記憶體。
+  - 文件：`docs/REID.md`。商用條款與 danger-zone header 的意義列為待確認事項。
+  - 測試：`tests/test_reid.py`，用 mock 伺服器涵蓋決策、重試、TTL、上限、逾時、斷路器、清除、key 不外洩、不寫檔；另有選用的實機冒煙測試（`REID_LIVE=1`）。
+
 ## 0.10.8 — 2026-10-16
 
 - **監看舞台重新設計**，參考 PureSound playground 的 CompareDeck（`deck.css`）：深色外框有內距；影像是圓角內嵌元素；音軌放在圓角內嵌面板裡，每條音軌左側有固定寬度的標籤欄（色點、名稱「原始／輸出」、noisy／output、即時電平 dB），右側是圓角的波形／頻譜 canvas，兩軌之間有淡分隔線。影像與音軌左右邊緣對齊，兩條音軌的時間軸對齊。

@@ -23,7 +23,8 @@
 - **資源監控**：CPU、記憶體、各階段延遲 avg/p95、fps、頻寬、RTT、跳過比例、姿勢耗時。
 - **開始／停止**：停止時真正關閉鏡頭與麥克風；切換分頁自動暫停。
 - **效能最佳化**：移動偵測閘門、embedding 節流、自適應 fps、ROI 裁切＋縮小，可個別開關（見 [PERFORMANCE](docs/PERFORMANCE.md)）。
-- **隱私**：影像只在記憶體中解碼處理，**不寫入磁碟**（`tests/test_privacy.py` 檢查）；embedding 只存在記憶體，ENDED 時清除。伺服器也不寫入任何聲音。選用的錄音（預設關閉、使用者自己按）只在瀏覽器記憶體，停止後下載到使用者自己的電腦（見 [AUDIO.md](docs/AUDIO.md)）；影像從不錄製。
+- **隱私**：影像只在記憶體中解碼處理，**不寫入磁碟**（`tests/test_privacy.py` 檢查）；embedding 只存在記憶體，ENDED 時清除。唯一例外是選用的跨 session 使用者判斷：需要明確同意，參考臉裁切只在記憶體保存，最多 10 分鐘（見 [REID](docs/REID.md)）。伺服器也不寫入任何聲音。選用的錄音（預設關閉、使用者自己按）只在瀏覽器記憶體，停止後下載到使用者自己的電腦（見 [AUDIO.md](docs/AUDIO.md)）；影像從不錄製。
+- **跨 session 使用者判斷（選用，雲端，預設關閉）**：新 session 開始時，判斷是不是上一位使用者回來（接續對話或開新對話），輸出 `conversation_id` 給下游系統。session 進行中不呼叫；參考臉只在記憶體保存，最多 10 分鐘。見 [REID](docs/REID.md)。
 - **存取權杖**：設定 `PRESENCE_TOKEN` 後，頁面、API、WebSocket 都需要 `?token=`。
 
 ## 快速開始
@@ -74,6 +75,7 @@ docs/            文件
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)：架構、資料流、狀態機
 - [docs/DESIGN.md](docs/DESIGN.md)：UI 設計規範（token、元件、無障礙）
 - [docs/ASR.md](docs/ASR.md)：選用的雲端語音辨識（AssemblyAI Universal-Streaming v3；聲音會離開裝置）
+- [docs/REID.md](docs/REID.md)：選用的跨 session 使用者判斷（雲端 re-ID；人臉裁切會離開裝置，參考臉只在記憶體保存）
 - [docs/AUDIO.md](docs/AUDIO.md)：PureSound 人聲分離 + 影像交叉確認（`audio_pipeline=puresound`，選用：`uv sync --extra puresound` + `scripts/fetch_puresound_model.py`）
 - [docs/ALGORITHM.md](docs/ALGORITHM.md)：演算法架構總文件（資料流、各層公式與預設值、模式矩陣、時間表、已知限制）
 - [docs/CONFIGURATION.md](docs/CONFIGURATION.md)：所有參數、範圍、預設值、預設組合

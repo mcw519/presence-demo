@@ -28,7 +28,9 @@ def test_caption_logic():
 
 
 def test_monitor_stage_holds_only_video_and_tracks_0106():
-    a = HTML.index('id="stage"'); b = HTML.index("</section>", a); stage = HTML[a:b]
+    a = HTML.index('id="stage"')
+    b = HTML.index("</section>", a)
+    stage = HTML[a:b]
     for x in ('id="view"', 'id="cap"', 'id="grpRaw"', 'id="grpClean"'):
         assert x in stage
     for x in ('id="roiPick"', 'id="tl"', 'id="monBtns"', 'id="recBtn"'):
@@ -40,7 +42,11 @@ def test_monitor_stage_holds_only_video_and_tracks_0106():
 def test_ids_referenced_by_script_exist():
     """Every static $('id') lookup has a matching element (catches broken layout moves)."""
     dynamic = ("st_", "se_", "fs_", "mod_", "row_")
-    missing = [i for i in set(re.findall(r"\$\('([A-Za-z0-9_]+)'\)", HTML)) if not i.startswith(dynamic) and f'id="{i}"' not in HTML]
+    missing = [
+        i
+        for i in set(re.findall(r"\$\('([A-Za-z0-9_]+)'\)", HTML))
+        if not i.startswith(dynamic) and f'id="{i}"' not in HTML
+    ]
     assert not missing, missing
 
 
@@ -57,7 +63,8 @@ def test_tracks_stacked_with_view_switch_0107():
 
 
 def test_view_switch_outside_frame_and_lane_gutters_0108():
-    a = HTML.index('id="stage"'); stage = HTML[a : HTML.index("</section>", a)]
+    a = HTML.index('id="stage"')
+    stage = HTML[a : HTML.index("</section>", a)]
     assert 'id="trkView"' not in stage and HTML.index('id="trkView"') < a  # switch sits in the header above the frame
     for lane, db in (("grpRaw", "dbRaw"), ("grpClean", "dbClean")):
         block = stage[stage.index(f'id="{lane}"') :]

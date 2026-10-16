@@ -13,6 +13,7 @@ Every record is also kept in an in-memory ring buffer that feeds the UI **事件
 
 - Camera frames, audio samples, or anything derived from them that could reconstruct them.
 - Transcript text (only ASR status / error codes).
+- Re-ID face crops (kept in process memory only, see docs/REID.md); only scores and counts are logged.
 - API keys, the access token, passwords or authorization headers. Keys named `key`, `token`, `secret`,
   `password` or `authorization` are masked as `***`, and `token=` / `key=` in URLs are masked by a
   log filter applied to every handler (including uvicorn's).
@@ -43,7 +44,10 @@ Every record is also kept in an in-memory ring buffer that feeds the UI **事件
 | `session_event` | info | Session start / end |
 | `audio_init` | info | Audio isolation ready (`ms`) |
 | `asr` | info/warning | ASR status changes and errors (never text) |
-| `heartbeat` | info | Every 10 s per connection: frames received/processed/dropped, audio chunks, backlog, outbox drops, max send time, loop lag, cross-check counters |
+| `reid_start`, `reid_call`, `reid_retry`, `reid_decision` | info | Cross-session re-ID (docs/REID.md): refs compared, score, latency, model, tokens, running call count and cost estimate, final decision and `conversation_id`. Never images, base64 or keys |
+| `reid_skip`, `reid_error`, `reid_breaker` | info/warning | Re-ID skipped (cap, cooldown, no key, breaker) or failed (timeout, HTTP code); breaker open after 3 errors |
+| `reid_store` | info | In-memory reference faces added / expired / wiped (count only) |
+| `heartbeat` | info | Every 10 s per connection: frames received/processed/dropped, audio chunks, backlog, outbox drops, max send time, loop lag, cross-check counters, `reid_calls` / `reid_tokens` / `reid_cost_est` / `reid_refs` |
 | `slow_frame` | warning | A frame took > 500 ms (per-stage timings) |
 | `loop_lag` | warning | The event loop was blocked |
 | `audio_backlog` | warning | Audio queue > 200 ms |

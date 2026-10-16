@@ -203,3 +203,9 @@
 .trk-wave{height:var(--lane-wave)}.trk-spec{height:var(--lane-spec)}
 .sig-stack[data-view=wave] .trk-spec,.sig-stack[data-view=spec] .trk-wave{display:none}
 @media (max-width:640px){:root{--lane-gutter:64px}.lane-label small{display:none}}
+
+/* v0.11.0 Cross-session re-ID line in the state card (decision, calls, estimated cost; never images). */
+.reid-line{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px;margin:8px 0 0;font-size:var(--text-small);color:var(--ink-2)}
+.reid-line b{color:var(--ink);font-weight:600}.reid-line b.ok{color:var(--ok)}
+.reid-line code{font-family:var(--font-mono);font-size:11px;color:var(--ink-2)}
+.reid-line .sp{margin-left:auto;font-family:var(--font-mono);font-size:11px}
