@@ -15,7 +15,7 @@ def test_audio_panel_is_in_left_column_below_camera():
 
 
 def test_caption_overlay_outside_mirrored_layers():
-    view = re.search(r'<div id="view">(.*?)</div>\s*</div>\s*<div class="panel panel-pad" id="aCard"', HTML, re.S).group(1)
+    view = re.search(r'<div id="view">(.*?)</div>\s*<div class="sig-pair"', HTML, re.S).group(1)
     assert 'id="cap"' in view and "hidden" in view
     assert "#view video.mirror" in CSS and ".caption" in CSS and "scaleX" not in CSS[CSS.index("v0.10.5") :]
 
@@ -25,3 +25,20 @@ def test_caption_logic():
     assert "m.kind==='final'?CAP_HOLD_MS" in HTML  # fade out after final
     assert "if(cfg.asr_provider==='none')captionOff();" in HTML  # hidden when ASR off
     assert "textContent=m.text" in HTML  # no HTML injection from transcripts
+
+
+def test_monitor_stage_holds_only_video_and_tracks_0106():
+    a = HTML.index('id="stage"'); b = HTML.index("</section>", a); stage = HTML[a:b]
+    for x in ('id="view"', 'id="cap"', 'id="grpRaw"', 'id="grpClean"'):
+        assert x in stage
+    for x in ('id="roiPick"', 'id="tl"', 'id="monBtns"', 'id="recBtn"'):
+        assert x not in stage
+    assert stage.index('id="view"') < stage.index('class="sig-pair"')
+    assert "100vh" in CSS[CSS.index("v0.10.6") :]
+
+
+def test_ids_referenced_by_script_exist():
+    """Every static $('id') lookup has a matching element (catches broken layout moves)."""
+    dynamic = ("st_", "se_", "fs_", "mod_", "row_")
+    missing = [i for i in set(re.findall(r"\$\('([A-Za-z0-9_]+)'\)", HTML)) if not i.startswith(dynamic) and f'id="{i}"' not in HTML]
+    assert not missing, missing

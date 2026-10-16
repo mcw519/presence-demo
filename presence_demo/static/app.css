@@ -173,3 +173,16 @@
   padding:6px 14px;border-radius:var(--radius-control);background:color-mix(in srgb,var(--nav) 78%,transparent);
   color:var(--on-nav);font-family:var(--font-sans);font-size:clamp(14px,2.2vw,20px);line-height:1.4;text-align:center}
 .caption:not(.is-final) span{color:var(--on-nav-2)}
+
+/* v0.10.6 Monitor stage: one dark frame = camera (+caption) with the raw/output
+ * tracks attached directly beneath, sized so the whole stage fits the viewport. */
+.monitor-stage{background:var(--nav);border-color:var(--nav-line);overflow:hidden;padding:0;
+  width:min(100%,calc((100vh - 250px) * 4 / 3));min-width:min(100%,380px);margin-inline:auto}
+.monitor-stage #view{border:0;border-radius:0}
+.monitor-stage .sig-pair{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--nav-line);border-top:1px solid var(--nav-line)}
+.monitor-stage .sig-group{margin:0;padding:6px 8px 8px;gap:3px;border:0;border-radius:0;background:var(--nav);box-shadow:inset 0 2px 0 var(--viz-raw)}
+.monitor-stage .sig-group.clean{box-shadow:inset 0 2px 0 var(--viz-clean)}
+.monitor-stage .sig-head{font-size:var(--text-small);color:var(--on-nav)}
+.monitor-stage .sig-head span{color:var(--on-nav-2)}
+.monitor-stage .scope{background:var(--nav-2,rgba(255,255,255,.04))}
+@media (max-width:640px){.monitor-stage .sig-pair{grid-template-columns:1fr}}

@@ -53,8 +53,25 @@
     </header>
     <div class="presence-workbench">
       <div class="workbench-main presence-stack">
-        <div class="panel panel-pad">
-          <div class="panel-title"><div><h2>相機</h2><p class="panel-help">先選要編輯的 ROI（青色＝臉部、紫色＝身體），在畫面上拖曳框內移動、拉四個角調整大小，或在框外拖一個新框。綠框＝參與者，黃框＝候選，灰框＝暫時看不到。<span id="pipe"></span></p></div></div>
+        <section class="panel monitor-stage" id="stage" aria-label="監看：影像與音訊">
+          <div id="view"><video id="v" autoplay muted playsinline></video><canvas id="c"></canvas>
+            <div id="placeholder"><strong>按「開始」開啟鏡頭與麥克風</strong><small>需 HTTPS 或 localhost</small></div>
+            <div id="cap" class="caption" aria-live="polite" hidden><span id="capTxt"></span></div></div>
+          <div class="sig-pair" aria-label="音訊：原始與輸出">
+          <div class="sig-group raw" id="grpRaw">
+            <p class="sig-head"><i class="sig-sw"></i>原始 noisy<span>瀏覽器麥克風，16 kHz</span></p>
+            <canvas id="wRaw" class="scope" style="width:100%;height:32px;display:block"></canvas>
+            <canvas id="sgRaw" class="scope" width="300" height="48" style="width:100%;height:48px;display:block"></canvas>
+          </div>
+          <div class="sig-group clean" id="grpClean">
+            <p class="sig-head"><i class="sig-sw"></i>輸出 output<span>PureSound 乾淨音軌</span></p>
+            <canvas id="wClean" class="scope" style="width:100%;height:32px;display:block"></canvas>
+            <canvas id="sgClean" class="scope" width="300" height="48" style="width:100%;height:48px;display:block"></canvas>
+          </div>
+          </div>
+        </section>
+        <div class="panel panel-pad" id="roiCard">
+          <div class="panel-title"><div><h2>相機與 ROI</h2><p class="panel-help">先選要編輯的 ROI（青色＝臉部、紫色＝身體），在畫面上拖曳框內移動、拉四個角調整大小，或在框外拖一個新框。綠框＝參與者，黃框＝候選，灰框＝暫時看不到。<span id="pipe"></span></p></div></div>
           <div class="roi-edit" style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:10px">
             <span class="quiet" style="font-size:var(--text-small)">編輯 ROI</span>
             <div class="segmented" id="roiPick" role="radiogroup" aria-label="編輯 ROI">
@@ -65,12 +82,9 @@
             <button class="button button-ghost button-small" id="roiReset" type="button">重設此 ROI</button>
             <span class="quiet" id="roiVal" style="font-size:var(--text-small);font-family:var(--font-mono)"></span>
           </div>
-          <div id="view"><video id="v" autoplay muted playsinline></video><canvas id="c"></canvas>
-            <div id="placeholder"><strong>按「開始」開啟鏡頭與麥克風</strong><small>需 HTTPS 或 localhost</small></div>
-            <div id="cap" class="caption" aria-live="polite" hidden><span id="capTxt"></span></div></div>
         </div>
         <div class="panel panel-pad" id="aCard">
-          <div class="panel-title"><div><h2>乾淨音軌</h2><p class="panel-help" id="aSt">—</p></div></div>
+          <div class="panel-title"><div><h2>監聽・錄音・時間軸</h2><p class="panel-help" id="aSt">—</p></div></div>
           <div class="monitor-control" style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:10px">
             <span class="quiet" style="font-size:var(--text-small)">監聽</span>
             <div class="segmented" id="monBtns" role="radiogroup" aria-label="監聽">
@@ -82,16 +96,6 @@
           </div>
           <p class="toggle-hint" id="recSt">選用・預設關閉：三軌 raw / vi / out 只存在瀏覽器記憶體，停止後下載到你的電腦，伺服器不存任何聲音。需要 PureSound 管線。最長 10 分鐘。</p>
           <p class="form-note is-error" style="min-height:0">⚠ 監聽請戴耳機，否則喇叭聲音會被麥克風收進去（回授）。每次開啟頁面都是靜音。</p>
-          <div class="sig-group raw" id="grpRaw">
-            <p class="sig-head"><i class="sig-sw"></i>原始 noisy<span>瀏覽器麥克風，16 kHz</span></p>
-            <canvas id="wRaw" class="scope" style="width:100%;height:40px;display:block"></canvas>
-            <canvas id="sgRaw" class="scope" width="300" height="64" style="width:100%;height:64px;display:block"></canvas>
-          </div>
-          <div class="sig-group clean" id="grpClean">
-            <p class="sig-head"><i class="sig-sw"></i>輸出 output<span>PureSound 乾淨音軌</span></p>
-            <canvas id="wClean" class="scope" style="width:100%;height:40px;display:block"></canvas>
-            <canvas id="sgClean" class="scope" width="300" height="64" style="width:100%;height:64px;display:block"></canvas>
-          </div>
           <p class="scope-label">時間軸（最近 30 秒）：原始 VAD／乾淨 VAD／算說話／判斷／狀態，橘線＝P(group)</p>
           <canvas id="tl" class="scope" style="width:100%;height:84px;display:block;border-radius:var(--radius-control) var(--radius-control) 0 0"></canvas>
           <div id="tlLeg"></div>

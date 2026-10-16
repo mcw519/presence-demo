@@ -752,7 +752,7 @@ wheels = [
 
 [[package]]
 name = "presence-demo"
-version = "0.10.5"
+version = "0.10.6"
 source = { editable = "." }
 dependencies = [
     { name = "ai-edge-litert" },
