@@ -1,0 +1,14 @@
+flowchart TD
+  MIC["Mic chunk 20 ms<br/>16 kHz PCM16"] --> RAW["raw VAD<br/>(input energy)"]
+  MIC --> ISO["PureSound voice isolation<br/>STFT 512 · hop 10 ms · 30 ms look-ahead"]
+  ISO --> CV["clean VAD<br/>(isolated energy + hang)"]
+  CAM["Vision snapshot<br/>person in ROI? within range?<br/>held 0.75 s"] --> XC
+  RAW --> XC{"cross-check<br/>every chunk"}
+  CV --> XC
+  XC -- "agree / silence" --> KEEP["output unchanged"]
+  XC -- "leak / false_accept" --> ATT["attenuate −40 dB<br/>not speech"]
+  XC -- "false_reject" --> MIX["30% isolated + 70% raw<br/>speech"]
+  XC -- "acoustic_only" --> KEEP
+  KEEP --> OUT["clean stream → browser<br/>corrected speech → state machine"]
+  ATT --> OUT
+  MIX --> OUT

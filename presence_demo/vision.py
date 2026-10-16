@@ -266,7 +266,7 @@ class VisionPipeline:
             p = ensure_model(*YUNET) if allow_download else _local(YUNET)
             detector = YuNetDetector(p) if p else HaarDetector()
         if embedder is None:
-            # PRESENCE_FACE_EMBEDDER=hist disables SFace (see docs/LICENSES.md for the training-data caveat).
+            # PRESENCE_FACE_EMBEDDER=hist disables SFace (see docs/licenses.md for the training-data caveat).
             want_sface = os.environ.get("PRESENCE_FACE_EMBEDDER", "sface").lower() != "hist"
             p = (ensure_model(*SFACE) if allow_download else _local(SFACE)) if want_sface else None
             embedder = SFaceEmbedder(p) if p and isinstance(detector, YuNetDetector) else HistEmbedder()

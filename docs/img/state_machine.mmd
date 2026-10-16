@@ -1,0 +1,15 @@
+stateDiagram-v2
+  direction LR
+  [*] --> ENDED
+  ENDED --> ACTIVE: someone wants to interact<br/>(intent) — or speech in balanced/audio
+  ACTIVE --> IDLE: quiet for idle_after (3 s)
+  IDLE --> ACTIVE: speech again
+  ACTIVE --> MAYBE_AWAY: evidence is fading
+  IDLE --> MAYBE_AWAY: evidence is fading
+  MAYBE_AWAY --> ACTIVE: evidence is back
+  MAYBE_AWAY --> AWAY: confirmed gone
+  ACTIVE --> AWAY: confirmed gone
+  IDLE --> AWAY: confirmed gone
+  AWAY --> ACTIVE: person returns
+  AWAY --> ENDED: away for end_after_away (5 s)<br/>tracks + embeddings cleared
+  ACTIVE --> ACTIVE: NEW_GROUP — old group gone,<br/>new people settled for 3 s

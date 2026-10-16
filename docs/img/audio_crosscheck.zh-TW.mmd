@@ -1,0 +1,14 @@
+flowchart TD
+  MIC["麥克風 20 ms 一塊<br/>16 kHz PCM16"] --> RAW["原始 VAD<br/>（輸入能量）"]
+  MIC --> ISO["PureSound 人聲分離<br/>STFT 512 · hop 10 ms · 前瞻 30 ms"]
+  ISO --> CV["乾淨 VAD<br/>（分離後能量 + 尾音）"]
+  CAM["影像快照<br/>ROI 內有人？在範圍內？<br/>保持 0.75 s"] --> XC
+  RAW --> XC{"交叉確認<br/>每一塊"}
+  CV --> XC
+  XC -- "一致／安靜" --> KEEP["輸出不變"]
+  XC -- "漏音／誤收" --> ATT["壓低 −40 dB<br/>不算說話"]
+  XC -- "漏收" --> MIX["30% 分離 + 70% 原聲<br/>算說話"]
+  XC -- "只看聲音" --> KEEP
+  KEEP --> OUT["乾淨音軌 → 瀏覽器<br/>校正後說話 → 狀態機"]
+  ATT --> OUT
+  MIX --> OUT

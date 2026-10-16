@@ -1,0 +1,23 @@
+sequenceDiagram
+  participant T as 追蹤器
+  participant R as Re-ID 管理（記憶體）
+  participant C as 雲端比對 API
+  participant B as 瀏覽器
+  T->>R: session N 開始
+  alt 沒有參考臉／冷卻中
+    R-->>B: handoff：新對話（不呼叫）
+  else 有參考臉
+    R->>R: 等清楚的臉<br/>（參與者出現後 ≤ reid_face_wait 3 s）
+    R->>C: compare（參考臉, 目前的臉）
+    C-->>R: 分數 0..1
+    alt 分數 ≥ 0.9
+      R-->>B: handoff：接續（同一個 conversation_id）
+    else 0.4 ≤ 分數 ＜ 0.9
+      R->>C: 用新畫面再比一次
+      C-->>R: 分數
+      R-->>B: ≥ 0.9 接續，否則新對話
+    else 分數 ＜ 0.4、錯誤、逾時（10 s）
+      R-->>B: handoff：新對話
+    end
+  end
+  Note over R: 這次 session 最好的一張裁切<br/>在結束時成為參考臉（保存 ≤ 10 分鐘）

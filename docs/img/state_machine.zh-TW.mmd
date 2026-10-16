@@ -1,0 +1,15 @@
+stateDiagram-v2
+  direction LR
+  [*] --> ENDED
+  ENDED --> ACTIVE: 有人想互動（意圖）<br/>balanced／audio 模式：說話也算
+  ACTIVE --> IDLE: 安靜達 idle_after（3 s）
+  IDLE --> ACTIVE: 又開始說話
+  ACTIVE --> MAYBE_AWAY: 證據變弱
+  IDLE --> MAYBE_AWAY: 證據變弱
+  MAYBE_AWAY --> ACTIVE: 證據回來
+  MAYBE_AWAY --> AWAY: 確認離開
+  ACTIVE --> AWAY: 確認離開
+  IDLE --> AWAY: 確認離開
+  AWAY --> ACTIVE: 人回來了
+  AWAY --> ENDED: AWAY 持續 end_after_away（5 s）<br/>清除 track 與特徵
+  ACTIVE --> ACTIVE: NEW_GROUP：舊組離開、<br/>新的人穩定 3 s

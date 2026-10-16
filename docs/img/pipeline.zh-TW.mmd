@@ -1,0 +1,22 @@
+flowchart LR
+  subgraph Browser["瀏覽器"]
+    CAM["攝影機畫面<br/>JPEG，0.5–2 fps"]
+    MIC["麥克風<br/>16 kHz PCM／簡易 VAD"]
+    UI["疊圖、面板、<br/>事件紀錄"]
+  end
+  subgraph Server["伺服器（只在記憶體）"]
+    P1["1. 感知<br/>移動閘門、ROI 裁切、<br/>YuNet 人臉、SFace 特徵、<br/>MoveNet 姿勢、距離"]
+    P2["2. 追蹤<br/>legacy 或 Kalman<br/>+ 匈牙利配對"]
+    P3["3. 意圖<br/>rules 或 score<br/>誰是參與者？"]
+    P4["4. 在場<br/>rules 或 HMM<br/>這群人還在嗎？"]
+    SM["5. 狀態機<br/>ACTIVE · IDLE · MAYBE_AWAY<br/>AWAY · ENDED"]
+    AU["聲音交叉確認<br/>PureSound 人聲分離<br/>+ 影像"]
+    RE["Re-ID（選用）<br/>是上一位使用者嗎？"]
+  end
+  CAM --> P1 --> P2 --> P3 --> P4 --> SM
+  MIC --> AU
+  P2 -. "ROI 內有人？" .-> AU
+  AU -- "說話" --> P4
+  SM -- "新 session" --> RE
+  SM --> UI
+  RE -- "交接 ID" --> UI

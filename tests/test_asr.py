@@ -30,13 +30,13 @@ def test_params_per_model():
     c.update(
         {
             "asr_speech_model": "universal-streaming-english",
-            "asr_keyterms": "Kebbi, Collibot",
+            "asr_keyterms": "Acme, Widget",
             "asr_eot_confidence": 0.7,
         }
     )
     p = asr.build_params(c)
     assert p["format_turns"] == "true" and p["end_of_turn_confidence_threshold"] == "0.70" and "language_codes" not in p
-    assert json.loads(p["keyterms_prompt"]) == ["Kebbi", "Collibot"]
+    assert json.loads(p["keyterms_prompt"]) == ["Acme", "Widget"]
     assert c.update({"asr_language_codes": 5}) == ["invalid value for asr_language_codes"]
 
 

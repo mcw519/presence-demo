@@ -1,0 +1,22 @@
+flowchart LR
+  subgraph Browser
+    CAM["Camera frame<br/>JPEG, 0.5–2 fps"]
+    MIC["Microphone<br/>16 kHz PCM / simple VAD"]
+    UI["Overlay, panels,<br/>event log"]
+  end
+  subgraph Server["Server (memory only)"]
+    P1["1. Perception<br/>motion gate, ROI crop,<br/>YuNet face, SFace embedding,<br/>MoveNet pose, distance"]
+    P2["2. Tracking<br/>legacy or Kalman<br/>+ Hungarian matching"]
+    P3["3. Intent<br/>rules or score<br/>who is a participant?"]
+    P4["4. Presence<br/>rules or HMM<br/>is the group still here?"]
+    SM["5. State machine<br/>ACTIVE · IDLE · MAYBE_AWAY<br/>AWAY · ENDED"]
+    AU["Audio cross-check<br/>PureSound voice isolation<br/>+ vision"]
+    RE["Re-ID (optional)<br/>same user as last time?"]
+  end
+  CAM --> P1 --> P2 --> P3 --> P4 --> SM
+  MIC --> AU
+  P2 -. "someone in ROI?" .-> AU
+  AU -- "speech" --> P4
+  SM -- "new session" --> RE
+  SM --> UI
+  RE -- "handoff id" --> UI

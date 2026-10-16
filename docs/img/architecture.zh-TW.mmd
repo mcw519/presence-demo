@@ -1,0 +1,16 @@
+flowchart LR
+  subgraph static["presence_demo/static"]
+    HTML["index.html"] --> JS["js/*.js<br/>i18n · core · settings · app<br/>audio · panels · main"]
+    JS --> I18N["i18n/en.js · zh-TW.js"]
+  end
+  subgraph web["presence_demo/web"]
+    SES["session.py<br/>每個連線的主迴圈"] --> RT["runtime.py<br/>模型、鎖、執行緒池"]
+    SES --> OB["outbox.py<br/>傳送佇列"]
+  end
+  SRV["server.py<br/>應用、路由、驗證"] --> SES
+  JS <-- "WebSocket /ws" --> SES
+  RT --> VIS["vision.py · body.py<br/>embed_backends.py"]
+  SES --> TRK["tracker.py<br/>(config.py)"]
+  SES --> AUD["audio.py<br/>PureSound"]
+  SES --> REID["reid.py"]
+  SES --> DIAG["diag.py · recording.py"]

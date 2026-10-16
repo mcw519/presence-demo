@@ -1,0 +1,23 @@
+sequenceDiagram
+  participant T as Tracker
+  participant R as Re-ID manager (memory)
+  participant C as Cloud compare API
+  participant B as Browser
+  T->>R: session N starts
+  alt no reference face / cooldown
+    R-->>B: handoff: new conversation (no call)
+  else references exist
+    R->>R: wait for a clear face<br/>(≤ reid_face_wait 3 s after participant appears)
+    R->>C: compare(reference crop, current crop)
+    C-->>R: score 0..1
+    alt score ≥ 0.9
+      R-->>B: handoff: resume (same conversation_id)
+    else 0.4 ≤ score < 0.9
+      R->>C: one retry with a fresh frame
+      C-->>R: score
+      R-->>B: resume if ≥ 0.9, else new conversation
+    else score < 0.4, error, timeout (10 s)
+      R-->>B: handoff: new conversation
+    end
+  end
+  Note over R: best crop of this session becomes<br/>a reference when it ends (TTL ≤ 10 min)

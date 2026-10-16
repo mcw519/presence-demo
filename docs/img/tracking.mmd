@@ -1,0 +1,15 @@
+flowchart TD
+  T["Existing tracks"] --> PR["Kalman predict<br/>x, y, w, h + velocities"]
+  D["New detections"] --> G
+  PR --> G{"Mahalanobis gate<br/>d² ≤ 9.21 ?"}
+  G -- "outside gate" --> X["pair not allowed"]
+  G -- "inside" --> S["Pair cost = 1 − weighted score<br/>face cosine · IoU · torso colour · motion"]
+  S --> H["Hungarian assignment<br/>(global best pairing)"]
+  H --> M["Matched → Kalman update"]
+  H --> U["Unmatched detection → new track"]
+  H --> C["Unmatched track → coast<br/>(predicted box, visibility decays)"]
+  C --> R{"missing ><br/>coast limit?"}
+  R -- "yes" --> DEL["drop track"]
+  R -- "no" --> T
+  M --> T
+  U --> T

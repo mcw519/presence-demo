@@ -1,0 +1,14 @@
+flowchart LR
+  F["facing 面向<br/>臉／肩膀朝向裝置"] --> W
+  DI["distance 距離<br/>越近越高"] --> W
+  DW["dwell 停留<br/>在區域內的時間"] --> W
+  AP["approach 靠近<br/>正在走近"] --> W
+  ST["still 靜止<br/>不是路過"] --> W
+  CE["center 置中<br/>靠近 ROI 中央"] --> W
+  SP["speech 說話<br/>（balanced／audio）"] --> W
+  W["加權平均 r"] --> GF["面向閘門<br/>r · (1 − 0.5·(1 − facing))"]
+  GF --> EMA["EMA 平滑<br/>（intent_tau）"]
+  EMA --> J{"分數 ≥ 0.6<br/>持續 join_seconds？"}
+  J -- "是" --> PA["成為參與者"]
+  EMA --> DR{"分數 ＜ 0.35<br/>持續 drop_seconds？"}
+  DR -- "是" --> BY["降回旁觀者"]

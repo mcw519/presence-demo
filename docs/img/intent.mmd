@@ -1,0 +1,14 @@
+flowchart LR
+  F["facing<br/>face/shoulders toward device"] --> W
+  DI["distance<br/>closer = higher"] --> W
+  DW["dwell<br/>time in the zone"] --> W
+  AP["approach<br/>moving closer"] --> W
+  ST["still<br/>not walking past"] --> W
+  CE["center<br/>near ROI centre"] --> W
+  SP["speech<br/>(balanced/audio)"] --> W
+  W["weighted mean r"] --> GF["facing gate<br/>r · (1 − 0.5·(1 − facing))"]
+  GF --> EMA["EMA smoothing<br/>(intent_tau)"]
+  EMA --> J{"score ≥ 0.6<br/>for join_seconds?"}
+  J -- "yes" --> PA["participant"]
+  EMA --> DR{"score < 0.35<br/>for drop_seconds?"}
+  DR -- "yes" --> BY["back to bystander"]

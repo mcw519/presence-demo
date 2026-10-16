@@ -21,7 +21,7 @@ class State(str, Enum):
 
 @dataclass
 class Config:
-    """Tracker parameters. All coordinates are normalized; times in seconds. See docs/CONFIGURATION.md."""
+    """Tracker parameters. All coordinates are normalized; times in seconds. See docs/configuration.md."""
 
     face_roi: tuple = (0.2, 0.05, 0.8, 0.95)  # face ROI (formerly `roi`), normalized
     min_conf: float = 0.4  # detections below are "low confidence" (0.4: tuned for a low robot camera, v0.11.1)
@@ -111,7 +111,7 @@ class Config:
     w_center: float = 0.15
     speech_join: str = "auto"  # auto (vision: off, else single_candidate) | off | single_candidate | all
     present_max_silence: float = 0.0  # vision mode: cap on silence with people present (0 = off)
-    # --- audio (v0.9.0, see docs/AUDIO.md) ---
+    # --- audio (v0.9.0, see docs/audio.md) ---
     audio_pipeline: str = "energy_vad"  # energy_vad (browser VAD) | puresound (server isolation + clean VAD)
     iso_onset_guard: bool = False  # PureSound onset guard (input untouched until 1 s of sustained speech)
     iso_reset_on_change: bool = True  # reset isolation state on NEW_GROUP / session / participant change
@@ -129,7 +129,7 @@ class Config:
     xcheck_recover_mix: float = 0.3  # false_reject: enhanced share (rest = latency-aligned raw input)
     xcheck_attack: float = 0.01  # s: gain ramp up
     xcheck_release: float = 0.05  # s: gain ramp down
-    # --- cloud ASR (optional, external service; docs/ASR.md) ---
+    # --- cloud ASR (optional, external service; docs/asr.md) ---
     asr_provider: str = "none"  # none | assemblyai
     asr_source: str = "clean"  # clean (corrected PureSound output) | raw
     asr_feed: str = "speech"  # speech: only corrected-speech blocks (silence otherwise) | session: all audio
@@ -141,7 +141,7 @@ class Config:
     asr_eot_confidence: float = 0.4  # Universal-Streaming only
     asr_min_turn_silence: int = 400  # ms
     asr_max_turn_silence: int = 1280  # ms
-    # optional cross-session re-ID ("is this a new user?"), docs/REID.md. Off by default; cloud; needs consent.
+    # optional cross-session re-ID ("is this a new user?"), docs/reid.md. Off by default; cloud; needs consent.
     reid_enabled: bool = False
     reid_consent: bool = False  # the operator confirmed users are informed (face crops kept in memory + sent out)
     reid_show_crops: bool = True  # send small display thumbnails of the compared faces to this browser only

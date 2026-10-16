@@ -5,7 +5,7 @@ reference face(s) of the previous session(s) by a pluggable cloud backend. Same 
 *resumes* the previous ``conversation_id``; different / uncertain / any failure -> a new conversation. There
 are NO calls inside a session, and none at all when no unexpired reference exists.
 
-PRIVACY (documented exception to "the server never stores images", see docs/REID.md):
+PRIVACY (documented exception to "the server never stores images", see docs/reid.md):
 * Off by default; needs ``reid_enabled`` AND ``reid_consent``.
 * Reference crops (one face crop per past user, 320x320 JPEG) live in this process's memory only, per
   connection, for ``reid_ttl`` seconds (default 600) and at most ``reid_max_refs`` users. They are wiped on
@@ -131,7 +131,7 @@ class JevClient(CloudReid):
             headers={
                 "Authorization": f"Bearer {key}",
                 "Content-Type": "application/json",
-                "TypeSafe-Danger-Zone-Images": "true",  # opt-in for image assets (meaning unverified; docs/REID.md)
+                "TypeSafe-Danger-Zone-Images": "true",  # opt-in for image assets (meaning unverified; docs/reid.md)
             },
         )
         try:

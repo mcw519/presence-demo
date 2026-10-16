@@ -184,7 +184,7 @@ class VisionView:
 
 
 class CrossCheckAdjuster:
-    """Vision cross-checks PureSound's filtered result per block (docs/AUDIO.md, decision table).
+    """Vision cross-checks PureSound's filtered result per block (docs/audio.md, decision table).
 
     ====================  ======================  ===============================================
     clean VAD / raw VAD    vision                  decision

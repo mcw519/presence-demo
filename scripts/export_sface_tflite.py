@@ -5,7 +5,7 @@ Produces in models/:
   * face_recognition_sface_2021dec_int8.tflite  – full-integer INT8 (int8 input/output), static shape
     [1, 112, 112, 3] NHWC (RGB, 0..255 mapped to int8) – the NPU-friendly variant (NeuroPilot / NNAPI)
 
-Toolchain (all permissive licences; see docs/LICENSES.md): onnx2tf (MIT), TensorFlow (Apache-2.0),
+Toolchain (all permissive licences; see docs/licenses.md): onnx2tf (MIT), TensorFlow (Apache-2.0),
 onnx / onnxruntime (Apache-2.0 / MIT), onnx-graphsurgeon & onnxsim (Apache-2.0), sng4onnx (MIT).
 TensorFlow is heavy and not a runtime dependency, so use a separate environment:
 

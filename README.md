@@ -1,95 +1,115 @@
-# Presence Demo：偵測對話中的使用者是否離開
+**English** · [繁體中文](README.zh-TW.md)
 
-> 授權：Apache-2.0（見 [LICENSE](LICENSE) 與 [NOTICE](NOTICE)）
+# presence-demo
 
-結合**影像**（人臉偵測、人臉 embedding、群組追蹤，可選的姿勢與距離）和**聲音**（瀏覽器端 VAD），判斷正在跟裝置（例如對話機器人）對話的人（或一群人）是不是已經離開。包含 Python 核心模組（純邏輯、可單元測試）和 FastAPI + WebSocket 網頁 demo。
+**Know when the person you are talking to has left.**
 
-![demo](docs/screenshot.png)
+presence-demo combines a camera and a microphone to tell a conversational device (a robot, a kiosk, a smart
+speaker with a camera) whether the person, or the group, it is talking to is still there. It is a small,
+explainable pipeline (face and body detection, tracking, an engagement score, a probabilistic presence model and
+a five-state machine) plus a web demo that shows every step live.
 
-## 功能
+![The web demo](docs/img/screenshot.png)
 
-- **追蹤模式**：`legacy`（預設）或 `kalman`（Kalman 預測 + 匈牙利配對 + 衣服顏色，短暫遮擋時延續追蹤），見 [TRACKING](docs/TRACKING.md)。
-- **在場判斷模型**：`rules`（預設）或 `hmm`（每個人一個在場機率，用門檻和遲滯決定狀態，比較不怕偵測閃爍），見 [PRESENCE_MODEL](docs/PRESENCE_MODEL.md)。
-- **加入規則**：`rules`（預設）或 `score`（每個人有互動意圖分數，路人、旁觀者不會加入，也不會讓對話一直不結束），見 [INTENT_MODEL](docs/INTENT_MODEL.md)。
-- **群組追蹤**：每個人一個 track（IoU + cosine 比對、EMA 更新 embedding），任何一位參與者還在就不算離開；被擋住有寬限期；換成一群陌生人時觸發 **NEW_GROUP**。
-- **狀態機**：`ACTIVE → IDLE → MAYBE_AWAY → AWAY → ENDED`，含防閃爍遲滯，每次轉換都記錄原因。
-- **判斷優先模式**：`vision`（預設）／`balanced`／`audio`，可另設 `present_max_silence`。
-- **VAD 融合**：瀏覽器端能量 VAD，把說話狀態送給伺服器一起判斷。
-- **人臉模型**：OpenCV YuNet（偵測）+ SFace（embedding），CPU 執行；模型無法下載時改用 Haar + HSV 直方圖備援。
-- **姿勢（選用）**：MoveNet MultiPose Lightning（最多 6 人），提供身體框、關鍵點和朝向；看不到臉時用身體判斷有人；轉身且遠離時可提早進入 MAYBE_AWAY。
-- **距離（選用）**：用臉寬／肩寬估計距離，含對話區、離開距離、靠近／遠離趨勢和網頁一鍵校正。
-- **分開的 ROI**：臉部 ROI（藍）和身體 ROI（紫）可在畫面上拖曳，並設定判定規則。
-- **設定介面**：分組設定抽屜、預設組合、伺服器端範圍檢查、localStorage 自動保存、JSON 匯出入。
-- **資源監控**：CPU、記憶體、各階段延遲 avg/p95、fps、頻寬、RTT、跳過比例、姿勢耗時。
-- **開始／停止**：停止時真正關閉鏡頭與麥克風；切換分頁自動暫停。
-- **效能最佳化**：移動偵測閘門、embedding 節流、自適應 fps、ROI 裁切＋縮小，可個別開關（見 [PERFORMANCE](docs/PERFORMANCE.md)）。
-- **隱私**：影像只在記憶體中解碼處理，**不寫入磁碟**（`tests/test_privacy.py` 檢查）；embedding 只存在記憶體，ENDED 時清除。唯一例外是選用的跨 session 使用者判斷：需要明確同意，參考臉裁切只在記憶體保存，最多 10 分鐘；可選擇在瀏覽器顯示比對用的小縮圖（見 [REID](docs/REID.md)）。伺服器也不寫入任何聲音。選用的錄音（預設關閉、使用者自己按）只在瀏覽器記憶體，停止後下載到使用者自己的電腦（見 [AUDIO.md](docs/AUDIO.md)）；影像從不錄製。
-- **跨 session 使用者判斷（選用，雲端，預設關閉）**：新 session 開始時，判斷是不是上一位使用者回來（接續對話或開新對話），輸出 `conversation_id` 給下游系統。session 進行中不呼叫；參考臉只在記憶體保存，最多 10 分鐘。見 [REID](docs/REID.md)。
-- **存取權杖**：設定 `PRESENCE_TOKEN` 後，頁面、API、WebSocket 都需要 `?token=`。
+## Why
 
-## 快速開始
+"No speech for 20 seconds" is a poor way to end a conversation. People pause, look at their phone, or listen
+quietly while a friend talks, and a TV in the background never stops talking. presence-demo looks at **who is
+actually there and engaged**, uses audio only where it helps, and writes down the reason for every decision.
 
-需要 [uv](https://docs.astral.sh/uv/) 和 Python ≥ 3.10。
+## Features
+
+- **Five clear states**: `ACTIVE → IDLE → MAYBE_AWAY → AWAY → ENDED`, with hysteresis and a written reason for
+  every transition, plus **NEW_GROUP** when the next visitor steps up without the room ever being empty.
+- **Groups, not just faces**: every person is tracked; the session lasts while any participant is still there.
+- **Robust tracking**: greedy matching or a Kalman filter with Hungarian assignment, clothing colour and coasting
+  through short occlusions.
+- **Engagement intent**: passers-by and bystanders do not start conversations or keep them alive.
+- **Probabilistic presence**: a per-person probability that shrugs off flickering detections.
+- **Audio that knows where the voice comes from (optional)**: PureSound voice isolation, cross-checked against
+  vision so a TV or a distant voice does not count as the user.
+- **Pose and distance (optional)**: MoveNet skeletons, orientation, and a calibrated distance estimate.
+- **Light enough for small devices**: motion gate, embedding throttling, adaptive fps and ROI cropping cut CPU by
+  about 70%; TFLite / NPU embedding backend.
+- **Private by default**: frames are processed in memory and never stored; face fingerprints are erased when a
+  session ends. Cloud speech recognition and cross-session re-ID are optional and off by default.
+- **Bilingual web UI**: English and Traditional Chinese, with live settings, presets, charts and an event log.
+
+## Quick start
+
+Requires [uv](https://docs.astral.sh/uv/) and Python ≥ 3.10.
 
 ```bash
+git clone https://github.com/mcw519/presence-demo.git
+cd presence-demo
 uv sync
-export PRESENCE_TOKEN="$(python -c 'import secrets;print(secrets.token_urlsafe(16))')"  # 選用，對外開放時必設
-uv run presence-demo                      # http://127.0.0.1:8000/?token=<PRESENCE_TOKEN>
-uv run presence-demo --host 0.0.0.0 --port 8000
+uv run presence-demo            # open http://127.0.0.1:8000 and press Start
 ```
 
-- 瀏覽器只有在 localhost 或 HTTPS 下才允許使用鏡頭和麥克風。
-- 模型在第一次使用時下載到 `models/`（可用 `PRESENCE_MODEL_DIR` 指定）：YuNet、SFace；開啟姿勢時再下載 MoveNet。
-- 權杖只從環境變數讀取，請勿寫進檔案或提交。
-- `PRESENCE_FACE_EMBEDDER=hist`：不載入 SFace，改用 HSV 直方圖。
+Browsers only allow the camera on `localhost` or HTTPS. Before exposing the server to others, set
+`PRESENCE_TOKEN` (see [Getting started](docs/getting-started.md)). In Settings, try the **Recommended** preset to
+switch on the newer algorithms.
 
-## 開發與測試
+Optional voice isolation:
+
+```bash
+uv sync --extra puresound
+uv run python scripts/fetch_puresound_model.py --clone
+```
+
+## How it works
+
+```mermaid
+flowchart LR
+  CAM[Camera] --> P1[Detection] --> P2[Tracking] --> P3[Intent] --> P4[Presence] --> SM[State machine]
+  MIC[Microphone] --> AU[Audio cross-check] --> P4
+  P2 -.-> AU
+```
+
+Each stage has its own page with intuition, formulas, figures and evaluation results. Start with
+[How it works](docs/how-it-works.md), then dive into [detection](docs/detection.md), [tracking](docs/tracking.md),
+[intent](docs/intent.md), [presence](docs/presence.md), the [state machine](docs/state-machine.md) and
+[audio](docs/audio.md).
+
+![Presence probability while a person is occluded and then leaves](docs/img/presence_timeline.png)
+
+## Documentation
+
+The full index is in [docs/](docs/README.md). Highlights:
+
+| | |
+|---|---|
+| [Getting started](docs/getting-started.md) | Install, run, expose safely, optional extras |
+| [Configuration](docs/configuration.md) | Every parameter, presets, environment variables |
+| [Tuning](docs/tuning.md) | Adapting to a new room or camera |
+| [Performance](docs/performance.md) | CPU cost, latency, NPU backends |
+| [Privacy](docs/privacy.md) | What is processed, kept and (optionally) sent out |
+| [Architecture](docs/architecture.md) | Code layout and WebSocket protocol |
+
+## Project layout
+
+```
+presence_demo/     core logic (tracker, models) and the FastAPI + WebSocket server
+presence_demo/static/  web UI (HTML, JS, string tables, vendored PureSound CSS)
+scripts/           benchmark, evaluation, model export, figure and doc generators
+tests/             unit, scenario, WebSocket, privacy, UI and i18n tests
+docs/              documentation (English) and docs/zh-TW/ (Traditional Chinese)
+```
+
+## Development
 
 ```bash
 uv run ruff check . && uv run ruff format --check .
 uv run pytest -q
-uv run python scripts/benchmark.py        # 60 秒模擬情境，比較各最佳化、姿勢、距離的 CPU 成本
-uv run python scripts/eval_tracking.py    # 合成追蹤情境，比較 legacy 與 kalman
 ```
 
-## 專案結構
+Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) and the
+[Code of Conduct](CODE_OF_CONDUCT.md). Report security issues as described in [SECURITY.md](SECURITY.md).
+Changes are listed in [CHANGELOG.md](CHANGELOG.md).
 
-```
-presence_demo/
-  tracker.py     Config、群組追蹤、狀態機（純邏輯）
-  vision.py      YuNet / SFace / Haar 備援、MoveNet 姿勢偵測、記憶體內解碼
-  body.py        身體朝向、臉與身體配對、距離估計與校正
-  kalman.py      Kalman 濾波、匈牙利演算法、外觀相似度
-  appearance.py  軀幹 HSV 直方圖（衣服外觀）
-  optimizer.py   移動閘門、embedding 節流、ROI 裁切、自適應 fps
-  stats.py       資源與延遲統計
-  server.py      FastAPI + WebSocket、權杖中介層
-  static/index.html  網頁 demo（設定、監控、ROI、骨架疊圖）
-scripts/benchmark.py, scripts/eval_tracking.py
-tests/           單元、WebSocket、隱私、姿勢／距離測試
-docs/            文件
-```
+## License
 
-## 文件
-
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)：架構、資料流、狀態機
-- [docs/DESIGN.md](docs/DESIGN.md)：UI 設計規範（token、元件、無障礙）
-- [docs/ASR.md](docs/ASR.md)：選用的雲端語音辨識（AssemblyAI Universal-Streaming v3；聲音會離開裝置）
-- [docs/REID.md](docs/REID.md)：選用的跨 session 使用者判斷（雲端 re-ID；人臉裁切會離開裝置，參考臉只在記憶體保存）
-- [docs/AUDIO.md](docs/AUDIO.md)：PureSound 人聲分離 + 影像交叉確認（`audio_pipeline=puresound`，選用：`uv sync --extra puresound` + `scripts/fetch_puresound_model.py`）
-- [docs/ALGORITHM.md](docs/ALGORITHM.md)：演算法架構總文件（資料流、各層公式與預設值、模式矩陣、時間表、已知限制）
-- [docs/CONFIGURATION.md](docs/CONFIGURATION.md)：所有參數、範圍、預設值、預設組合
-- [docs/TUNING.md](docs/TUNING.md)：調參方法
-- [docs/TRACKING.md](docs/TRACKING.md)：追蹤模式比較（legacy 與 kalman）
-- [docs/PRESENCE_MODEL.md](docs/PRESENCE_MODEL.md)：在場機率模型（rules 與 hmm）的數學和評估
-- [docs/INTENT_MODEL.md](docs/INTENT_MODEL.md)：互動意圖分數（rules 與 score）
-- [docs/PERFORMANCE.md](docs/PERFORMANCE.md)：效能最佳化與基準測試
-- [docs/NPU.md](docs/NPU.md)：SFace 嵌入後端（fp32／int8／npu）和 Android NPU 使用方式
-- [docs/LICENSES.md](docs/LICENSES.md)：模型、套件、測試資料的授權
-- [CONTRIBUTING.md](CONTRIBUTING.md)、[CHANGELOG.md](CHANGELOG.md)
-
-## 授權
-
-- 第三方元件的授權與商用風險見 [docs/LICENSES.md](docs/LICENSES.md)（不是法律意見）。
-- **SFace 的權重標示 Apache-2.0，但訓練資料可能有非商業限制**，商用前請先確認，或用 `PRESENCE_FACE_EMBEDDER=hist` 停用。
-- 本專案：[Apache License 2.0](LICENSE)，另見 [NOTICE](NOTICE)。模型權重與第三方套件不在此授權範圍內，各自的授權見 [docs/LICENSES.md](docs/LICENSES.md)。
+[Apache License 2.0](LICENSE); see also [NOTICE](NOTICE). Model weights and third-party packages keep their own
+licenses. In particular, **the SFace face-embedding weights may carry non-commercial training-data
+restrictions**; read [docs/licenses.md](docs/licenses.md) before commercial use, or disable SFace with
+`PRESENCE_FACE_EMBEDDER=hist`.
