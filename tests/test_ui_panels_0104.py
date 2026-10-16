@@ -18,9 +18,9 @@ def test_state_machine_is_an_axis_with_history():
 
 
 def _group(cls):
-    m = re.search(r'<div class="sig-group %s"[^>]*>(.*?)</div>' % cls, HTML, re.S)
-    assert m, cls
-    return m.group(1)
+    a = HTML.index('<div class="sig-lane %s"' % cls)
+    b = HTML.index('<div class="sig-lane', a + 10) if cls == "raw" else HTML.index("</section>", a)
+    return HTML[a:b]
 
 
 def test_audio_bundles_wave_and_spectrogram_per_signal():
