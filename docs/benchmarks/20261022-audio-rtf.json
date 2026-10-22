@@ -1,0 +1,817 @@
+{
+  "date": "2026-10-22",
+  "hardware": "Apple M4, 4 performance + 6 efficiency cores",
+  "sdk_commit": "aba2962876c8ec8abec7971378d670677e0ec859",
+  "model_sha256": "9a79e9eaeab9a6e288fec7216adb1c87a05b557948e8aa014f5f6096e1f375e4",
+  "original_user_run": {
+    "seconds": 108,
+    "rtf": 0.372,
+    "rtf_recent": 0.373,
+    "queue_wait_ms_avg": 0.28,
+    "queue_wait_ms_p95": 0.53,
+    "dropped": 0
+  },
+  "limitations": [
+    "Synthetic audio is not the original microphone input.",
+    "Sequential runs share the host; CPU frequency, core assignment and cache behavior were not directly measured.",
+    "Stage times are nested and cannot be added.",
+    "The existing-server replay includes a one-second sample process observation.",
+    "No production change or verified reduction of the original 0.37 is claimed."
+  ],
+  "isolated_default": {
+    "ort": "1.31.0",
+    "machine": "arm64",
+    "qos": "default",
+    "method": "synthetic PCM16, 20 ms blocks, 0.5 s input warm-up; stage times are nested, not additive",
+    "results": [
+      {
+        "mode": "main_burst",
+        "signal": "noise",
+        "audio_seconds": 4.0,
+        "providers": [
+          "CPUExecutionProvider"
+        ],
+        "rtf": 0.10199027275666595,
+        "thread_cpu_rtf": 0.10188083324999994,
+        "block_p50_ms": 2.05437489785254,
+        "block_p95_ms": 2.145441831089556,
+        "stages_nested": {
+          "vad": {
+            "calls": 800,
+            "wall_rtf": 0.0006880193250253797,
+            "thread_cpu_rtf": 0.0006824984999999964
+          },
+          "crosscheck": {
+            "calls": 400,
+            "wall_rtf": 9.823311120271683e-05,
+            "thread_cpu_rtf": 9.85607499999e-05
+          },
+          "ort": {
+            "calls": 400,
+            "wall_rtf": 0.09473314555361867,
+            "thread_cpu_rtf": 0.09464105449999997
+          },
+          "sdk": {
+            "calls": 200,
+            "wall_rtf": 0.09981856087688357,
+            "thread_cpu_rtf": 0.09971411699999996
+          },
+          "isolator": {
+            "calls": 200,
+            "wall_rtf": 0.10002720903139561,
+            "thread_cpu_rtf": 0.09991719850000015
+          }
+        }
+      },
+      {
+        "mode": "worker_burst",
+        "signal": "noise",
+        "audio_seconds": 4.0,
+        "providers": [
+          "CPUExecutionProvider"
+        ],
+        "rtf": 0.1058294161921367,
+        "thread_cpu_rtf": 0.10500695824999996,
+        "block_p50_ms": 2.0805830135941505,
+        "block_p95_ms": 2.397801796905696,
+        "stages_nested": {
+          "vad": {
+            "calls": 800,
+            "wall_rtf": 0.0008620229782536626,
+            "thread_cpu_rtf": 0.0008463434999999835
+          },
+          "crosscheck": {
+            "calls": 400,
+            "wall_rtf": 0.0001284669851884246,
+            "thread_cpu_rtf": 0.00012834549999981952
+          },
+          "ort": {
+            "calls": 400,
+            "wall_rtf": 0.09653430094476789,
+            "thread_cpu_rtf": 0.09580210399999997
+          },
+          "sdk": {
+            "calls": 200,
+            "wall_rtf": 0.1030934895388782,
+            "thread_cpu_rtf": 0.10229947924999991
+          },
+          "isolator": {
+            "calls": 200,
+            "wall_rtf": 0.10334619809873402,
+            "thread_cpu_rtf": 0.10254650799999998
+          }
+        }
+      },
+      {
+        "mode": "main_paced",
+        "signal": "noise",
+        "audio_seconds": 4.0,
+        "providers": [
+          "CPUExecutionProvider"
+        ],
+        "rtf": 0.240199908381328,
+        "thread_cpu_rtf": 0.2269215949999997,
+        "block_p50_ms": 4.761979216709733,
+        "block_p95_ms": 7.03410857822746,
+        "stages_nested": {
+          "vad": {
+            "calls": 800,
+            "wall_rtf": 0.0021371232578530908,
+            "thread_cpu_rtf": 0.0020554814999995674
+          },
+          "crosscheck": {
+            "calls": 400,
+            "wall_rtf": 0.0005508781177923083,
+            "thread_cpu_rtf": 0.0005494487499998757
+          },
+          "ort": {
+            "calls": 400,
+            "wall_rtf": 0.20757216855417937,
+            "thread_cpu_rtf": 0.19607205024999996
+          },
+          "sdk": {
+            "calls": 200,
+            "wall_rtf": 0.22850574075710028,
+            "thread_cpu_rtf": 0.2163631672499999
+          },
+          "isolator": {
+            "calls": 200,
+            "wall_rtf": 0.22936515626497567,
+            "thread_cpu_rtf": 0.21717503099999985
+          }
+        }
+      },
+      {
+        "mode": "worker_paced",
+        "signal": "noise",
+        "audio_seconds": 4.0,
+        "providers": [
+          "CPUExecutionProvider"
+        ],
+        "rtf": 0.23305301123764366,
+        "thread_cpu_rtf": 0.2311566982499998,
+        "block_p50_ms": 4.791042068973184,
+        "block_p95_ms": 7.030929694883524,
+        "stages_nested": {
+          "vad": {
+            "calls": 800,
+            "wall_rtf": 0.002079791505821049,
+            "thread_cpu_rtf": 0.0020717727499998326
+          },
+          "crosscheck": {
+            "calls": 400,
+            "wall_rtf": 0.0005237517179921269,
+            "thread_cpu_rtf": 0.000523133750000071
+          },
+          "ort": {
+            "calls": 400,
+            "wall_rtf": 0.20123931334819645,
+            "thread_cpu_rtf": 0.19970867900000014
+          },
+          "sdk": {
+            "calls": 200,
+            "wall_rtf": 0.22271971974987537,
+            "thread_cpu_rtf": 0.22090773000000005
+          },
+          "isolator": {
+            "calls": 200,
+            "wall_rtf": 0.22351665678434074,
+            "thread_cpu_rtf": 0.22169421700000017
+          }
+        }
+      },
+      {
+        "mode": "main_burst",
+        "signal": "quiet",
+        "audio_seconds": 4.0,
+        "providers": [
+          "CPUExecutionProvider"
+        ],
+        "rtf": 0.10235540894791484,
+        "thread_cpu_rtf": 0.10227347024999922,
+        "block_p50_ms": 2.053541596978903,
+        "block_p95_ms": 2.1988145308569074,
+        "stages_nested": {
+          "vad": {
+            "calls": 800,
+            "wall_rtf": 0.0006400760030373931,
+            "thread_cpu_rtf": 0.0006428127499988334
+          },
+          "crosscheck": {
+            "calls": 400,
+            "wall_rtf": 8.979532867670059e-05,
+            "thread_cpu_rtf": 9.054824999976674e-05
+          },
+          "ort": {
+            "calls": 400,
+            "wall_rtf": 0.09523537720087916,
+            "thread_cpu_rtf": 0.09515788550000026
+          },
+          "sdk": {
+            "calls": 200,
+            "wall_rtf": 0.1002728930907324,
+            "thread_cpu_rtf": 0.1001884985
+          },
+          "isolator": {
+            "calls": 200,
+            "wall_rtf": 0.10046759410761297,
+            "thread_cpu_rtf": 0.10037917624999959
+          }
+        }
+      },
+      {
+        "mode": "worker_burst",
+        "signal": "quiet",
+        "audio_seconds": 4.0,
+        "providers": [
+          "CPUExecutionProvider"
+        ],
+        "rtf": 0.10179879330098629,
+        "thread_cpu_rtf": 0.10171540575000002,
+        "block_p50_ms": 2.0483543630689383,
+        "block_p95_ms": 2.150839171372354,
+        "stages_nested": {
+          "vad": {
+            "calls": 800,
+            "wall_rtf": 0.0006561169866472483,
+            "thread_cpu_rtf": 0.0006599459999999911
+          },
+          "crosscheck": {
+            "calls": 400,
+            "wall_rtf": 8.985854219645262e-05,
+            "thread_cpu_rtf": 9.02909999998553e-05
+          },
+          "ort": {
+            "calls": 400,
+            "wall_rtf": 0.09461281180847436,
+            "thread_cpu_rtf": 0.09453182149999999
+          },
+          "sdk": {
+            "calls": 200,
+            "wall_rtf": 0.09967252996284515,
+            "thread_cpu_rtf": 0.09958749949999998
+          },
+          "isolator": {
+            "calls": 200,
+            "wall_rtf": 0.09987694746814668,
+            "thread_cpu_rtf": 0.09978789750000004
+          }
+        }
+      },
+      {
+        "mode": "main_paced",
+        "signal": "quiet",
+        "audio_seconds": 4.0,
+        "providers": [
+          "CPUExecutionProvider"
+        ],
+        "rtf": 0.25074445793870836,
+        "thread_cpu_rtf": 0.24840526200000024,
+        "block_p50_ms": 5.110458470880985,
+        "block_p95_ms": 6.967530632391571,
+        "stages_nested": {
+          "vad": {
+            "calls": 800,
+            "wall_rtf": 0.002128387219272554,
+            "thread_cpu_rtf": 0.002129310499999093
+          },
+          "crosscheck": {
+            "calls": 400,
+            "wall_rtf": 0.0006196227623149753,
+            "thread_cpu_rtf": 0.000620719249999957
+          },
+          "ort": {
+            "calls": 400,
+            "wall_rtf": 0.21887589595280588,
+            "thread_cpu_rtf": 0.21676852225000098
+          },
+          "sdk": {
+            "calls": 200,
+            "wall_rtf": 0.23931934288702905,
+            "thread_cpu_rtf": 0.23706391574999952
+          },
+          "isolator": {
+            "calls": 200,
+            "wall_rtf": 0.240191918797791,
+            "thread_cpu_rtf": 0.23792955349999945
+          }
+        }
+      },
+      {
+        "mode": "worker_paced",
+        "signal": "quiet",
+        "audio_seconds": 4.0,
+        "providers": [
+          "CPUExecutionProvider"
+        ],
+        "rtf": 0.2518626113887876,
+        "thread_cpu_rtf": 0.2502460815,
+        "block_p50_ms": 4.900708561763167,
+        "block_p95_ms": 6.813332461751997,
+        "stages_nested": {
+          "vad": {
+            "calls": 800,
+            "wall_rtf": 0.0020819370402023196,
+            "thread_cpu_rtf": 0.0020833449999999518
+          },
+          "crosscheck": {
+            "calls": 400,
+            "wall_rtf": 0.0006367913447320461,
+            "thread_cpu_rtf": 0.0006376772499997012
+          },
+          "ort": {
+            "calls": 400,
+            "wall_rtf": 0.21769959421362728,
+            "thread_cpu_rtf": 0.21639373900000006
+          },
+          "sdk": {
+            "calls": 200,
+            "wall_rtf": 0.24030478089116514,
+            "thread_cpu_rtf": 0.23874897700000006
+          },
+          "isolator": {
+            "calls": 200,
+            "wall_rtf": 0.24119152000639588,
+            "thread_cpu_rtf": 0.23962963749999994
+          }
+        }
+      }
+    ]
+  },
+  "isolated_default_long": {
+    "ort": "1.31.0",
+    "machine": "arm64",
+    "qos": "default",
+    "method": "synthetic PCM16, 20 ms blocks, 0.5 s input warm-up; stage times are nested, not additive",
+    "results": [
+      {
+        "mode": "worker_paced",
+        "signal": "quiet",
+        "audio_seconds": 8.0,
+        "providers": [
+          "CPUExecutionProvider"
+        ],
+        "rtf": 0.2440188333275728,
+        "thread_cpu_rtf": 0.24252879737500024,
+        "block_p50_ms": 4.842583555728197,
+        "block_p95_ms": 6.538543803617357,
+        "stages_nested": {
+          "vad": {
+            "calls": 1600,
+            "wall_rtf": 0.0021266257972456515,
+            "thread_cpu_rtf": 0.002103121125000062
+          },
+          "crosscheck": {
+            "calls": 800,
+            "wall_rtf": 0.0004995609633624554,
+            "thread_cpu_rtf": 0.0004893441250000009
+          },
+          "ort": {
+            "calls": 800,
+            "wall_rtf": 0.21473493304802105,
+            "thread_cpu_rtf": 0.21355389925000048
+          },
+          "sdk": {
+            "calls": 400,
+            "wall_rtf": 0.23464364605024457,
+            "thread_cpu_rtf": 0.23328369862500026
+          },
+          "isolator": {
+            "calls": 400,
+            "wall_rtf": 0.23541027441387996,
+            "thread_cpu_rtf": 0.2340311103749999
+          }
+        }
+      },
+      {
+        "mode": "worker_paced",
+        "signal": "silence",
+        "audio_seconds": 8.0,
+        "providers": [
+          "CPUExecutionProvider"
+        ],
+        "rtf": 0.23672629258362576,
+        "thread_cpu_rtf": 0.23588290062500003,
+        "block_p50_ms": 4.71720821224153,
+        "block_p95_ms": 6.2544021056964985,
+        "stages_nested": {
+          "vad": {
+            "calls": 1600,
+            "wall_rtf": 0.002004985697567463,
+            "thread_cpu_rtf": 0.0019945974999996275
+          },
+          "crosscheck": {
+            "calls": 800,
+            "wall_rtf": 0.0004859757609665394,
+            "thread_cpu_rtf": 0.00048792312499968023
+          },
+          "ort": {
+            "calls": 800,
+            "wall_rtf": 0.20724224136210978,
+            "thread_cpu_rtf": 0.2066169116250003
+          },
+          "sdk": {
+            "calls": 400,
+            "wall_rtf": 0.2268673499347642,
+            "thread_cpu_rtf": 0.2261351096249999
+          },
+          "isolator": {
+            "calls": 400,
+            "wall_rtf": 0.22771473653847352,
+            "thread_cpu_rtf": 0.2269649694999999
+          }
+        }
+      }
+    ]
+  },
+  "isolated_user_initiated_qos": {
+    "ort": "1.31.0",
+    "machine": "arm64",
+    "qos": "user-initiated",
+    "method": "synthetic PCM16, 20 ms blocks, 0.5 s input warm-up; stage times are nested, not additive",
+    "results": [
+      {
+        "mode": "worker_burst",
+        "signal": "quiet",
+        "audio_seconds": 8.0,
+        "providers": [
+          "CPUExecutionProvider"
+        ],
+        "rtf": 0.1027813192922622,
+        "thread_cpu_rtf": 0.10275936562499981,
+        "block_p50_ms": 2.060437574982643,
+        "block_p95_ms": 2.1079249680042262,
+        "stages_nested": {
+          "vad": {
+            "calls": 1600,
+            "wall_rtf": 0.0005504482542164624,
+            "thread_cpu_rtf": 0.0005533268750001815
+          },
+          "crosscheck": {
+            "calls": 800,
+            "wall_rtf": 7.037195609882474e-05,
+            "thread_cpu_rtf": 7.072324999998075e-05
+          },
+          "ort": {
+            "calls": 800,
+            "wall_rtf": 0.09662225033389404,
+            "thread_cpu_rtf": 0.09659987575000017
+          },
+          "sdk": {
+            "calls": 400,
+            "wall_rtf": 0.1009956649504602,
+            "thread_cpu_rtf": 0.10097264874999987
+          },
+          "isolator": {
+            "calls": 400,
+            "wall_rtf": 0.10115526197478175,
+            "thread_cpu_rtf": 0.10112764512499985
+          }
+        }
+      },
+      {
+        "mode": "worker_paced",
+        "signal": "quiet",
+        "audio_seconds": 8.0,
+        "providers": [
+          "CPUExecutionProvider"
+        ],
+        "rtf": 0.23879864031914622,
+        "thread_cpu_rtf": 0.23712990674999979,
+        "block_p50_ms": 4.786791978403926,
+        "block_p95_ms": 6.095606531016529,
+        "stages_nested": {
+          "vad": {
+            "calls": 1600,
+            "wall_rtf": 0.0020129497861489654,
+            "thread_cpu_rtf": 0.00201543912500019
+          },
+          "crosscheck": {
+            "calls": 800,
+            "wall_rtf": 0.00045102217700332403,
+            "thread_cpu_rtf": 0.000452020375000306
+          },
+          "ort": {
+            "calls": 800,
+            "wall_rtf": 0.21005811251234263,
+            "thread_cpu_rtf": 0.20860723137500026
+          },
+          "sdk": {
+            "calls": 400,
+            "wall_rtf": 0.229741521878168,
+            "thread_cpu_rtf": 0.2281134994999999
+          },
+          "isolator": {
+            "calls": 400,
+            "wall_rtf": 0.23051970248343423,
+            "thread_cpu_rtf": 0.2288755971250001
+          }
+        }
+      },
+      {
+        "mode": "worker_burst",
+        "signal": "silence",
+        "audio_seconds": 8.0,
+        "providers": [
+          "CPUExecutionProvider"
+        ],
+        "rtf": 0.10311243659816682,
+        "thread_cpu_rtf": 0.10304845387500014,
+        "block_p50_ms": 2.0603961311280727,
+        "block_p95_ms": 2.135156444273889,
+        "stages_nested": {
+          "vad": {
+            "calls": 1600,
+            "wall_rtf": 0.0005673246341757476,
+            "thread_cpu_rtf": 0.0005679217499997532
+          },
+          "crosscheck": {
+            "calls": 800,
+            "wall_rtf": 7.633870700374246e-05,
+            "thread_cpu_rtf": 7.689550000003487e-05
+          },
+          "ort": {
+            "calls": 800,
+            "wall_rtf": 0.09671591082587838,
+            "thread_cpu_rtf": 0.0966606842499999
+          },
+          "sdk": {
+            "calls": 400,
+            "wall_rtf": 0.10126356274122372,
+            "thread_cpu_rtf": 0.10120202025000004
+          },
+          "isolator": {
+            "calls": 400,
+            "wall_rtf": 0.1014312393963337,
+            "thread_cpu_rtf": 0.10136597800000001
+          }
+        }
+      },
+      {
+        "mode": "worker_paced",
+        "signal": "silence",
+        "audio_seconds": 8.0,
+        "providers": [
+          "CPUExecutionProvider"
+        ],
+        "rtf": 0.24265767174074426,
+        "thread_cpu_rtf": 0.24155244349999974,
+        "block_p50_ms": 4.957687575370073,
+        "block_p95_ms": 6.272831256501376,
+        "stages_nested": {
+          "vad": {
+            "calls": 1600,
+            "wall_rtf": 0.002032930904533714,
+            "thread_cpu_rtf": 0.0020327036250001526
+          },
+          "crosscheck": {
+            "calls": 800,
+            "wall_rtf": 0.00044870900455862284,
+            "thread_cpu_rtf": 0.0004477551250003098
+          },
+          "ort": {
+            "calls": 800,
+            "wall_rtf": 0.21452609123662114,
+            "thread_cpu_rtf": 0.2136502340000001
+          },
+          "sdk": {
+            "calls": 400,
+            "wall_rtf": 0.23378157813567668,
+            "thread_cpu_rtf": 0.23275493762499982
+          },
+          "isolator": {
+            "calls": 400,
+            "wall_rtf": 0.23458168777870014,
+            "thread_cpu_rtf": 0.23351966224999995
+          }
+        }
+      }
+    ]
+  },
+  "instrumented_server_stages": {
+    "ort": "1.31.0",
+    "mode": "websocket_server",
+    "results": [
+      {
+        "audio_seconds": 29.49999999999946,
+        "blocks_with_warmup": 1500,
+        "stages_nested": {
+          "vad": {
+            "calls": 5900,
+            "wall_rtf": 0.001986412994437335,
+            "thread_cpu_rtf": 0.001964108711864069
+          },
+          "crosscheck": {
+            "calls": 2950,
+            "wall_rtf": 0.0006366710068058276,
+            "thread_cpu_rtf": 0.0006375742711869753
+          },
+          "ort": {
+            "calls": 2950,
+            "wall_rtf": 0.18745950326892116,
+            "thread_cpu_rtf": 0.18520358433898695
+          },
+          "sdk": {
+            "calls": 1475,
+            "wall_rtf": 0.2076360145110233,
+            "thread_cpu_rtf": 0.20434960993220735
+          },
+          "isolator": {
+            "calls": 1475,
+            "wall_rtf": 0.20873998680105027,
+            "thread_cpu_rtf": 0.20544118989830934
+          },
+          "total": {
+            "calls": 1475,
+            "wall_rtf": 0.21734010608141094,
+            "thread_cpu_rtf": 0.2139196329830557
+          }
+        }
+      }
+    ]
+  },
+  "instrumented_server_replay": {
+    "seconds": 30,
+    "frames_sent": 60,
+    "transport": "binary",
+    "scene": "face",
+    "video_application_bytes_sent": 568680,
+    "optim": {
+      "skipped": 45,
+      "skipped_pct": 75.0,
+      "detect_calls": 15,
+      "embed_computed": 8,
+      "embed_reused": 7,
+      "embed_reused_pct": 46.7,
+      "recommended_fps": 0.0,
+      "pose_calls": 15,
+      "pose_reused": 45,
+      "pose_reused_pct": 75.0,
+      "detect_hits": 15
+    },
+    "fps_settings": [
+      2.0
+    ],
+    "audio_rtf_second_half_median": 0.217,
+    "audio_queue_max": 2,
+    "audio_dropped": 0,
+    "server_cpu_avg": 27.11785714285715,
+    "vision_total_avg_ms": 5.99,
+    "errors": [],
+    "last_audio_metrics": {
+      "rtf_recent": 0.208,
+      "proc_p95_ms": 5.49,
+      "queue_wait_ms_avg": 0.35,
+      "queue_wait_ms_p95": 0.26
+    },
+    "last_vision_metrics": {
+      "queue_wait": {
+        "avg": 0.04,
+        "p95": 0.07,
+        "last": 0.03
+      },
+      "executor_wait": {
+        "avg": 0.07,
+        "p95": 0.12,
+        "last": 0.06
+      },
+      "lock_wait": {
+        "avg": 0.0,
+        "p95": 0.0,
+        "last": 0.02
+      },
+      "decode": {
+        "avg": 0.53,
+        "p95": 0.74,
+        "last": 0.33
+      },
+      "motion": {
+        "avg": 0.3,
+        "p95": 0.43,
+        "last": 0.32
+      },
+      "detect": {
+        "avg": 1.78,
+        "p95": 8.68,
+        "last": 0.0
+      },
+      "embed": {
+        "avg": 1.4,
+        "p95": 9.36,
+        "last": 0.0
+      },
+      "appearance": {
+        "avg": 0.0,
+        "p95": 0.0,
+        "last": 0.0
+      },
+      "pose": {
+        "avg": 1.64,
+        "p95": 6.19,
+        "last": 0.0
+      },
+      "tracker": {
+        "avg": 0.12,
+        "p95": 0.18,
+        "last": 0.13
+      },
+      "total": {
+        "avg": 5.99,
+        "p95": 23.16,
+        "last": 1.06
+      }
+    }
+  },
+  "existing_server_replay": {
+    "seconds": 30,
+    "frames_sent": 60,
+    "transport": "binary",
+    "scene": "face",
+    "video_application_bytes_sent": 568680,
+    "optim": {
+      "skipped": 45,
+      "skipped_pct": 75.0,
+      "detect_calls": 15,
+      "embed_computed": 8,
+      "embed_reused": 7,
+      "embed_reused_pct": 46.7,
+      "recommended_fps": 0.0,
+      "pose_calls": 15,
+      "pose_reused": 45,
+      "pose_reused_pct": 75.0,
+      "detect_hits": 15
+    },
+    "fps_settings": [
+      2.0
+    ],
+    "audio_rtf_second_half_median": 0.283,
+    "audio_queue_max": 2,
+    "audio_dropped": 0,
+    "server_cpu_avg": 33.900000000000006,
+    "vision_total_avg_ms": 8.14,
+    "errors": [],
+    "last_audio_metrics": {
+      "rtf_recent": 0.263,
+      "proc_p95_ms": 6.92,
+      "queue_wait_ms_avg": 0.17,
+      "queue_wait_ms_p95": 0.27
+    },
+    "last_vision_metrics": {
+      "queue_wait": {
+        "avg": 0.05,
+        "p95": 0.12,
+        "last": 0.02
+      },
+      "executor_wait": {
+        "avg": 0.08,
+        "p95": 0.16,
+        "last": 0.07
+      },
+      "lock_wait": {
+        "avg": 0.0,
+        "p95": 0.01,
+        "last": 0.0
+      },
+      "decode": {
+        "avg": 2.08,
+        "p95": 0.93,
+        "last": 0.65
+      },
+      "motion": {
+        "avg": 0.35,
+        "p95": 0.53,
+        "last": 0.3
+      },
+      "detect": {
+        "avg": 2.38,
+        "p95": 10.31,
+        "last": 0.0
+      },
+      "embed": {
+        "avg": 1.3,
+        "p95": 8.84,
+        "last": 0.0
+      },
+      "appearance": {
+        "avg": 0.0,
+        "p95": 0.0,
+        "last": 0.0
+      },
+      "pose": {
+        "avg": 1.61,
+        "p95": 7.09,
+        "last": 0.0
+      },
+      "tracker": {
+        "avg": 0.16,
+        "p95": 0.22,
+        "last": 0.14
+      },
+      "total": {
+        "avg": 8.14,
+        "p95": 26.91,
+        "last": 1.33
+      }
+    }
+  }
+}

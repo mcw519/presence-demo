@@ -1,0 +1,522 @@
+{
+  "one_worker_a": {
+    "ort": "1.31.0",
+    "machine": "arm64",
+    "qos": "default",
+    "disable_kleidiai": false,
+    "method": "synthetic PCM16, 20 ms blocks, 0.5 s input warm-up; stage times are nested, not additive",
+    "results": [
+      {
+        "mode": "worker_paced",
+        "signal": "noise",
+        "audio_seconds": 8.0,
+        "providers": [
+          "CPUExecutionProvider"
+        ],
+        "observed_worker_qos": [
+          "0x15"
+        ],
+        "observed_worker_scheduler": [
+          {
+            "t": 1792669743.307158,
+            "qos": "0x15",
+            "thread_background": 0,
+            "process_background": 0
+          }
+        ],
+        "worker_threads_used": 1,
+        "worker_switches": 0,
+        "workers_configured": 1,
+        "workers_prestarted": false,
+        "rtf": 0.1972138950950466,
+        "thread_cpu_rtf": 0.18019096512499996,
+        "block_p50_ms": 3.46702104434371,
+        "block_p95_ms": 5.983135034330185,
+        "stages_nested": {
+          "vad": {
+            "calls": 1600,
+            "wall_rtf": 0.0018091583624482155,
+            "thread_cpu_rtf": 0.0017313707500002714
+          },
+          "crosscheck": {
+            "calls": 800,
+            "wall_rtf": 0.0003459976869635284,
+            "thread_cpu_rtf": 0.0003378266249999245
+          },
+          "ort": {
+            "calls": 800,
+            "wall_rtf": 0.16490475641330704,
+            "thread_cpu_rtf": 0.15584733250000005
+          },
+          "sdk": {
+            "calls": 400,
+            "wall_rtf": 0.18884572514798492,
+            "thread_cpu_rtf": 0.17229407062500007
+          },
+          "isolator": {
+            "calls": 400,
+            "wall_rtf": 0.1895441422238946,
+            "thread_cpu_rtf": 0.17295834925000003
+          }
+        },
+        "ort_gap_groups_last_2000_calls": {
+          "after_gap_gt_5ms": {
+            "calls": 396,
+            "mean_ms": 1.7316697207702831,
+            "p95_ms": 2.742166048847139,
+            "gap_mean_ms": 16.704901515487393
+          },
+          "after_gap_lte_5ms": {
+            "calls": 404,
+            "mean_ms": 1.561794439238487,
+            "p95_ms": 2.341141994111238,
+            "gap_mean_ms": 0.17073010394146831
+          }
+        }
+      }
+    ]
+  },
+  "two_workers_prestarted": {
+    "ort": "1.31.0",
+    "machine": "arm64",
+    "qos": "default",
+    "disable_kleidiai": false,
+    "method": "synthetic PCM16, 20 ms blocks, 0.5 s input warm-up; stage times are nested, not additive",
+    "results": [
+      {
+        "mode": "worker_paced",
+        "signal": "noise",
+        "audio_seconds": 8.0,
+        "providers": [
+          "CPUExecutionProvider"
+        ],
+        "observed_worker_qos": [
+          "0x15"
+        ],
+        "observed_worker_scheduler": [
+          {
+            "t": 1792669752.0325298,
+            "qos": "0x15",
+            "thread_background": 0,
+            "process_background": 0
+          }
+        ],
+        "worker_threads_used": 2,
+        "worker_switches": 399,
+        "workers_configured": 2,
+        "workers_prestarted": true,
+        "rtf": 0.2520829736604355,
+        "thread_cpu_rtf": 0.24566611874999988,
+        "block_p50_ms": 4.896000260487199,
+        "block_p95_ms": 6.589260441251098,
+        "stages_nested": {
+          "vad": {
+            "calls": 1600,
+            "wall_rtf": 0.0021081354934722185,
+            "thread_cpu_rtf": 0.0020944523750002315
+          },
+          "crosscheck": {
+            "calls": 800,
+            "wall_rtf": 0.0005044266581535339,
+            "thread_cpu_rtf": 0.0005008111250001425
+          },
+          "ort": {
+            "calls": 800,
+            "wall_rtf": 0.22164059831993654,
+            "thread_cpu_rtf": 0.21577649925000048
+          },
+          "sdk": {
+            "calls": 400,
+            "wall_rtf": 0.24226693337550387,
+            "thread_cpu_rtf": 0.23595138575
+          },
+          "isolator": {
+            "calls": 400,
+            "wall_rtf": 0.2430574119789526,
+            "thread_cpu_rtf": 0.236716209
+          }
+        },
+        "ort_gap_groups_last_2000_calls": {
+          "after_gap_gt_5ms": {
+            "calls": 398,
+            "mean_ms": 2.461845068092547,
+            "p95_ms": 3.4108440158888693,
+            "gap_mean_ms": 15.452125805884075
+          },
+          "after_gap_lte_5ms": {
+            "calls": 402,
+            "mean_ms": 1.965822064693072,
+            "p95_ms": 2.5454396847635508,
+            "gap_mean_ms": 0.20010747590023487
+          }
+        }
+      }
+    ]
+  },
+  "one_worker_b": {
+    "ort": "1.31.0",
+    "machine": "arm64",
+    "qos": "default",
+    "disable_kleidiai": false,
+    "method": "synthetic PCM16, 20 ms blocks, 0.5 s input warm-up; stage times are nested, not additive",
+    "results": [
+      {
+        "mode": "worker_paced",
+        "signal": "noise",
+        "audio_seconds": 8.0,
+        "providers": [
+          "CPUExecutionProvider"
+        ],
+        "observed_worker_qos": [
+          "0x15"
+        ],
+        "observed_worker_scheduler": [
+          {
+            "t": 1792669760.753075,
+            "qos": "0x15",
+            "thread_background": 0,
+            "process_background": 0
+          }
+        ],
+        "worker_threads_used": 1,
+        "worker_switches": 0,
+        "workers_configured": 1,
+        "workers_prestarted": false,
+        "rtf": 0.24884347763145342,
+        "thread_cpu_rtf": 0.24648064224999985,
+        "block_p50_ms": 4.897312726825476,
+        "block_p95_ms": 6.459476728923618,
+        "stages_nested": {
+          "vad": {
+            "calls": 1600,
+            "wall_rtf": 0.0023030921001918614,
+            "thread_cpu_rtf": 0.002271104499999793
+          },
+          "crosscheck": {
+            "calls": 800,
+            "wall_rtf": 0.0005235401331447065,
+            "thread_cpu_rtf": 0.0005191346250003025
+          },
+          "ort": {
+            "calls": 800,
+            "wall_rtf": 0.21674265683395788,
+            "thread_cpu_rtf": 0.21494321262499996
+          },
+          "sdk": {
+            "calls": 400,
+            "wall_rtf": 0.23820295208133757,
+            "thread_cpu_rtf": 0.23599407749999973
+          },
+          "isolator": {
+            "calls": 400,
+            "wall_rtf": 0.23905171372462064,
+            "thread_cpu_rtf": 0.23682324924999967
+          }
+        },
+        "ort_gap_groups_last_2000_calls": {
+          "after_gap_gt_5ms": {
+            "calls": 400,
+            "mean_ms": 2.4015038379002362,
+            "p95_ms": 3.4446417121216655,
+            "gap_mean_ms": 15.462874977383763
+          },
+          "after_gap_lte_5ms": {
+            "calls": 400,
+            "mean_ms": 1.925499385688454,
+            "p95_ms": 2.388999983668326,
+            "gap_mean_ms": 0.20654315361753106
+          }
+        }
+      }
+    ]
+  },
+  "browser_stages": {
+    "t": 1792669962.260919,
+    "ort": "1.31.0",
+    "mode": "websocket_server",
+    "method": "nested timings include instrumentation overhead; CPU time is caller thread only",
+    "results": [
+      {
+        "audio_seconds": 29.49999999999946,
+        "blocks_with_warmup": 1500,
+        "scheduler_last_120_samples": [
+          {
+            "t": 1792669857.495166,
+            "qos": "0x15",
+            "thread_background": 0,
+            "process_background": 0
+          },
+          {
+            "t": 1792669858.4931688,
+            "qos": "0x15",
+            "thread_background": 0,
+            "process_background": 0
+          },
+          {
+            "t": 1792669859.635809,
+            "qos": "0x15",
+            "thread_background": 0,
+            "process_background": 0
+          },
+          {
+            "t": 1792669860.493402,
+            "qos": "0x15",
+            "thread_background": 0,
+            "process_background": 0
+          },
+          {
+            "t": 1792669861.4943092,
+            "qos": "0x15",
+            "thread_background": 0,
+            "process_background": 0
+          },
+          {
+            "t": 1792669862.493247,
+            "qos": "0x15",
+            "thread_background": 0,
+            "process_background": 0
+          },
+          {
+            "t": 1792669863.4942029,
+            "qos": "0x15",
+            "thread_background": 0,
+            "process_background": 0
+          },
+          {
+            "t": 1792669864.491688,
+            "qos": "0x15",
+            "thread_background": 0,
+            "process_background": 0
+          },
+          {
+            "t": 1792669865.494019,
+            "qos": "0x15",
+            "thread_background": 0,
+            "process_background": 0
+          },
+          {
+            "t": 1792669866.4911768,
+            "qos": "0x15",
+            "thread_background": 0,
+            "process_background": 0
+          },
+          {
+            "t": 1792669867.49389,
+            "qos": "0x15",
+            "thread_background": 0,
+            "process_background": 0
+          },
+          {
+            "t": 1792669868.4913101,
+            "qos": "0x15",
+            "thread_background": 0,
+            "process_background": 0
+          },
+          {
+            "t": 1792669869.49507,
+            "qos": "0x15",
+            "thread_background": 0,
+            "process_background": 0
+          },
+          {
+            "t": 1792669870.491563,
+            "qos": "0x15",
+            "thread_background": 0,
+            "process_background": 0
+          },
+          {
+            "t": 1792669871.493981,
+            "qos": "0x15",
+            "thread_background": 0,
+            "process_background": 0
+          },
+          {
+            "t": 1792669872.491872,
+            "qos": "0x15",
+            "thread_background": 0,
+            "process_background": 0
+          },
+          {
+            "t": 1792669873.4942029,
+            "qos": "0x15",
+            "thread_background": 0,
+            "process_background": 0
+          },
+          {
+            "t": 1792669874.494362,
+            "qos": "0x15",
+            "thread_background": 0,
+            "process_background": 0
+          },
+          {
+            "t": 1792669875.494101,
+            "qos": "0x15",
+            "thread_background": 0,
+            "process_background": 0
+          },
+          {
+            "t": 1792669876.491303,
+            "qos": "0x15",
+            "thread_background": 0,
+            "process_background": 0
+          },
+          {
+            "t": 1792669877.4944608,
+            "qos": "0x15",
+            "thread_background": 0,
+            "process_background": 0
+          },
+          {
+            "t": 1792669878.491223,
+            "qos": "0x15",
+            "thread_background": 0,
+            "process_background": 0
+          },
+          {
+            "t": 1792669879.494315,
+            "qos": "0x15",
+            "thread_background": 0,
+            "process_background": 0
+          },
+          {
+            "t": 1792669880.4915872,
+            "qos": "0x15",
+            "thread_background": 0,
+            "process_background": 0
+          },
+          {
+            "t": 1792669881.49395,
+            "qos": "0x15",
+            "thread_background": 0,
+            "process_background": 0
+          },
+          {
+            "t": 1792669882.49184,
+            "qos": "0x15",
+            "thread_background": 0,
+            "process_background": 0
+          },
+          {
+            "t": 1792669883.493976,
+            "qos": "0x15",
+            "thread_background": 0,
+            "process_background": 0
+          },
+          {
+            "t": 1792669884.491263,
+            "qos": "0x15",
+            "thread_background": 0,
+            "process_background": 0
+          },
+          {
+            "t": 1792669885.494102,
+            "qos": "0x15",
+            "thread_background": 0,
+            "process_background": 0
+          },
+          {
+            "t": 1792669886.491561,
+            "qos": "0x15",
+            "thread_background": 0,
+            "process_background": 0
+          }
+        ],
+        "ort_gap_groups_last_2000_calls": {
+          "after_gap_gt_5ms": {
+            "calls": 987,
+            "mean_ms": 1.637006300693074,
+            "p95_ms": 2.254812559112906,
+            "gap_mean_ms": 16.941820233569622
+          },
+          "after_gap_lte_5ms": {
+            "calls": 1013,
+            "mean_ms": 1.4292732509071888,
+            "p95_ms": 2.2505160421133037,
+            "gap_mean_ms": 0.21163482119688748
+          }
+        },
+        "recent_n_blocks": 250,
+        "recent_250_blocks": {
+          "sdk": {
+            "wall_rtf": 0.2034327602945268,
+            "thread_cpu_rtf": 0.17616065099999983,
+            "p95_ms": 7.903200224973261
+          },
+          "isolator": {
+            "wall_rtf": 0.2053478413261473,
+            "thread_cpu_rtf": 0.17741363360000068,
+            "p95_ms": 8.326156134717156
+          },
+          "total": {
+            "wall_rtf": 0.21673956653103232,
+            "thread_cpu_rtf": 0.18707094280000008,
+            "p95_ms": 8.796302834525688
+          }
+        },
+        "stages_nested": {
+          "vad": {
+            "calls": 5900,
+            "wall_rtf": 0.0021579159518420083,
+            "thread_cpu_rtf": 0.001960643355932117
+          },
+          "crosscheck": {
+            "calls": 2950,
+            "wall_rtf": 0.0005583774803553699,
+            "thread_cpu_rtf": 0.0005256169152539808
+          },
+          "ort": {
+            "calls": 2950,
+            "wall_rtf": 0.15980209103959384,
+            "thread_cpu_rtf": 0.14343335311864674
+          },
+          "sdk": {
+            "calls": 1475,
+            "wall_rtf": 0.18109963488591757,
+            "thread_cpu_rtf": 0.1628457651525454
+          },
+          "isolator": {
+            "calls": 1475,
+            "wall_rtf": 0.1823900385712449,
+            "thread_cpu_rtf": 0.16394367277966437
+          },
+          "total": {
+            "calls": 1475,
+            "wall_rtf": 0.19170867918469994,
+            "thread_cpu_rtf": 0.17251457196610506
+          }
+        }
+      }
+    ]
+  },
+  "browser_result": {
+    "kind": "browser_synthetic_stream",
+    "seconds": 30,
+    "audio": {
+      "rtf": 0.189,
+      "rtf_recent": 0.218,
+      "proc_p95_ms": 9.23,
+      "queue_wait_ms_avg": 0.34,
+      "queue_wait_ms_p95": 0.35,
+      "dropped": 0,
+      "queue": 0,
+      "backlog_max": 10,
+      "asr_provider": "none",
+      "asr_sent_s": 0
+    },
+    "frontend": {
+      "video_sent": 59,
+      "video_dropped": 0,
+      "video_backpressure": 0,
+      "capture_avg_ms": 0.2983332396,
+      "encode_avg_ms": 4.862711931,
+      "render_avg_ms": 1.312500014
+    }
+  },
+  "method": "Sequential shared-host tests; browser uses synthetic MediaStream with real production UI and AudioWorklets. No native camera/microphone, no cloud. Browser result transcribed from rendered #synthetic-result JSON.",
+  "limits": [
+    "Original 0.37 run has not been reproduced.",
+    "Browser test used IAB Chromium, not the original Google Chrome process or physical capture device.",
+    "Tests were sequential and host load/frequency were uncontrolled.",
+    "No production performance improvement is claimed."
+  ]
+}
