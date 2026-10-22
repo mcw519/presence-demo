@@ -4,8 +4,8 @@ Pinned copy of the PureSound playground's CSS design system, so presence-demo an
 PureSound playground share one set of tokens instead of divergent copies.
 
 - Source: https://github.com/mcw519/puresound, `puresound/web/static/`
-- Revision: `121bf623b491cb7f18805bec65099543ecc5323f` (the same revision pinned for
-  `puresound-streaming` in `pyproject.toml`)
+- Revision: `121bf623b491cb7f18805bec65099543ecc5323f`. These web assets are pinned
+  independently of the `puresound-streaming` SDK in `pyproject.toml`.
 - License: Apache-2.0 (`LICENSE`, `NOTICE`); IBM Plex fonts: SIL OFL 1.1 (`fonts/LICENSE.txt`)
 
 | File | Upstream | Changes |

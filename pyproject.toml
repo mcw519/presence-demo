@@ -49,4 +49,4 @@ testpaths = ["tests"]
 filterwarnings = ["ignore::DeprecationWarning"]
 
 [tool.uv.sources]
-puresound-streaming = { git = "https://github.com/mcw519/puresound.git", subdirectory = "sdk/python", rev = "121bf623b491cb7f18805bec65099543ecc5323f" }
+puresound-streaming = { git = "https://github.com/mcw519/puresound.git", subdirectory = "sdk/python", rev = "aba2962876c8ec8abec7971378d670677e0ec859" }

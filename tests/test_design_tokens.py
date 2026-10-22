@@ -1,6 +1,7 @@
 """The UI uses the PureSound web design system (vendored, pinned) instead of its own token copy."""
 
 import hashlib
+import re
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -24,10 +25,15 @@ def test_vendored_tokens_match_pinned_upstream():
         assert (VENDOR / f).is_file(), f
 
 
-def test_pin_matches_puresound_dependency():
+def test_vendor_and_sdk_revisions_are_pinned_independently():
     rev = "121bf623b491cb7f18805bec65099543ecc5323f"
     assert rev in (VENDOR / "README.md").read_text()
-    assert rev in (Path(server.__file__).parents[1] / "pyproject.toml").read_text()
+    assert "independently" in (VENDOR / "README.md").read_text()
+    root = Path(server.__file__).parents[1]
+    source = re.search(r'puresound-streaming = \{[^\n]+rev = "([0-9a-f]{40})"', (root / "pyproject.toml").read_text())
+    assert source, "SDK must remain pinned to an immutable commit"
+    sdk_rev = source.group(1)
+    assert f"rev={sdk_rev}#{sdk_rev}" in (root / "uv.lock").read_text()
 
 
 def test_index_uses_shared_tokens_and_component_classes():
