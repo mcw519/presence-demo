@@ -1,7 +1,7 @@
 // Settings: schema (defaults, ranges, help text), modules in data-flow order, presets, settings panel.
 // Classic script; all files share one global scope and load in order from index.html.
 // ---------- settings schema ----------
-const DEF={face_roi:[0.2,0.05,0.8,0.95],mirror_view:true,show_face_roi:true,pose_enabled:false,pose_conf:0.4,pose_roi:[0,0,1,1],show_pose_roi:true,roi_rule:'either',
+const DEF={face_roi:[0.2,0.05,0.8,0.95],mirror_view:true,show_face_roi:true,pose_enabled:false,pose_conf:0.4,pose_interval:2,pose_roi:[0,0,1,1],show_pose_roi:true,roi_rule:'either',
  turned_away_early:true,turned_away_seconds:2,recede_ratio:0.1,distance_enabled:false,camera_hfov:60,face_width_m:0.15,shoulder_width_m:0.38,
  distance_calib:1,distance_ema:0.3,zone_min:0.4,zone_max:2,leave_distance:2.5,min_conf:0.4,embed_backend:'fp32',npu_precision:'int8',cos_match_int8:0.4,cos_match:0.4,cos_weak:0.2,iou_match:0.3,embed_ema:0.15,join_seconds:2,grace_seconds:15,
  present_frames:2,absent_frames:3,idle_after:3,present_timeout:15,empty_timeout:5,base_timeout:20,maybe_away_frac:0.5,end_after_away:5,new_group_seconds:3,
@@ -64,6 +64,7 @@ const META={
  appearance_min_sim:{min:0,max:1,step:0.05},
  appearance_ema:{min:0,max:1,step:0.05},
  pose_enabled:{bool:true},
+ pose_interval:{min:0,max:2,step:0.1,u:"s"},
  pose_conf:{min:0.05,max:1,step:0.05},
  body_min_conf:{min:0.05,max:1,step:0.05},
  pose_roi:{min:0,max:1,step:0.01,box:true},
@@ -168,7 +169,7 @@ const MODULES=[
   status:c=>`${c.adaptive_fps?t('st.adaptive'):c.fps+' fps'} · ${PS(c)?t('st.pcm'):t('st.browser_vad')}`},
  {id:'detect',keys:['face_roi','min_conf','embed_backend','npu_precision','cos_match_int8'],adv:['cos_match_int8','npu_precision'],
   rules:{npu_precision:{show:EQ('embed_backend','npu')},cos_match_int8:{show:c=>c.embed_backend!=='fp32'}},status:c=>`YuNet · ${c.embed_backend}`},
- {id:'pose',gate:'pose_enabled',keys:['pose_conf','body_min_conf','pose_roi','roi_rule','turned_away_early','turned_away_seconds','recede_ratio'],adv:['body_min_conf','recede_ratio','turned_away_seconds'],
+ {id:'pose',gate:'pose_enabled',keys:['pose_conf','pose_interval','body_min_conf','pose_roi','roi_rule','turned_away_early','turned_away_seconds','recede_ratio'],adv:['pose_interval','body_min_conf','recede_ratio','turned_away_seconds'],
   rules:{turned_away_seconds:{show:ON('turned_away_early')}},status:c=>c.pose_enabled?t('st.on'):t('st.off')},
  {id:'distance',gate:'distance_enabled',keys:['camera_hfov','distance_calib','zone_min','zone_max','leave_distance','face_width_m','shoulder_width_m','distance_ema'],adv:['face_width_m','shoulder_width_m','distance_ema'],
   rules:{shoulder_width_m:{need:[ON('pose_enabled'),'need.shoulder_pose']}},status:c=>c.distance_enabled?t('st.on'):t('st.off')},
@@ -263,7 +264,7 @@ function syncUI(skip){if(cfg.asr_provider==='none')captionOff();
 let sendTimer;
 function setCfg(part,src,immediate){Object.assign(cfg,part);save();syncUI(src);
  if(src&&src.type==='range'){clearTimeout(sendTimer);sendTimer=setTimeout(sendCfg,250)}else sendCfg();
- if('fps' in part)restartFrames();draw();}
+ if(['fps','adaptive_fps','fps_low','fps_high'].some(k=>k in part))restartFrames();draw();}
 function serverCfg(){const o={};for(const k in DEF)if(!CLIENT.includes(k))o[k]=cfg[k];return o}
 function sendCfg(){if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'config',config:serverCfg()}))}
 document.querySelectorAll('#presets [data-p]').forEach(b=>b.onclick=()=>{const p=b.dataset.p;

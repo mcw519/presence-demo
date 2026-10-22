@@ -47,7 +47,7 @@ tests/               單元、情境、WebSocket、隱私、介面和 i18n 測�
 
 ```mermaid
 flowchart LR
-  WS[WebSocket 接收] -->|frame JSON| SLOT[最新畫面槽]
+  WS[WebSocket 接收] -->|binary 0x04 影像 / 舊 frame JSON| SLOT[最新畫面槽]
   WS -->|binary 0x01 音訊| AQ[音訊佇列 ≤ 1 s]
   WS -->|config、vad、start、stop…| CTRL[控制]
   SLOT --> VW[影像 worker<br/>執行緒池] --> TR[PresenceTracker]
@@ -68,7 +68,7 @@ flowchart LR
 
 | 訊息 | 用途 |
 |---|---|
-| `frame` | `{data: base64 JPEG, speech, t}`，一張鏡頭畫面 |
+| `frame` | 舊格式：`{data: base64 JPEG, speech, t}`，一張鏡頭畫面 |
 | `vad` | 瀏覽器 VAD 改變（energy 管線） |
 | `config` | 設定變更；驗證並限制範圍後回傳警告 |
 | `start` / `stop` / `reset` | session 控制 |
@@ -78,6 +78,7 @@ flowchart LR
 | `client` | 瀏覽器診斷（可見性、重新連線…） |
 | `ping` | 量測往返時間（回 `pong`） |
 | binary `0x01` | 音訊區塊：時間戳 + 20 ms、16 kHz PCM16 |
+| binary `0x04` | 影像：1-byte tag、float64 little-endian 用戶端時間戳（ms）、1-byte speech（0/1），再接 JPEG bytes；header 共 10 bytes。 |
 
 伺服器 → 瀏覽器：
 

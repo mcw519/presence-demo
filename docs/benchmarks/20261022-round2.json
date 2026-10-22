@@ -1,0 +1,645 @@
+{
+  "date": "2026-10-22",
+  "baseline": "Round 1 uncommitted working-tree snapshot, same SDK/ORT 1.31.0; SHA256 below identifies source files",
+  "baseline_source_sha256": {
+    "optimizer.py": "ef06e433776bf47e2db6eddc10ddea74882c3a6950102d708705ed7b6fa2eb58",
+    "config.py": "e08970818476b194540aa899df433bf3b305d3b67aad9c921fe91bd1230bb90c",
+    "stats.py": "c7476555475b30d1dbf101ad8703f36afba02d0b4dd0b1c5607ff475cb615b01",
+    "web/session.py": "7b176a2169da0dbe9bcf597ef400ff727a4034106be28a4da2d5f2cf4e61846e",
+    "static/js/app.js": "acbee7adc9e16772bc4513c6f20ec9d192b4a2b99bad55f70841985cb4f7f1bb",
+    "static/js/core.js": "80219fa190dfc643e34041d5f2e637b982f41c90be88d0bafc9d6d5a3225c91e"
+  },
+  "pose_method": "Real YuNet/SFace/MoveNet, 640x480 test portrait/blank, synthetic clock, 40 frames, 3 runs per case, median process CPU and frame p50; OpenCV 2 threads on both sides. 5 fps full scenario disables motion gate to expose independent pose cadence. Other cases preserve gating or force fresh pose. No recorded media written.",
+  "pose_before": {
+    "opencv": "4.14.0",
+    "cv_threads": 10,
+    "pose_scenarios": {
+      "stable_face_full_5fps": {
+        "median_cpu_ms": 1019.0969999999999,
+        "median_frame_p50_ms": 7.85789592191577,
+        "runs": [
+          {
+            "cpu_ms": 1012.14,
+            "frame_p50_ms": 7.85789592191577,
+            "frame_p95_ms": 14.154861704446375,
+            "pose_calls": 40,
+            "pose_reused": 0,
+            "face_counts": [
+              1
+            ],
+            "frames": 40,
+            "simulated_fps": 5
+          },
+          {
+            "cpu_ms": 1095.132,
+            "frame_p50_ms": 9.09702037461102,
+            "frame_p95_ms": 14.543875027447935,
+            "pose_calls": 40,
+            "pose_reused": 0,
+            "face_counts": [
+              1
+            ],
+            "frames": 40,
+            "simulated_fps": 5
+          },
+          {
+            "cpu_ms": 1019.0969999999999,
+            "frame_p50_ms": 7.77089549228549,
+            "frame_p95_ms": 14.282368938438594,
+            "pose_calls": 40,
+            "pose_reused": 0,
+            "face_counts": [
+              1
+            ],
+            "frames": 40,
+            "simulated_fps": 5
+          }
+        ]
+      },
+      "stable_face_gated_2fps": {
+        "median_cpu_ms": 340.80399999999986,
+        "median_frame_p50_ms": 0.10458356700837612,
+        "runs": [
+          {
+            "cpu_ms": 340.80399999999986,
+            "frame_p50_ms": 0.10758358985185623,
+            "frame_p95_ms": 13.567695370875297,
+            "pose_calls": 10,
+            "pose_reused": 0,
+            "face_counts": [
+              1
+            ],
+            "frames": 40,
+            "simulated_fps": 2
+          },
+          {
+            "cpu_ms": 332.2759999999998,
+            "frame_p50_ms": 0.10175001807510853,
+            "frame_p95_ms": 13.30504158977419,
+            "pose_calls": 10,
+            "pose_reused": 0,
+            "face_counts": [
+              1
+            ],
+            "frames": 40,
+            "simulated_fps": 2
+          },
+          {
+            "cpu_ms": 343.5869999999994,
+            "frame_p50_ms": 0.10458356700837612,
+            "frame_p95_ms": 13.805586029775439,
+            "pose_calls": 10,
+            "pose_reused": 0,
+            "face_counts": [
+              1
+            ],
+            "frames": 40,
+            "simulated_fps": 2
+          }
+        ]
+      },
+      "unstable_face_5fps": {
+        "median_cpu_ms": 994.0709999999999,
+        "median_frame_p50_ms": 7.586791645735502,
+        "runs": [
+          {
+            "cpu_ms": 998.3379999999995,
+            "frame_p50_ms": 7.64643750153482,
+            "frame_p95_ms": 12.482861848548051,
+            "pose_calls": 40,
+            "pose_reused": 0,
+            "face_counts": [
+              1
+            ],
+            "frames": 40,
+            "simulated_fps": 5
+          },
+          {
+            "cpu_ms": 994.0709999999999,
+            "frame_p50_ms": 7.586791645735502,
+            "frame_p95_ms": 13.223921018652618,
+            "pose_calls": 40,
+            "pose_reused": 0,
+            "face_counts": [
+              1
+            ],
+            "frames": 40,
+            "simulated_fps": 5
+          },
+          {
+            "cpu_ms": 993.6420000000004,
+            "frame_p50_ms": 7.575582945719361,
+            "frame_p95_ms": 12.71891891956329,
+            "pose_calls": 40,
+            "pose_reused": 0,
+            "face_counts": [
+              1
+            ],
+            "frames": 40,
+            "simulated_fps": 5
+          }
+        ]
+      },
+      "no_face_5fps": {
+        "median_cpu_ms": 943.5760000000002,
+        "median_frame_p50_ms": 7.527166279032826,
+        "runs": [
+          {
+            "cpu_ms": 933.4629999999997,
+            "frame_p50_ms": 7.527166279032826,
+            "frame_p95_ms": 8.000358450226486,
+            "pose_calls": 40,
+            "pose_reused": 0,
+            "face_counts": [
+              0
+            ],
+            "frames": 40,
+            "simulated_fps": 5
+          },
+          {
+            "cpu_ms": 944.108,
+            "frame_p50_ms": 7.465770468115807,
+            "frame_p95_ms": 8.901837700977921,
+            "pose_calls": 40,
+            "pose_reused": 0,
+            "face_counts": [
+              0
+            ],
+            "frames": 40,
+            "simulated_fps": 5
+          },
+          {
+            "cpu_ms": 943.5760000000002,
+            "frame_p50_ms": 7.575145689770579,
+            "frame_p95_ms": 8.56902035884559,
+            "pose_calls": 40,
+            "pose_reused": 0,
+            "face_counts": [
+              0
+            ],
+            "frames": 40,
+            "simulated_fps": 5
+          }
+        ]
+      }
+    },
+    "jpeg_framing": {
+      "jpeg_bytes": 9605,
+      "legacy_wire_bytes": 12885,
+      "binary_wire_bytes": 9615,
+      "unpack_ms_per_frame": {
+        "legacy": 0.021183415316045284,
+        "binary": 0.00037908460944890976
+      }
+    }
+  },
+  "pose_after": {
+    "opencv": "4.14.0",
+    "cv_threads": 10,
+    "pose_scenarios": {
+      "stable_face_full_5fps": {
+        "median_cpu_ms": 628.7199999999999,
+        "median_frame_p50_ms": 4.264436895027757,
+        "runs": [
+          {
+            "cpu_ms": 628.7199999999999,
+            "frame_p50_ms": 4.259041976183653,
+            "frame_p95_ms": 10.017838771454981,
+            "pose_calls": 4,
+            "pose_reused": 36,
+            "face_counts": [
+              1
+            ],
+            "frames": 40,
+            "simulated_fps": 5
+          },
+          {
+            "cpu_ms": 638.6540000000001,
+            "frame_p50_ms": 4.264436895027757,
+            "frame_p95_ms": 9.70753545407205,
+            "pose_calls": 4,
+            "pose_reused": 36,
+            "face_counts": [
+              1
+            ],
+            "frames": 40,
+            "simulated_fps": 5
+          },
+          {
+            "cpu_ms": 621.8920000000002,
+            "frame_p50_ms": 4.314854275435209,
+            "frame_p95_ms": 8.97502293810247,
+            "pose_calls": 4,
+            "pose_reused": 36,
+            "face_counts": [
+              1
+            ],
+            "frames": 40,
+            "simulated_fps": 5
+          }
+        ]
+      },
+      "stable_face_gated_2fps": {
+        "median_cpu_ms": 348.519,
+        "median_frame_p50_ms": 0.12112478725612164,
+        "runs": [
+          {
+            "cpu_ms": 340.82800000000015,
+            "frame_p50_ms": 0.11443742550909519,
+            "frame_p95_ms": 13.269126857630907,
+            "pose_calls": 10,
+            "pose_reused": 30,
+            "face_counts": [
+              1
+            ],
+            "frames": 40,
+            "simulated_fps": 2
+          },
+          {
+            "cpu_ms": 348.519,
+            "frame_p50_ms": 0.12112478725612164,
+            "frame_p95_ms": 14.163943659514189,
+            "pose_calls": 10,
+            "pose_reused": 30,
+            "face_counts": [
+              1
+            ],
+            "frames": 40,
+            "simulated_fps": 2
+          },
+          {
+            "cpu_ms": 352.80000000000024,
+            "frame_p50_ms": 0.12414599768817425,
+            "frame_p95_ms": 13.664043997414408,
+            "pose_calls": 10,
+            "pose_reused": 30,
+            "face_counts": [
+              1
+            ],
+            "frames": 40,
+            "simulated_fps": 2
+          }
+        ]
+      },
+      "unstable_face_5fps": {
+        "median_cpu_ms": 1017.5369999999999,
+        "median_frame_p50_ms": 7.699895417317748,
+        "runs": [
+          {
+            "cpu_ms": 1015.5410000000003,
+            "frame_p50_ms": 7.745916722342372,
+            "frame_p95_ms": 13.112089596688747,
+            "pose_calls": 40,
+            "pose_reused": 0,
+            "face_counts": [
+              1
+            ],
+            "frames": 40,
+            "simulated_fps": 5
+          },
+          {
+            "cpu_ms": 1017.5369999999999,
+            "frame_p50_ms": 7.667249999940395,
+            "frame_p95_ms": 13.038439420051871,
+            "pose_calls": 40,
+            "pose_reused": 0,
+            "face_counts": [
+              1
+            ],
+            "frames": 40,
+            "simulated_fps": 5
+          },
+          {
+            "cpu_ms": 1082.6389999999994,
+            "frame_p50_ms": 7.699895417317748,
+            "frame_p95_ms": 13.315918273292482,
+            "pose_calls": 40,
+            "pose_reused": 0,
+            "face_counts": [
+              1
+            ],
+            "frames": 40,
+            "simulated_fps": 5
+          }
+        ]
+      },
+      "no_face_5fps": {
+        "median_cpu_ms": 948.4969999999997,
+        "median_frame_p50_ms": 7.53312511369586,
+        "runs": [
+          {
+            "cpu_ms": 948.4969999999997,
+            "frame_p50_ms": 7.53312511369586,
+            "frame_p95_ms": 7.980018318630755,
+            "pose_calls": 40,
+            "pose_reused": 0,
+            "face_counts": [
+              0
+            ],
+            "frames": 40,
+            "simulated_fps": 5
+          },
+          {
+            "cpu_ms": 943.2290000000005,
+            "frame_p50_ms": 7.527542067691684,
+            "frame_p95_ms": 7.93458113912493,
+            "pose_calls": 40,
+            "pose_reused": 0,
+            "face_counts": [
+              0
+            ],
+            "frames": 40,
+            "simulated_fps": 5
+          },
+          {
+            "cpu_ms": 950.8480000000006,
+            "frame_p50_ms": 7.583916652947664,
+            "frame_p95_ms": 8.230876666493714,
+            "pose_calls": 40,
+            "pose_reused": 0,
+            "face_counts": [
+              0
+            ],
+            "frames": 40,
+            "simulated_fps": 5
+          }
+        ]
+      }
+    },
+    "jpeg_framing": {
+      "jpeg_bytes": 9605,
+      "legacy_wire_bytes": 12885,
+      "binary_wire_bytes": 9615,
+      "unpack_ms_per_frame": {
+        "legacy": 0.021310833282768726,
+        "binary": 0.00037224963307380676
+      }
+    }
+  },
+  "browser_method": "Sequential same-pixel 640x480 5 fps production capture callbacks, 30 frames each; socket replaced by in-memory observer, whose synchronous cost is subtracted from callback timing. Final async encodes drain for 500 ms. Encoded JPEG hashes checked. No actual network/camera/microphone/cloud. Encode wall time includes async completion and is not CPU time.",
+  "browser": [
+    {
+      "kind": "benchmark",
+      "version": "before",
+      "mode": "capture",
+      "seconds": 6.518699999809265,
+      "frames": 30,
+      "format": "json",
+      "jpegBytes": 48309,
+      "jpegSha256": [
+        "8801fc47d0e381a978d0f0328067bd52ac5aebf478f63004b41a1270674e31e0"
+      ],
+      "wireBytes": 1934850,
+      "wireBytesPerFrame": 64495,
+      "captureCallbackTotalMs": 215.90000009536743,
+      "captureCallbackAvgMs": 7.196666669845581,
+      "captureCallbackP95Ms": 9.300000190734863,
+      "frontend": {
+        "dom_writes": 0,
+        "canvas_resizes": 4,
+        "canvas_draws": 132,
+        "capture": {
+          "n": 30,
+          "avg": 0.04999996821085612,
+          "p95": 0.09999990463256836
+        },
+        "encode": {
+          "n": 30,
+          "avg": 7.053333377838134,
+          "p95": 9
+        },
+        "render": {
+          "n": 0,
+          "avg": 0,
+          "p95": 0
+        }
+      },
+      "errors": []
+    },
+    {
+      "kind": "benchmark",
+      "version": "after",
+      "mode": "capture",
+      "seconds": 6.506099999904633,
+      "frames": 30,
+      "format": "binary",
+      "jpegBytes": 48309,
+      "jpegSha256": [
+        "8801fc47d0e381a978d0f0328067bd52ac5aebf478f63004b41a1270674e31e0"
+      ],
+      "wireBytes": 1449570,
+      "wireBytesPerFrame": 48319,
+      "captureCallbackTotalMs": 71.19999885559082,
+      "captureCallbackAvgMs": 2.373333295186361,
+      "captureCallbackP95Ms": 3.299999713897705,
+      "frontend": {
+        "dom_writes": 0,
+        "canvas_resizes": 4,
+        "canvas_draws": 132,
+        "video_encoded": 30,
+        "video_sent": 30,
+        "video_dropped": 0,
+        "video_backpressure": 0,
+        "capture": {
+          "n": 30,
+          "avg": 0.04999998410542806,
+          "p95": 0.10000038146972656
+        },
+        "encode": {
+          "n": 30,
+          "avg": 6.4399999936421715,
+          "p95": 8.300000190734863
+        },
+        "render": {
+          "n": 0,
+          "avg": 0,
+          "p95": 0
+        }
+      },
+      "errors": []
+    }
+  ],
+  "realtime_method": "16 seconds fixed 5 fps test portrait plus 20 ms PCM audio, face motion gate disabled, pose on, no cloud. Before JSON / after binary; same SDK/ORT. Server CPU is percent of one core on a shared host. One run each; initialization/shared load may affect short measurements.",
+  "realtime_before": {
+    "seconds": 16,
+    "frames_sent": 80,
+    "transport": "json",
+    "scene": "face",
+    "video_application_bytes_sent": 1017362,
+    "optim": {
+      "skipped": 0,
+      "skipped_pct": 0.0,
+      "detect_calls": 80,
+      "embed_computed": 6,
+      "embed_reused": 74,
+      "embed_reused_pct": 92.5,
+      "recommended_fps": 0.0,
+      "pose_calls": 80,
+      "detect_hits": 80
+    },
+    "fps_settings": [
+      5.0
+    ],
+    "audio_rtf_second_half_median": 0.195,
+    "audio_queue_max": 0,
+    "audio_dropped": 0,
+    "server_cpu_avg": 46.128571428571426,
+    "vision_total_avg_ms": 15.03,
+    "errors": [],
+    "last_audio_metrics": {
+      "rtf_recent": 0.21,
+      "proc_p95_ms": 5.67,
+      "queue_wait_ms_avg": 0.11,
+      "queue_wait_ms_p95": 0.2
+    },
+    "last_vision_metrics": {
+      "queue_wait": {
+        "avg": 0.03,
+        "p95": 0.06,
+        "last": 0.03
+      },
+      "executor_wait": {
+        "avg": 0.07,
+        "p95": 0.11,
+        "last": 0.04
+      },
+      "lock_wait": {
+        "avg": 0.0,
+        "p95": 0.0,
+        "last": 0.0
+      },
+      "decode": {
+        "avg": 0.62,
+        "p95": 0.9,
+        "last": 0.37
+      },
+      "motion": {
+        "avg": 0.29,
+        "p95": 0.4,
+        "last": 0.15
+      },
+      "detect": {
+        "avg": 7.69,
+        "p95": 9.39,
+        "last": 5.8
+      },
+      "embed": {
+        "avg": 0.61,
+        "p95": 6.0,
+        "last": 0.05
+      },
+      "appearance": {
+        "avg": 0.0,
+        "p95": 0.0,
+        "last": 0.0
+      },
+      "pose": {
+        "avg": 5.49,
+        "p95": 6.26,
+        "last": 5.62
+      },
+      "tracker": {
+        "avg": 0.1,
+        "p95": 0.14,
+        "last": 0.11
+      },
+      "total": {
+        "avg": 15.03,
+        "p95": 17.37,
+        "last": 12.3
+      }
+    }
+  },
+  "realtime_after": {
+    "seconds": 16,
+    "frames_sent": 80,
+    "transport": "binary",
+    "scene": "face",
+    "video_application_bytes_sent": 758240,
+    "optim": {
+      "skipped": 0,
+      "skipped_pct": 0.0,
+      "detect_calls": 80,
+      "embed_computed": 6,
+      "embed_reused": 74,
+      "embed_reused_pct": 92.5,
+      "recommended_fps": 0.0,
+      "pose_calls": 8,
+      "pose_reused": 72,
+      "pose_reused_pct": 90.0,
+      "detect_hits": 80
+    },
+    "fps_settings": [
+      5.0
+    ],
+    "audio_rtf_second_half_median": 0.203,
+    "audio_queue_max": 8,
+    "audio_dropped": 0,
+    "server_cpu_avg": 39.964285714285715,
+    "vision_total_avg_ms": 9.86,
+    "errors": [],
+    "last_audio_metrics": {
+      "rtf_recent": 0.206,
+      "proc_p95_ms": 5.33,
+      "queue_wait_ms_avg": 0.12,
+      "queue_wait_ms_p95": 0.19
+    },
+    "last_vision_metrics": {
+      "queue_wait": {
+        "avg": 0.04,
+        "p95": 0.08,
+        "last": 0.05
+      },
+      "executor_wait": {
+        "avg": 0.07,
+        "p95": 0.1,
+        "last": 0.1
+      },
+      "lock_wait": {
+        "avg": 0.0,
+        "p95": 0.0,
+        "last": 0.01
+      },
+      "decode": {
+        "avg": 0.6,
+        "p95": 0.86,
+        "last": 0.81
+      },
+      "motion": {
+        "avg": 0.31,
+        "p95": 0.49,
+        "last": 0.42
+      },
+      "detect": {
+        "avg": 7.38,
+        "p95": 9.18,
+        "last": 9.54
+      },
+      "embed": {
+        "avg": 0.69,
+        "p95": 8.66,
+        "last": 0.05
+      },
+      "appearance": {
+        "avg": 0.0,
+        "p95": 0.0,
+        "last": 0.0
+      },
+      "pose": {
+        "avg": 0.52,
+        "p95": 4.96,
+        "last": 0.0
+      },
+      "tracker": {
+        "avg": 0.11,
+        "p95": 0.14,
+        "last": 0.13
+      },
+      "total": {
+        "avg": 9.86,
+        "p95": 17.62,
+        "last": 11.25
+      }
+    }
+  }
+}

@@ -101,6 +101,7 @@ date. Labels and help texts are the same ones shown in Settings.
 |---|---|---|---|
 | `pose_enabled` | off | on / off | **Enable pose detection** *(Mode / switch)* — MoveNet MultiPose Lightning (Apache-2.0, up to 6 people) detects bodies and keypoints (shoulders, hips, nose, eyes), so someone turned sideways or away still counts as present. Costs more CPU; off by default. |
 | `pose_conf` | 0.4 | 0.05 – 1 | **Body detection confidence** — Body detections below this are ignored. |
+| `pose_interval` | 2 | 0 – 2 | **Pose inference interval** *(advanced)* — Stable scenes reuse body results for up to this many seconds (default 2). Significant image motion, geometry/count changes, missing faces or unstable states refresh immediately. 0 disables throttling. |
 | `body_min_conf` | 0.4 | 0.05 – 1 | **Body-only confidence threshold** *(advanced)* — With only a body and no face, this confidence is needed to count as "someone there" (with a face, the detection confidence applies). |
 | `pose_roi` | (0, 0, 1, 1) | box (x0, y0, x1, y1) | **Body ROI (x0,y0,x1,y1)** — A body counts only if its center is inside this (purple) box; usually larger than the face ROI. |
 | `roi_rule` | `either` | `either` / `face` / `body` | **Participant rule** — Face or body: face in the face ROI or body in the body ROI. Face only: face ROI only. Body only: body ROI only (needs pose detection). |

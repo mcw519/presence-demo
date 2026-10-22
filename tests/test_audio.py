@@ -1,6 +1,7 @@
 """Audio: PureSound glue (smoke, skipped without the SDK/model), clean VAD, reset on group change,
 entry-onset rule, and audio privacy (no files written)."""
 
+import json
 import os
 import struct
 import tempfile
@@ -302,3 +303,58 @@ def test_ws_audio_round_trip_writes_no_files():
         if before.get(p) != after[p] and (p.startswith(cwd) or (p.startswith(tmp) and p.lower().endswith(ext)))
     }
     assert not changed, sorted(changed)[:10]
+
+
+def test_audio_block_metrics_include_batch_wait_and_exclude_it_from_processing(monkeypatch):
+    import time
+
+    from fastapi.testclient import TestClient
+
+    from presence_demo.server import app
+    from presence_demo.web import session
+
+    samples = []
+    original_record = session.AudioStats.record
+
+    def record(self, done, elapsed, duration, wait):
+        samples.append((elapsed, duration, wait))
+        original_record(self, done, elapsed, duration, wait)
+
+    class FakeStream:
+        def __init__(self, cfg):
+            self.cfg = cfg
+            time.sleep(0.05)  # allow later packets to collect into a batch
+
+        def on_vision(self, snap, now):
+            pass
+
+        def process(self, pcm, snap, now, vis_age):
+            time.sleep(0.01)
+            return pcm, False
+
+        def meta(self):
+            return {"rtf": 0.5, "counts": {}}
+
+    monkeypatch.setattr(session, "AudioStream", FakeStream)
+    monkeypatch.setattr(session, "puresound_available", lambda: (True, ""))
+    monkeypatch.setattr(session.AudioStats, "record", record)
+    meta = None
+    with TestClient(app).websocket_connect("/ws") as ws:
+        ws.send_json({"type": "config", "config": {"audio_pipeline": "puresound"}})
+        for n in range(5):
+            ws.send_bytes(b"\x01" + struct.pack("<d", float(n)) + bytes(640))
+        got = 0
+        while got < 5:
+            message = ws.receive()
+            if message.get("bytes"):
+                got += 1
+            elif message.get("text"):
+                data = json.loads(message["text"])
+                if data.get("type") == "audio":
+                    meta = data
+    assert len(samples) == 5
+    assert all(duration == 0.02 for _, duration, _ in samples)
+    assert all(wait > elapsed for elapsed, _, wait in samples)  # queued initialization is not processing
+    assert samples[-1][2] > samples[-2][2] + 0.005  # earlier block inside the same batch
+    assert meta is not None and meta["rtf_recent"] > 0
+    assert meta["proc_p95_ms"] > 0 and meta["queue_wait_ms_avg"] > meta["proc_p95_ms"]

@@ -121,6 +121,119 @@ writes an fp16 and a full-INT8 model (calibrated on CC0 portraits in memory) and
 The PureSound pipeline costs about 5 ms per 20 ms chunk on one core (real-time factor ≈ 0.25), far more than vision
 at 1–2 fps. Measure on the target device first. See [Audio](audio.md#performance).
 
+## Live monitoring and round-one measurements
+
+Adaptive FPS recommendations now travel in every `state` message and in
+`stats.conn.optim.recommended_fps`. The browser accepts both and only replaces its
+capture timer when the effective rate changes. Previously it read only `state`,
+while the recommendation was sent only in `stats`, so it stayed at the fixed FPS.
+
+The resource panel separates vision queue wait (receipt to worker start), executor
+wait (submission to thread start), inference lock wait, and model stages. These
+are separate stages: queue wait precedes the existing `total` measurement, which
+starts in the worker. Audio retains cumulative `rtf` and adds the last five
+wall-clock seconds' duration-weighted `rtf_recent`, complete-block processing p95,
+and receipt-to-processing queue wait avg/p95. RTF measures elapsed processing time
+divided by audio duration; it is not a measurement of CPU utilization.
+
+Client capture, JPEG encode, and state/audio/stats render timings retain at most
+200 samples each. DOM/canvas work counters and WebSocket queued bytes are also
+shown. Render timings cover synchronous callbacks, not subsequent browser layout
+or compositing. Audio metadata renders at most 5 Hz while recording and timeline
+data still consume every message. Canvas backing stores resize only when needed;
+offscreen plots skip drawing, and spectrogram scrolling avoids pixel readback.
+
+[Raw measurements](benchmarks/20261022-round1.json) from 2026-10-22:
+
+| Same input workload | Before | After |
+|---|---:|---:|
+| Browser audio-panel renders, 100 metadata messages over 10 s | 100 | 51 |
+| DOM `innerHTML` writes in that replay | 190 | 66 |
+| Canvas width/height assignments | 658 | 4 |
+| Spectrogram pixel readbacks | 206 | 0 |
+| Measured synchronous rendering work, including deferred audio renders | 222.3 ms | 92.1 ms |
+| Frames sent in 16 s of stable blank video + streaming PCM | 16 | 9 |
+
+The browser replay uses stable state with changing audio levels, synthetic data,
+and the actual pre/post-fix message schemas; it does not open camera/microphone or
+call cloud services. Counts include a final 250 ms drain. The server replay uses
+the same SDK/ORT 1.31.0 on both sides, with pose enabled and cloud services off.
+All three server runs had zero audio drops. Audio RTF was 0.213 before and
+0.218/0.353 in two after runs; process CPU also varied. These short shared-host
+measurements do **not** establish an RTF, CPU, or per-frame latency improvement.
+
+Reproduce with the project environment (include `--extra puresound` when syncing):
+
+```bash
+python scripts/benchmark_frontend.py --before-ref b093837aa5b53fcfc35706e1cf088556b9c69ebb --output /tmp/frontend.json
+# Open the printed URL, click Run before / after, and keep it foreground until complete.
+python scripts/benchmark_realtime.py --output /tmp/realtime.json
+```
+
+## Round two: independent pose cadence and binary JPEG
+
+`pose_interval` defaults to 2 s (range 0–2; 0 disables throttling). Stable faces
+can reuse their matched bodies until this deadline, independently of face
+detection. Significant image motion, changed/missing faces, body-only detections,
+unstable state or configuration changes force fresh inference. Cached bodies are
+matched one-to-one to face anchors and never create unmatched body-only people.
+The 2 s default aligns with `force_detect_seconds`: already gated static scenes
+keep their existing pose cadence. Their workload is not reduced again. Distance
+and posture can retain the cached values for up to the interval on stable frames.
+
+The browser encodes with asynchronous `toBlob()` and sends a 10-byte video header
+plus JPEG bytes (binary tag `0x04`). Legacy base64 JSON clients remain supported.
+One encoding is allowed in flight; stopped/reconnected/obsolete callbacks are
+discarded, and video is skipped above 256 KiB of socket backlog before encoding
+and again before sending. Audio framing is unchanged. The monitor counts encoded,
+sent, skipped and backpressure frames. JPEG encode timing now reports asynchronous
+wall time, not synchronous CPU or main-thread blocking time.
+
+`frame_bytes_avg` and bandwidth now count complete accepted application messages:
+UTF-8 JSON bytes or binary header + JPEG, excluding WebSocket/TCP/TLS overhead.
+This is a more complete definition than the previous data-URI-only video count.
+
+[Measurements from 2026-10-22](benchmarks/20261022-round2.json), compared against a
+saved **round-one working tree**, with the same SDK/ORT 1.31.0:
+
+| Controlled workload | Round one | Round two |
+|---|---:|---:|
+| Browser bytes/frame, identical 48,309-byte JPEG | 64,495 | 48,319 |
+| Browser capture callback average / p95 | 7.20 / 9.30 ms | 2.37 / 3.30 ms |
+| Real models, stable face, 40 frames @ 5 fps, pose calls | 40 | 4 |
+| Same model case, median total CPU time (3 runs) | 1,019.1 ms | 628.7 ms |
+| Same model case, median frame p50 | 7.86 ms | 4.26 ms |
+| Default static gate, 40 frames @ 2 fps, pose calls | 10 | 10 |
+| Unstable or no-face scenario, 40 frames, pose calls | 40 | 40 |
+| Live replay, 80 frames + PCM over 16 s, pose calls | 80 | 8 |
+| Live replay, mean vision latency | 15.03 ms | 9.86 ms |
+| Live replay, audio drops | 0 | 0 |
+
+The 5 fps model and live scenarios deliberately disable the face motion gate to
+isolate pose scheduling; these savings do not predict every default-camera scene.
+Model runs use two OpenCV threads on both sides; this does not change the server's
+thread configuration. The browser uses a fake in-memory socket and synthetic
+pixels: packet-observer overhead is excluded from callback time, and pending
+encodes drain before counting. All 30 JPEG hashes match across versions; neither
+side drops a frame. This isolates blocking and framing, not network latency or
+camera cost. Total JPEG completion time was 7.05 vs 6.44 ms on this run; asynchronous
+encoding primarily frees the main thread rather than proving a faster encoder.
+
+The single shared-host live comparison reported process CPU 46.1% → 40.0%, but
+vision p95 was 17.37 → 17.62 ms and audio RTF 0.195 → 0.203. These short samples do
+not establish an RTF or tail-latency improvement. Real multi-person camera clips
+remain to be evaluated; deterministic tests cover new body-only entry on motion,
+face disappearance, identity/order changes, cache expiry and stop/reconnect races.
+
+Reproduce after saving an old project snapshot (including access to its models):
+
+```bash
+python scripts/benchmark_round2.py --source /path/to/round-one --output /tmp/pose-before.json
+python scripts/benchmark_round2.py --output /tmp/pose-after.json
+python scripts/benchmark_frontend.py --before-dir /path/to/round-one/presence_demo/static --mode capture --seconds 6 --output /tmp/capture.json
+python scripts/benchmark_realtime.py --scene face --fps 5 --full-vision --transport binary --output /tmp/live.json
+```
+
 ## Ideas for an embedded port
 
 - Run detection and embedding on the NPU; keep the gate, tracker and state machine on the CPU.

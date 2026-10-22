@@ -149,9 +149,44 @@ class FrameProcessor:
             bodies.append(Body(bbox, conf, kps))
         return bodies
 
+    def _match_pose_faces(self, faces: list[Detection], cfg: Config) -> list[int] | None:
+        """One-to-one conservative mapping to pose anchors; never transfer a body to a new face."""
+        if len(faces) != len(self._pose_faces):
+            return None
+        available = set(range(len(self._pose_faces)))
+        matched = []
+        for f in faces:
+            candidates = [
+                i
+                for i in available
+                if iou(self._pose_faces[i].bbox, f.bbox) > 0.5
+                and not moved(self._pose_faces[i].bbox, f.bbox, cfg.embed_move_thresh)
+            ]
+            # Ambiguous overlapping faces are unsafe to reuse.
+            if len(candidates) != 1:
+                return None
+            i = candidates[0]
+            a, b = self._pose_faces[i].embedding, f.embedding
+            if a is not None and b is not None:
+                a, b = np.ravel(a), np.ravel(b)
+                if a.shape != b.shape:
+                    return None
+                norm = np.linalg.norm(a) * np.linalg.norm(b)
+                if norm <= 0 or float(a @ b / norm) < cfg.cos_match:
+                    return None
+            available.remove(i)
+            matched.append(i)
+        return matched
+
     def reset(self) -> None:
         self.last_thumb: np.ndarray | None = None
         self.last_dets: list[Detection] | None = None
+        self.last_faces: list[Detection] = []
+        self._pose_faces: list[Detection] = []
+        self._pose_bodies: list[Body | None] = []
+        self._pose_body_only = False
+        self._last_pose = -1e9
+        self._settings: tuple | None = None
         self.last_full = -1e9
         self.cache: list[_Cached] = []
         self.counts = {
@@ -161,6 +196,7 @@ class FrameProcessor:
             "embed_computed": 0,
             "embed_reused": 0,
             "pose_calls": 0,
+            "pose_reused": 0,
             "detect_hits": 0,  # detector runs that found >= 1 face (in-memory diagnostic)
         }
 
@@ -176,91 +212,159 @@ class FrameProcessor:
         self.last_thumb = thumb
         tm = {"motion": (time.perf_counter() - t0) * 1000, "detect": 0.0, "embed": 0.0, "diff": diff}
 
-        if (
-            cfg.motion_gate
+        settings = (
+            h,
+            w,
+            cfg.pose_enabled,
+            cfg.pose_interval,
+            cfg.pose_conf,
+            tuple(cfg.pose_roi),
+            tuple(cfg.face_roi),
+            cfg.roi_crop,
+            cfg.crop_margin,
+            cfg.max_width,
+            cfg.embed_backend,
+            cfg.npu_precision,
+            cfg.npu_delegate_path,
+            cfg.tracker_mode,
+        )
+        settings_changed = settings != self._settings
+        self._settings = settings
+        face_skipped = bool(
+            not settings_changed
+            and cfg.motion_gate
             and stable
-            and self.last_dets  # never reuse a "no face" result: a small/slow face barely changes the thumbnail
+            and self.last_faces
+            and not self._pose_body_only
             and diff < cfg.motion_threshold
             and now - self.last_full < cfg.force_detect_seconds
-        ):
-            self.counts["skipped"] += 1
-            tm.update(skipped=True, embed_computed=0, embed_reused=0)
-            tm["pose"] = 0.0
-            return [replace(d) for d in self.last_dets], tm
-
-        # --- detection (optionally on cropped + downscaled ROI) ---
-        if cfg.roi_crop:
-            x0, y0, x1, y1 = crop_box(cfg.face_roi, cfg.crop_margin, w, h)
-        else:
-            x0, y0, x1, y1 = 0, 0, w, h
-        sub = img[y0:y1, x0:x1]
-        scale = min(1.0, cfg.max_width / max(1, sub.shape[1]))
-        if scale < 1.0:
-            sub = cv2.resize(sub, (max(1, int(sub.shape[1] * scale)), max(1, int(sub.shape[0] * scale))))
-        t1 = time.perf_counter()
-        raws = self.pipe.detector.detect(sub)
-        self.counts["detect_calls"] += 1
-        self.counts["detect_hits"] += bool(raws)
-        self.last_full = now
-        t2 = time.perf_counter()
-        tm["detect"] = (t2 - t1) * 1000
-
-        # --- embeddings (throttled) ---
-        out: list[Detection] = []
-        new_cache: list[_Cached] = []
+        )
         computed = reused = 0
-        for raw, conf in raws:
-            full = map_raw_to_frame(raw, scale, x0, y0)
-            x, y, bw, bh = (float(v) for v in full[:4])
-            bbox = (max(0.0, x / w), max(0.0, y / h), min(1.0, (x + bw) / w), min(1.0, (y + bh) / h))
-            prev = max(self.cache, key=lambda c: iou(c.bbox, bbox), default=None)
-            reuse = (
-                cfg.embed_throttle
-                and prev is not None
-                and prev.embedding is not None
-                and iou(prev.bbox, bbox) > 0.3
-                and not moved(prev.bbox, bbox, cfg.embed_move_thresh)
-                and now - prev.t < cfg.embed_interval
-                and prev.self_sim >= cfg.cos_match
-            )
-            if reuse:
-                emb, t_emb, ss, cb = prev.embedding, prev.t, prev.self_sim, prev.bbox
-                reused += 1
+        if face_skipped:
+            self.counts["skipped"] += 1
+            out = [replace(d) for d in self.last_faces]
+        else:
+            # --- detection (optionally on cropped + downscaled ROI) ---
+            if cfg.roi_crop:
+                x0, y0, x1, y1 = crop_box(cfg.face_roi, cfg.crop_margin, w, h)
             else:
-                try:
-                    emb = self.pipe.embedder.embed(sub, raw)
-                except Exception:  # noqa: BLE001
-                    emb = None
-                computed += 1
-                ss = 1.0
-                if emb is not None and prev is not None and prev.embedding is not None and iou(prev.bbox, bbox) > 0.3:
-                    a, b = np.ravel(emb), np.ravel(prev.embedding)
-                    na, nb = np.linalg.norm(a), np.linalg.norm(b)
-                    ss = float(a @ b / (na * nb)) if na > 0 and nb > 0 and a.shape == b.shape else 0.0
-                t_emb, cb = now, bbox
-            new_cache.append(_Cached(cb, emb, t_emb, ss))
-            out.append(Detection(bbox, conf, emb, frontal=frontal_from_landmarks(full)))
-        self.cache = new_cache
-        tm["embed"] = (time.perf_counter() - t2) * 1000
+                x0, y0, x1, y1 = 0, 0, w, h
+            sub = img[y0:y1, x0:x1]
+            scale = min(1.0, cfg.max_width / max(1, sub.shape[1]))
+            if scale < 1.0:
+                sub = cv2.resize(sub, (max(1, int(sub.shape[1] * scale)), max(1, int(sub.shape[0] * scale))))
+            t1 = time.perf_counter()
+            raws = self.pipe.detector.detect(sub)
+            self.counts["detect_calls"] += 1
+            self.counts["detect_hits"] += bool(raws)
+            self.last_full = now
+            t2 = time.perf_counter()
+            tm["detect"] = (t2 - t1) * 1000
+
+            # --- embeddings (throttled) ---
+            out: list[Detection] = []
+            new_cache: list[_Cached] = []
+            for raw, conf in raws:
+                full = map_raw_to_frame(raw, scale, x0, y0)
+                x, y, bw, bh = (float(v) for v in full[:4])
+                bbox = (max(0.0, x / w), max(0.0, y / h), min(1.0, (x + bw) / w), min(1.0, (y + bh) / h))
+                prev = max(self.cache, key=lambda c: iou(c.bbox, bbox), default=None)
+                reuse = (
+                    cfg.embed_throttle
+                    and prev is not None
+                    and prev.embedding is not None
+                    and iou(prev.bbox, bbox) > 0.3
+                    and not moved(prev.bbox, bbox, cfg.embed_move_thresh)
+                    and now - prev.t < cfg.embed_interval
+                    and prev.self_sim >= cfg.cos_match
+                )
+                if reuse:
+                    emb, t_emb, ss, cb = prev.embedding, prev.t, prev.self_sim, prev.bbox
+                    reused += 1
+                else:
+                    try:
+                        emb = self.pipe.embedder.embed(sub, raw)
+                    except Exception:  # noqa: BLE001
+                        emb = None
+                    computed += 1
+                    ss = 1.0
+                    if (
+                        emb is not None
+                        and prev is not None
+                        and prev.embedding is not None
+                        and iou(prev.bbox, bbox) > 0.3
+                    ):
+                        a, b = np.ravel(emb), np.ravel(prev.embedding)
+                        na, nb = np.linalg.norm(a), np.linalg.norm(b)
+                        ss = float(a @ b / (na * nb)) if na > 0 and nb > 0 and a.shape == b.shape else 0.0
+                    t_emb, cb = now, bbox
+                new_cache.append(_Cached(cb, emb, t_emb, ss))
+                out.append(Detection(bbox, conf, emb, frontal=frontal_from_landmarks(full)))
+            self.cache = new_cache
+            tm["embed"] = (time.perf_counter() - t2) * 1000
+            self.last_faces = [replace(d) for d in out]
         tm["pose"] = 0.0
+        tm["pose_reused"] = False
         if cfg.pose_enabled:
-            t3 = time.perf_counter()
-            bodies = self._detect_bodies(img, cfg)
-            tm["pose"] = (time.perf_counter() - t3) * 1000
-            out = fuse(out, bodies)
+            # Match against faces at the last *actual* pose, not the last frame:
+            # small successive movements must not accumulate into an incorrect body identity.
+            matching = self._match_pose_faces(out, cfg)
+            # The pose deadline is independent of face detection. Defaults align both
+            # deadlines at 2 s so a static scene retains the existing inference cadence.
+            reuse_pose = (
+                not settings_changed
+                and stable
+                and bool(out)
+                and not self._pose_body_only
+                and matching is not None
+                and diff < cfg.motion_threshold
+                and cfg.pose_interval > 0
+                and now - self._last_pose < cfg.pose_interval
+            )
+            if reuse_pose:
+                out = [replace(f, body=self._pose_bodies[i]) for f, i in zip(out, matching, strict=True)]
+                self.counts["pose_reused"] += 1
+                tm["pose_reused"] = True
+            else:
+                t3 = time.perf_counter()
+                bodies = self._detect_bodies(img, cfg)
+                tm["pose"] = (time.perf_counter() - t3) * 1000
+                self._pose_faces = [replace(f) for f in out]
+                pairs = associate([f.bbox for f in out], bodies)
+                matched = {fi: bodies[bi] if bi is not None else None for fi, bi in pairs if fi is not None}
+                self._pose_bodies = [matched[i] for i in range(len(out))]
+                self._pose_body_only = any(fi is None for fi, _ in pairs)
+                self._last_pose = now
+                out = fuse(out, bodies)
+        else:
+            self._pose_faces = []
+            self._pose_bodies = []
+            self._pose_body_only = False
+            self._last_pose = -1e9
         if cfg.tracker_mode == "kalman":  # torso appearance for re-identification (in memory only)
             t4 = time.perf_counter()
+            reuse_appearance = face_skipped and (not cfg.pose_enabled or tm["pose_reused"])
+            # Exact geometry, not list order: fuse() may reorder face detections.
+            # Ambiguous duplicate boxes deliberately fall back to computing a descriptor.
+            previous = {}
+            if reuse_appearance:
+                for old in self.last_dets or []:
+                    if old.face_bbox is not None:
+                        previous.setdefault(old.face_bbox, []).append(old)
             for d in out:
-                d.appearance = descriptor(img, torso_box(d.face_bbox, d.body))
+                candidates = previous.get(d.face_bbox, [])
+                if len(candidates) == 1:
+                    d.appearance = candidates[0].appearance
+                else:
+                    d.appearance = descriptor(img, torso_box(d.face_bbox, d.body))
             tm["appearance"] = (time.perf_counter() - t4) * 1000
         self.last_dets = [replace(d) for d in out]
         self.counts["embed_computed"] += computed
         self.counts["embed_reused"] += reused
         tm.update(
-            skipped=False,
+            skipped=face_skipped,
             embed_computed=computed,
             embed_reused=reused,
-            det_w=sub.shape[1],
-            det_h=sub.shape[0],
+            **({"det_w": sub.shape[1], "det_h": sub.shape[0]} if not face_skipped else {}),
         )
         return out, tm

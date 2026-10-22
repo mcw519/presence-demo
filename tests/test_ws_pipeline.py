@@ -94,7 +94,19 @@ def test_stats_pushed_only_while_running_and_stop_resets():
         assert {"proc_cpu", "proc_rss", "sys_cpu", "mem_total", "load", "per_core"} <= set(st["system"])
         c = st["conn"]
         assert c["frames"]["received"] == 1 and c["frames"]["processed"] == 1
-        assert {"decode", "motion", "detect", "embed", "pose", "tracker", "total"} == set(c["latency_ms"])
+        assert {
+            "decode",
+            "motion",
+            "detect",
+            "embed",
+            "pose",
+            "tracker",
+            "total",
+            "queue_wait",
+            "executor_wait",
+            "lock_wait",
+            "appearance",
+        } == set(c["latency_ms"])
         assert {"skipped_pct", "embed_computed", "embed_reused", "recommended_fps"} <= set(c["optim"])
         assert c["latency_ms"]["detect"]["p95"] >= 0 and c["frame_size"] == [640, 480]
         assert st["info"]["opencv"] and st["info"]["pipeline"]
@@ -107,3 +119,60 @@ def test_stats_pushed_only_while_running_and_stop_resets():
         ws.send_json({"type": "vad", "speech": True})
         s = recv_until(ws, lambda m: m.get("type") == "state")
         assert s["state"] == "ENDED"
+
+
+def test_adaptive_fps_feedback_on_all_state_paths():
+    with TestClient(app).websocket_connect("/ws") as ws:
+        initial = recv_until(ws, lambda m: m.get("type") == "state")
+        assert "recommended_fps" in initial
+        ws.send_json({"type": "config", "config": {"adaptive_fps": True, "fps_low": 1.5, "fps_high": 4}})
+        ack = recv_until(ws, lambda m: m.get("config_ack"))
+        assert ack["recommended_fps"] == 1.5
+        for command in ("start", "reset", "stop"):
+            ws.send_json({"type": command})
+            state = recv_until(ws, lambda m: m.get("type") == "state")
+            assert state["recommended_fps"] == 1.5
+        ws.send_json({"type": "config", "config": {"adaptive_fps": False}})
+        assert recv_until(ws, lambda m: m.get("config_ack"))["recommended_fps"] == 0
+        ws.send_json({"type": "start"})
+        state = recv_until(ws, lambda m: m.get("type") == "state" and m.get("running"))
+        assert state["recommended_fps"] == 0
+        stats = recv_until(ws, lambda m: m.get("type") == "stats")
+        assert stats["conn"]["optim"]["recommended_fps"] == 0
+        # The next ticker state also contains the current recommendation, without a frame.
+        assert recv_until(ws, lambda m: m.get("type") == "state")["recommended_fps"] == 0
+
+
+def test_binary_jpeg_and_legacy_share_worker_and_wire_accounting():
+    import json
+    import struct
+
+    jpeg = base64.b64decode(blank_jpeg().split(",")[-1])
+    binary = struct.pack("<BdB", 4, 123.25, 0) + jpeg
+    legacy = json.dumps({"type": "frame", "speech": False, "t": 124, "data": blank_jpeg()})
+    with TestClient(app).websocket_connect("/ws") as ws:
+        ws.send_json({"type": "start"})
+        recv_until(ws, lambda m: m.get("type") == "state" and m.get("running"))
+        # All malformed videos are ignored, never routed through the audio tag.
+        for invalid in [
+            b"\x04",
+            struct.pack("<BdB", 4, float("nan"), 0) + jpeg,
+            struct.pack("<BdB", 4, 1, 2) + jpeg,
+            struct.pack("<BdB", 4, 1, 0) + b"bad jpeg",
+            struct.pack("<BdB", 4, 1, 0) + b"\xff\xd8bad\xff\xd9",
+        ]:
+            ws.send_bytes(invalid)
+        ws.send_bytes(binary)
+        state = recv_until(ws, lambda m: m.get("type") == "state" and "detections" in m)
+        assert state["detections"] == []
+        ws.send_text(legacy)
+        state = recv_until(ws, lambda m: m.get("type") == "state" and "detections" in m)
+        assert state["detections"] == []
+        stats = recv_until(ws, lambda m: m.get("type") == "stats" and m["conn"]["frames"]["processed"] >= 2)
+        # The malformed JPEG with valid envelope may be admitted but fails image decoding safely.
+        assert stats["conn"]["frames"]["processed"] == 2
+        assert stats["conn"]["frames"]["received"] == 3
+        invalid_wire = len(struct.pack("<BdB", 4, 1, 0) + b"\xff\xd8bad\xff\xd9")
+        assert stats["conn"]["frame_bytes_avg"] == round((len(binary) + len(legacy.encode()) + invalid_wire) / 3)
+        ws.send_json({"type": "ping", "t": 9})
+        assert recv_until(ws, lambda m: m.get("type") == "pong")["t"] == 9

@@ -63,6 +63,7 @@ class Config:
     max_width: int = 640  # max width fed to the detector (320 missed faces < ~80 px tall)
     # --- pose / body (optional) ---
     pose_enabled: bool = False  # run the pose detector (MoveNet MultiPose Lightning)
+    pose_interval: float = 2.0  # seconds between stable face-matched poses; 0 disables pose throttle
     pose_conf: float = 0.4  # min pose/person confidence
     body_min_conf: float = 0.4  # confidence needed for a body-only (no face) detection to count as confident
     pose_roi: tuple = (0.0, 0.0, 1.0, 1.0)  # body ROI (center of body box), normalized
@@ -274,6 +275,7 @@ RANGES = {
     "roi_rule": (("either", "face", "body"), None, str),
     "pose_enabled": (False, True, bool),
     "pose_conf": (0.05, 1.0, float),
+    "pose_interval": (0.0, 2.0, float),
     "body_min_conf": (0.05, 1.0, float),
     "tracker_mode": (("legacy", "kalman"), None, str),
     "coast_seconds": (0.0, 10.0, float),

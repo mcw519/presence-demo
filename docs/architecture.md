@@ -48,7 +48,7 @@ Each browser tab opens one WebSocket (`/ws`). `web/session.py` runs for that con
 
 ```mermaid
 flowchart LR
-  WS[WebSocket receive] -->|frame JSON| SLOT[latest-frame slot]
+  WS[WebSocket receive] -->|binary 0x04 video / legacy frame JSON| SLOT[latest-frame slot]
   WS -->|binary 0x01 audio| AQ[audio queue ≤ 1 s]
   WS -->|config, vad, start, stop…| CTRL[control]
   SLOT --> VW[vision worker<br/>thread pool] --> TR[PresenceTracker]
@@ -71,7 +71,7 @@ Browser → server (JSON unless noted):
 
 | Message | Purpose |
 |---|---|
-| `frame` | `{data: base64 JPEG, speech, t}`, one camera frame |
+| `frame` | Legacy: `{data: base64 JPEG, speech, t}`, one camera frame |
 | `vad` | Browser VAD changed (energy pipeline) |
 | `config` | Settings changes; validated and clamped, warnings returned |
 | `start` / `stop` / `reset` | Session control |
@@ -81,6 +81,7 @@ Browser → server (JSON unless noted):
 | `client` | Browser diagnostics (visibility, reconnects…) |
 | `ping` | Round-trip measurement (answered with `pong`) |
 | binary `0x01` | Audio chunk: timestamp + 20 ms PCM16 at 16 kHz |
+| binary `0x04` | Camera frame: 1-byte tag, float64 little-endian client timestamp in ms, 1-byte speech flag (0/1), then JPEG bytes. Header: 10 bytes. |
 
 Server → browser:
 

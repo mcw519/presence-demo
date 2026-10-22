@@ -3,11 +3,13 @@
 import base64
 import logging
 import os
+import struct
 import tempfile
 from pathlib import Path
 
 import cv2
 import numpy as np
+import pytest
 from fastapi.testclient import TestClient
 
 from presence_demo import server
@@ -39,7 +41,8 @@ def _frame() -> str:
     return "data:image/jpeg;base64," + base64.b64encode(cv2.imencode(".jpg", f)[1].tobytes()).decode()
 
 
-def test_ws_frames_write_no_files_and_log_no_image_data(monkeypatch, caplog):
+@pytest.mark.parametrize("binary", [False, True])
+def test_ws_frames_write_no_files_and_log_no_image_data(monkeypatch, caplog, binary):
     server.pipeline()  # load/download models before taking the snapshot
     data = _frame()
     dirs = [Path.cwd(), Path(tempfile.gettempdir())]
@@ -53,7 +56,10 @@ def test_ws_frames_write_no_files_and_log_no_image_data(monkeypatch, caplog):
     with TestClient(server.app).websocket_connect("/ws") as ws:
         ws.send_json({"type": "start"})
         for _ in range(3):
-            ws.send_json({"type": "frame", "speech": False, "data": data})
+            if binary:
+                ws.send_bytes(struct.pack("<BdB", 4, 1000.0, 0) + base64.b64decode(data.split(",")[1]))
+            else:
+                ws.send_json({"type": "frame", "speech": False, "data": data})
             while True:
                 m = ws.receive_json()
                 if m.get("type") == "state" and "detections" in m:

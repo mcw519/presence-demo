@@ -39,3 +39,11 @@ def test_cos_weak_not_above_cos_match():
     c = Config()
     c.update({"cos_match": 0.3, "cos_weak": 0.8})
     assert c.cos_weak == 0.3
+
+
+def test_pose_interval_validation():
+    c = Config()
+    assert c.pose_interval == 2.0
+    assert c.update({"pose_interval": 4}) and c.pose_interval == 2.0
+    assert c.update({"pose_interval": -1}) and c.pose_interval == 0.0
+    assert c.update({"pose_interval": float("nan")}) and c.pose_interval == 0.0

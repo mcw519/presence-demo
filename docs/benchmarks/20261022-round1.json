@@ -1,0 +1,272 @@
+{
+  "date": "2026-10-22",
+  "baseline": "b093837aa5b53fcfc35706e1cf088556b9c69ebb before round 1, with updated SDK/ORT 1.31.0 for both server runs",
+  "frontend_method": "Sequential real-browser replay, 100 audio messages (10 Hz, changing levels), 20 stable state messages (2 Hz), 10 stats messages (1 Hz), no camera/microphone/cloud. Includes scheduled renderAudio plus render, renderStats, wave, sg and drawTL synchronous execution; excludes browser layout/compositing outside callbacks. Counts include the final 250 ms drain. Original state protocol retained for before.",
+  "frontend": [
+    {
+      "kind": "benchmark",
+      "version": "before",
+      "seconds": 10.2535,
+      "messages": 100,
+      "actualFpsSetting": 1,
+      "htmlWrites": 190,
+      "canvasResizes": 658,
+      "pixelReadbacks": 206,
+      "audioRenders": 100,
+      "stateRenders": 20,
+      "deliveryMsAvg": 1.0850000429153441,
+      "deliveryMsP95": 4.599999904632568,
+      "renderWorkTotalMs": 222.30000638961792,
+      "errors": []
+    },
+    {
+      "kind": "benchmark",
+      "version": "after",
+      "seconds": 10.2525,
+      "messages": 100,
+      "actualFpsSetting": 0.5,
+      "htmlWrites": 66,
+      "canvasResizes": 4,
+      "pixelReadbacks": 0,
+      "audioRenders": 51,
+      "stateRenders": 20,
+      "deliveryMsAvg": 0.43900002002716065,
+      "deliveryMsP95": 2.8999996185302734,
+      "renderWorkTotalMs": 92.10000133514404,
+      "errors": [],
+      "frontend": {
+        "dom_writes": 66,
+        "canvas_resizes": 3,
+        "canvas_draws": 430,
+        "capture": {
+          "n": 0,
+          "avg": 0,
+          "p95": 0
+        },
+        "encode": {
+          "n": 0,
+          "avg": 0,
+          "p95": 0
+        },
+        "render": {
+          "n": 81,
+          "avg": 0.6617284233187452,
+          "p95": 2
+        }
+      }
+    }
+  ],
+  "realtime_method": "16 seconds, 640x480 blank JPEG q70 and 16 kHz PCM in 20 ms blocks, pose on, cloud off; client follows state FPS recommendations. One before run, two after runs, shared host with variable load. Server process CPU is percent of one core. No claim of stable CPU/RTF improvement.",
+  "realtime_before": {
+    "seconds": 16,
+    "frames_sent": 16,
+    "fps_settings": [
+      1.0
+    ],
+    "audio_rtf_second_half_median": 0.2125,
+    "audio_queue_max": 0,
+    "audio_dropped": 0,
+    "server_cpu_avg": 28.128571428571426,
+    "vision_total_avg_ms": 16.58,
+    "errors": [],
+    "last_audio_metrics": {
+      "rtf_recent": null,
+      "proc_p95_ms": null,
+      "queue_wait_ms_avg": null,
+      "queue_wait_ms_p95": null
+    },
+    "last_vision_metrics": {
+      "decode": {
+        "avg": 0.52,
+        "p95": 0.6,
+        "last": 0.52
+      },
+      "motion": {
+        "avg": 0.36,
+        "p95": 0.56,
+        "last": 0.32
+      },
+      "detect": {
+        "avg": 8.14,
+        "p95": 9.82,
+        "last": 9.39
+      },
+      "embed": {
+        "avg": 0.0,
+        "p95": 0.0,
+        "last": 0.0
+      },
+      "pose": {
+        "avg": 7.24,
+        "p95": 13.67,
+        "last": 6.1
+      },
+      "tracker": {
+        "avg": 0.04,
+        "p95": 0.08,
+        "last": 0.02
+      },
+      "total": {
+        "avg": 16.58,
+        "p95": 28.92,
+        "last": 16.53
+      }
+    }
+  },
+  "realtime_after_runs": [
+    {
+      "seconds": 16,
+      "frames_sent": 9,
+      "fps_settings": [
+        0.5,
+        1.0
+      ],
+      "audio_rtf_second_half_median": 0.218,
+      "audio_queue_max": 3,
+      "audio_dropped": 0,
+      "server_cpu_avg": 24.266666666666666,
+      "vision_total_avg_ms": 21.97,
+      "errors": [],
+      "last_audio_metrics": {
+        "rtf_recent": 0.211,
+        "proc_p95_ms": 6.54,
+        "queue_wait_ms_avg": 0.13,
+        "queue_wait_ms_p95": 0.23
+      },
+      "last_vision_metrics": {
+        "queue_wait": {
+          "avg": 0.04,
+          "p95": 0.1,
+          "last": 0.02
+        },
+        "executor_wait": {
+          "avg": 0.07,
+          "p95": 0.13,
+          "last": 0.05
+        },
+        "lock_wait": {
+          "avg": 0.0,
+          "p95": 0.02,
+          "last": 0.0
+        },
+        "decode": {
+          "avg": 0.52,
+          "p95": 0.98,
+          "last": 0.38
+        },
+        "motion": {
+          "avg": 0.71,
+          "p95": 4.09,
+          "last": 0.2
+        },
+        "detect": {
+          "avg": 9.58,
+          "p95": 23.92,
+          "last": 5.78
+        },
+        "embed": {
+          "avg": 0.0,
+          "p95": 0.01,
+          "last": 0.01
+        },
+        "appearance": {
+          "avg": 0.0,
+          "p95": 0.0,
+          "last": 0.0
+        },
+        "pose": {
+          "avg": 10.88,
+          "p95": 53.18,
+          "last": 4.9
+        },
+        "tracker": {
+          "avg": 0.03,
+          "p95": 0.05,
+          "last": 0.03
+        },
+        "total": {
+          "avg": 21.97,
+          "p95": 81.94,
+          "last": 11.5
+        }
+      }
+    },
+    {
+      "seconds": 16,
+      "frames_sent": 9,
+      "fps_settings": [
+        0.5,
+        1.0
+      ],
+      "audio_rtf_second_half_median": 0.353,
+      "audio_queue_max": 12,
+      "audio_dropped": 0,
+      "server_cpu_avg": 28.1,
+      "vision_total_avg_ms": 48.04,
+      "errors": [],
+      "last_audio_metrics": {
+        "rtf_recent": 0.241,
+        "proc_p95_ms": 7.66,
+        "queue_wait_ms_avg": 0.31,
+        "queue_wait_ms_p95": 0.28
+      },
+      "last_vision_metrics": {
+        "queue_wait": {
+          "avg": 0.35,
+          "p95": 2.59,
+          "last": 0.04
+        },
+        "executor_wait": {
+          "avg": 0.12,
+          "p95": 0.38,
+          "last": 0.06
+        },
+        "lock_wait": {
+          "avg": 0.0,
+          "p95": 0.01,
+          "last": 0.0
+        },
+        "decode": {
+          "avg": 1.08,
+          "p95": 4.57,
+          "last": 0.54
+        },
+        "motion": {
+          "avg": 1.12,
+          "p95": 8.17,
+          "last": 0.16
+        },
+        "detect": {
+          "avg": 18.63,
+          "p95": 55.17,
+          "last": 9.74
+        },
+        "embed": {
+          "avg": 0.0,
+          "p95": 0.0,
+          "last": 0.0
+        },
+        "appearance": {
+          "avg": 0.0,
+          "p95": 0.0,
+          "last": 0.0
+        },
+        "pose": {
+          "avg": 26.38,
+          "p95": 133.64,
+          "last": 9.89
+        },
+        "tracker": {
+          "avg": 0.05,
+          "p95": 0.11,
+          "last": 0.04
+        },
+        "total": {
+          "avg": 48.04,
+          "p95": 192.33,
+          "last": 20.62
+        }
+      }
+    }
+  ]
+}

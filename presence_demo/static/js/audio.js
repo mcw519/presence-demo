@@ -85,7 +85,7 @@ function onClean(buf){const dv=new DataView(buf);if(dv.getUint8(0)===3)return on
  const pcm=new Int16Array(buf.slice(9));meterPush(WC,pcm);
  if(player){const f=new Float32Array(pcm.length);for(let i=0;i<pcm.length;i++)f[i]=pcm[i]/32768;player.port.postMessage(f,[f.buffer])}}
 function meterPush(arr,pcm){let mx=0;for(let i=0;i<pcm.length;i+=4)mx=Math.max(mx,Math.abs(pcm[i]));arr.push(mx/32768);if(arr.length>250)arr.shift()}
-function wave(id,arr,col){const c=$(id),d=devicePixelRatio||1,r=c.getBoundingClientRect();if(!r.width)return;c.width=r.width*d;c.height=r.height*d;const x=c.getContext('2d'),W=c.width,H=c.height;
+function wave(id,arr,col){const c=$(id),d=devicePixelRatio||1,r=c.getBoundingClientRect();if(!canvasVisible(c))return;resizeCanvas(c,r.width*d,r.height*d);const x=c.getContext('2d'),W=c.width,H=c.height;x.clearRect(0,0,W,H);FEPerf.counts.canvas_draws++;
  x.fillStyle=col;arr.forEach((v,i)=>{const h=Math.max(1,Math.sqrt(v)*H);x.fillRect(i/250*W,(H-h)/2,Math.max(1,W/250),h)})}
 const db=a=>{const v=a.length?a[a.length-1]:0;return v>0?(20*Math.log10(v)).toFixed(0)+' dBFS':'—'};
 // Tracks view: waveform / spectrogram / both, kept in localStorage; hidden canvases are not redrawn
@@ -95,13 +95,18 @@ function setTrkView(v){trkView=TRK.includes(v)?v:'both';localStorage.setItem(TRK
  $('trkView').querySelectorAll('button').forEach(b=>{const on=b.dataset.v===trkView;b.classList.toggle('is-active',on);b.setAttribute('aria-checked',on)});if(typeof fit==='function')fit()}
 $('trkView').addEventListener('click',e=>{const b=e.target.closest('button[data-v]');if(b)setTrkView(b.dataset.v)});setTrkView(trkView);
 const dbv=a=>{const v=a.length?a[a.length-1]:0;return v>0?(20*Math.log10(v)).toFixed(0):'—'};
-setInterval(()=>{if(!running)return;$('dbRaw').textContent=dbv(WR);$('dbClean').textContent=dbv(WC)},250);
+setInterval(()=>{if(!running||document.hidden)return;$('dbRaw').textContent=dbv(WR);$('dbClean').textContent=dbv(WC)},250);
 setInterval(()=>{if(!running||!showWave())return;wave('wRaw',WR,K.viz_raw);wave('wClean',WC,aMeta&&aMeta.clean_vad?K.ok:K.viz_clean)},100);
 function monLat(){if(lastLat==null)return'—';const s=[...LATS].sort((x,y)=>x-y),p=q=>s[Math.min(s.length-1,Math.floor(q*s.length))];
  const buf=pst?pst.buf_ms:0,tot=20+aMeta.algo_latency_ms+p(0.5)+buf+outLat();
  return t('lat.mon',{tot:tot.toFixed(0),a:aMeta.algo_latency_ms,rt:p(0.5).toFixed(0),p95:p(0.95).toFixed(0),b:buf.toFixed(0),o:outLat().toFixed(0)})+(pst?t('lat.mon_under',{u:pst.under,d:pst.drop_ms.toFixed(0)}):'')+t('lat.mon_queue',{q:aMeta.queue,m:aMeta.backlog_max??0})}
+// Metadata and recording history are consumed immediately; only the visual update is coalesced.
+let audioRenderTimer=null,audioRenderAt=-Infinity,audioRenderPending=false;
+function flushAudioRender(){clearTimeout(audioRenderTimer);audioRenderTimer=null;if(!audioRenderPending||document.hidden)return;audioRenderPending=false;audioRenderAt=performance.now();measureRender(renderAudio)}
+function queueAudioRender(){audioRenderPending=true;if(document.hidden||audioRenderTimer!==null)return;const delay=Math.max(0,200-(performance.now()-audioRenderAt));if(!delay)flushAudioRender();else audioRenderTimer=setTimeout(flushAudioRender,delay)}
+document.addEventListener('visibilitychange',()=>{if(document.hidden){clearTimeout(audioRenderTimer);audioRenderTimer=null}else if(audioRenderPending)queueAudioRender()});
 function renderAudio(){const a=aMeta;if(!a)return;
- if(a.available===false){$('aSt').textContent=t('a.unavailable');$('aKv').innerHTML=`<span>${t('a.reason')}</span><span>${a.error}</span>`;return}
+ if(a.available===false){$('aSt').textContent=t('a.unavailable');writeHTML('aKv',`<span>${t('a.reason')}</span><span>${a.error}</span>`);return}
  const LB=XC_LABEL;
  $('aSt').textContent=(LB[a.decision]||a.decision)+(a.speech?t('a.speech'):'');
  const kv={[t('akv.decision')]:`${LB[a.decision]||a.decision}${a.why?' ('+a.why+')':''}`,
@@ -112,22 +117,22 @@ function renderAudio(){const a=aMeta;if(!a)return;
   [t('akv.align')]:a.t_vision_client!=null?t('akv.align_v',{s:((a.t_client-a.t_vision_client)/1000).toFixed(2)}):'—',
   [t('akv.asr')]:a.asr?t('akv.asr_v',{p:a.asr.provider==='none'?t('akv.asr_off'):a.asr.provider,k:a.asr.key_set?t('key.set'):t('key.unset'),c:a.asr.connected?t('akv.connected'):t('akv.disconnected'),s:a.asr.sent_s}):'—',
   [t('akv.target')]:a.target_track!=null?`#${a.target_track}${a.distance!=null?' · '+a.distance+' m':''}`:'—','P(group)':a.p_group??'—',
-  [t('akv.rtf')]:a.rtf??'—',[t('akv.proc')]:t('akv.proc_v',{ms:a.proc_ms,q:a.queue,d:a.dropped,r:a.resets}),
+  [t('akv.rtf')]:t('akv.rtf_v',{all:a.rtf??'—',recent:a.rtf_recent??'—'}),[t('akv.proc_p95')]:t('akv.proc_p95_v',{p:a.proc_p95_ms??'—',a:a.queue_wait_ms_avg??'—',q:a.queue_wait_ms_p95??'—'}),[t('akv.proc')]:t('akv.proc_v',{ms:a.proc_ms,q:a.queue,d:a.dropped,r:a.resets}),
   [t('akv.latency')]:t('akv.latency_v',{a:a.algo_latency_ms,l:lastLat!=null?lastLat.toFixed(0):'—'}),
   [t('akv.mon_latency')]:monLat()};
- $('aKv').innerHTML=Object.entries(kv).map(([k,v])=>`<span>${k}</span><span>${v}</span>`).join('')}
+ writeHTML('aKv',Object.entries(kv).map(([k,v])=>`<span>${k}</span><span>${v}</span>`).join(''))}
 const XC_LABEL={get agree(){return t('xc.agree')},get leak(){return t('xc.leak')},get false_reject(){return t('xc.false_reject')},get false_accept(){return t('xc.false_accept')},get silence(){return t('xc.silence')},get acoustic_only(){return t('xc.acoustic_only')}};
 const DC={};
 const SC={};pal();
 const TLH=[];
 function legend(){$('tlLeg').innerHTML=Object.entries(XC_LABEL).map(([k,v])=>[k,v.replace(/^✅ /,'')]).map(([k,v])=>`<span style="color:${DC[k]}">■</span>${v}`).join(' ')}legend();
-function drawTL(){const c=$('tl'),d=devicePixelRatio||1,r=c.getBoundingClientRect();if(!r.width)return;c.width=r.width*d;c.height=r.height*d;const g=c.getContext('2d'),W=c.width,H=c.height,now=performance.now(),rows=5,rh=H/rows;
- g.clearRect(0,0,W,H);TLH.forEach((e,i)=>{const n=TLH[i+1];const x0=(e.t-now+30000)/30000*W,x1=((n?n.t:now)-now+30000)/30000*W,w=Math.max(1,x1-x0);
+function drawTL(){const c=$('tl'),d=devicePixelRatio||1,r=c.getBoundingClientRect();if(!canvasVisible(c))return;resizeCanvas(c,r.width*d,r.height*d);const g=c.getContext('2d'),W=c.width,H=c.height,now=performance.now(),rows=5,rh=H/rows;
+ g.clearRect(0,0,W,H);FEPerf.counts.canvas_draws++;TLH.forEach((e,i)=>{const n=TLH[i+1];const x0=(e.t-now+30000)/30000*W,x1=((n?n.t:now)-now+30000)/30000*W,w=Math.max(1,x1-x0);
   if(e.raw){g.fillStyle=K.viz_raw;g.fillRect(x0,0,w,rh-1)}if(e.clean){g.fillStyle=K.viz_clean;g.fillRect(x0,rh,w,rh-1)}if(e.sp){g.fillStyle=K.ok;g.fillRect(x0,2*rh,w,rh-1)}
   g.fillStyle=DC[e.dec]||K.viz_empty;g.fillRect(x0,3*rh,w,rh-1);g.fillStyle=SC[e.st]||K.viz_empty;g.fillRect(x0,4*rh,w,rh-1)});
  g.strokeStyle=K.accent;g.lineWidth=1.5*d;g.beginPath();let on=false;TLH.forEach(e=>{if(e.p==null){on=false;return}const x=(e.t-now+30000)/30000*W,y=H-e.p*H;on?g.lineTo(x,y):g.moveTo(x,y);on=true});g.stroke();
  g.fillStyle=K.viz_ink;g.font=`${9*d}px sans-serif`;['raw','clean','speech','decision','state'].forEach((k,i)=>g.fillText(t('tl.'+k),2*d,i*rh+rh*0.75))}
 let anRaw=null,anClean=null;const SGB=new Uint8Array(128);
-function sg(id,an){if(!an)return;const c=$(id),g=c.getContext('2d');const img=g.getImageData(1,0,c.width-1,c.height);g.putImageData(img,0,0);an.getByteFrequencyData(SGB);
+function sg(id,an){if(!an)return;const c=$(id);if(!canvasVisible(c)||c.width<2)return;const g=c.getContext('2d');g.drawImage(c,1,0,c.width-1,c.height,0,0,c.width-1,c.height);g.clearRect(c.width-1,0,1,c.height);FEPerf.counts.canvas_draws++;an.getByteFrequencyData(SGB);
  for(let y=0;y<c.height;y++){const v=SGB[Math.floor((1-y/c.height)*SGB.length*0.5)];g.fillStyle=`hsl(${240-v*0.9},80%,${v/5.5}%)`;g.fillRect(c.width-1,y,1,1)}}
 setInterval(()=>{if(!running)return;if(showSpec()){sg('sgRaw',anRaw);sg('sgClean',anClean)}drawTL()},100);

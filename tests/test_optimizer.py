@@ -210,3 +210,289 @@ def test_pose_runs_on_pose_roi_and_maps_back():
     cfg.pose_enabled = False
     proc.process(frame(), cfg)
     assert proc.counts["pose_calls"] == 1
+
+
+class MatchedPose:
+    """Deterministic full-frame pose whose head matches frame()'s default face."""
+
+    name = "matched-pose"
+
+    def __init__(self, empty=False, extra_body=False):
+        self.calls = 0
+        self.empty = empty
+        self.extra_body = extra_body
+
+    def detect(self, img):
+        self.calls += 1
+        if self.empty:
+            return []
+        bodies = [((240, 180, 420, 470), 0.9, {"nose": (330, 240, 0.9)})]
+        if self.extra_body:
+            bodies.append(((20, 20, 150, 470), 0.9, {"nose": (80, 80, 0.9)}))
+        return bodies
+
+
+def pose_setup(**kwargs):
+    clk = Clock()
+    fake = MatchedPose(**kwargs)
+    pipe = Pipe()
+    return FrameProcessor(pipe, clock=clk, pose_loader=lambda: fake), fake, clk
+
+
+def test_pose_cadence_independent_of_face_motion_gate():
+    proc, fake, clk = pose_setup()
+    cfg = Config(pose_enabled=True, pose_interval=1.0, force_detect_seconds=10.0)
+    proc.process(frame(), cfg)
+    clk.t += 0.25
+    dets, tm = proc.process(frame(), cfg)
+    assert tm["skipped"] and tm["pose_reused"] and tm["pose"] == 0
+    assert len(dets) == 1 and dets[0].body is not None
+    clk.t += 0.75
+    _, tm = proc.process(frame(), cfg)
+    assert tm["skipped"] and not tm["pose_reused"]
+    assert fake.calls == 2 and proc.counts["detect_calls"] == 1
+    assert proc.counts["pose_reused"] == 1
+
+
+@pytest.mark.parametrize("empty", [False, True])
+def test_pose_cadence_with_full_face_detection_and_empty_pose_cache(empty):
+    proc, fake, clk = pose_setup(empty=empty)
+    cfg = Config(pose_enabled=True, motion_gate=False, pose_interval=1.0)
+    proc.process(frame(), cfg)
+    clk.t += 0.5
+    dets, tm = proc.process(frame(), cfg)
+    assert not tm["skipped"] and tm["pose_reused"] and fake.calls == 1
+    assert (dets[0].body is None) == empty
+    clk.t += 0.5
+    proc.process(frame(), cfg)
+    assert fake.calls == 2
+
+
+def test_pose_unstable_and_zero_interval_run_every_frame():
+    proc, fake, clk = pose_setup()
+    cfg = Config(pose_enabled=True, motion_gate=True)
+    for _ in range(3):
+        proc.process(frame(), cfg, stable=False)
+        clk.t += 0.1
+    assert fake.calls == 3
+    cfg.pose_interval = 0
+    cfg.motion_gate = False
+    for _ in range(3):
+        proc.process(frame(), cfg)
+        clk.t += 0.1
+    assert fake.calls == 6  # no additional pose throttle on fully processed frames
+
+
+def test_pose_face_disappearance_motion_and_new_face_force_update():
+    proc, fake, clk = pose_setup()
+    cfg = Config(pose_enabled=True, motion_gate=False)
+    proc.process(frame(), cfg)
+    for img in (frame(x=400), frame(w=0), frame(w=0), frame()):
+        clk.t += 0.01
+        proc.process(img, cfg)
+    assert fake.calls == 5
+
+
+def test_pose_body_only_never_reused_even_alongside_stable_face():
+    proc, fake, clk = pose_setup(extra_body=True)
+    cfg = Config(pose_enabled=True)
+    first, _ = proc.process(frame(), cfg)
+    assert len(first) == 2
+    fake.extra_body = False
+    clk.t += 0.1
+    dets, tm = proc.process(frame(), cfg)
+    assert not tm["pose_reused"] and fake.calls == 2
+    assert len(dets) == 1  # departed unmatched body cannot extend presence
+    clk.t += 0.1
+    dets, tm = proc.process(frame(), cfg)
+    assert tm["pose_reused"] and len(dets) == 1
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("pose_roi", (0.1, 0.1, 0.9, 0.9)),
+        ("face_roi", (0.1, 0.1, 0.9, 0.9)),
+        ("pose_conf", 0.5),
+        ("pose_interval", 1.0),
+        ("crop_margin", 0.2),
+        ("roi_crop", False),
+    ],
+)
+def test_pose_configuration_invalidates_cache(key, value):
+    proc, fake, clk = pose_setup()
+    cfg = Config(pose_enabled=True)
+    proc.process(frame(), cfg)
+    clk.t += 0.1
+    setattr(cfg, key, value)
+    _, tm = proc.process(frame(), cfg)
+    assert fake.calls == 2 and not tm["skipped"] and not tm["pose_reused"]
+
+
+def test_pose_dimensions_reset_and_toggle_invalidate_cache():
+    proc, fake, clk = pose_setup()
+    cfg = Config(pose_enabled=True)
+    proc.process(frame(), cfg)
+    clk.t += 0.1
+    proc.process(cv2.resize(frame(), (800, 600)), cfg)
+    assert fake.calls == 2
+    cfg.pose_enabled = False
+    dets, _ = proc.process(frame(), cfg)
+    assert all(d.body is None for d in dets)
+    cfg.pose_enabled = True
+    proc.process(frame(), cfg)
+    assert fake.calls == 3
+    proc.reset()
+    proc.process(frame(), cfg)
+    assert fake.calls == 4 and proc.counts["pose_calls"] == 1 and proc.counts["pose_reused"] == 0
+
+
+def test_pose_face_identity_change_does_not_reuse_body():
+    proc, fake, clk = pose_setup()
+    cfg = Config(pose_enabled=True, motion_gate=False, embed_throttle=False)
+    proc.process(frame(), cfg)
+    proc.pipe.embedder.embed = lambda img, raw: -np.ones(8, np.float32)
+    clk.t += 0.1
+    _, tm = proc.process(frame(), cfg)
+    assert not tm["pose_reused"] and fake.calls == 2
+
+
+def test_pose_default_static_cadence_does_not_increase_work():
+    proc, fake, clk = pose_setup()
+    cfg = Config(pose_enabled=True)
+    for _ in range(21):
+        proc.process(frame(), cfg)
+        clk.t += 0.25
+    assert fake.calls == proc.counts["detect_calls"] == 3  # t=0,2,4 as before throttling
+
+
+def test_pose_minor_background_motion_with_stationary_face_reuses_pose():
+    proc, fake, clk = pose_setup()
+    cfg = Config(pose_enabled=True, motion_gate=False)
+    proc.process(frame(), cfg)
+    clk.t += 0.25
+    _, tm = proc.process(frame(noise=50), cfg)
+    assert tm["diff"] < cfg.motion_threshold
+    assert not tm["skipped"] and tm["pose_reused"] and fake.calls == 1
+
+
+def test_pose_small_moves_accumulate_against_pose_anchor():
+    proc, fake, clk = pose_setup()
+    cfg = Config(pose_enabled=True, motion_gate=False, max_width=1920, roi_crop=False)
+    proc.process(frame(), cfg)
+    clk.t += 0.1
+    _, tm = proc.process(frame(x=305), cfg)
+    assert tm["pose_reused"]
+    clk.t += 0.1
+    _, tm = proc.process(frame(x=310), cfg)  # >15% of face width from pose anchor, not previous frame
+    assert not tm["pose_reused"] and fake.calls == 2
+
+
+def test_pose_new_face_forces_update_and_bodies_follow_face_order():
+    proc, fake, clk = pose_setup()
+    cfg = Config(pose_enabled=True, motion_gate=False, max_width=1920, roi_crop=False)
+    initial, _ = proc.process(frame(), cfg)
+    assert initial[0].body is not None
+    original_detect = proc.pipe.detector.detect
+
+    def two_faces(img):
+        rows = original_detect(img)
+        extra = rows[0][0].copy()
+        extra[0] = 30
+        return [*rows, (extra, 0.9)]
+
+    proc.pipe.detector.detect = two_faces
+    clk.t += 0.1
+    dets, tm = proc.process(frame(), cfg)
+    assert not tm["pose_reused"] and fake.calls == 2 and len(dets) == 2
+    assert dets[0].body is not None and dets[1].body is None
+
+    def reversed_faces(img):
+        return list(reversed(two_faces(img)))
+
+    proc.pipe.detector.detect = reversed_faces
+    clk.t += 0.1
+    dets, tm = proc.process(frame(), cfg)
+    assert tm["pose_reused"] and fake.calls == 2
+    assert dets[0].bbox[0] < dets[1].bbox[0]
+    assert dets[0].body is None and dets[1].body is not None
+
+
+@pytest.mark.parametrize("pose_enabled", [False, True])
+def test_gated_frames_reuse_appearance_but_pose_refresh_recomputes(monkeypatch, pose_enabled):
+    calls = []
+
+    def describe(img, box):
+        calls.append(box)
+        return np.array([len(calls)], np.float32)
+
+    monkeypatch.setattr("presence_demo.optimizer.descriptor", describe)
+    proc, fake, clk = pose_setup()
+    cfg = Config(pose_enabled=pose_enabled, tracker_mode="kalman", force_detect_seconds=10.0)
+    first, _ = proc.process(frame(), cfg)
+    assert len(calls) == 1
+    clk.t += 0.25
+    dets, tm = proc.process(frame(), cfg)
+    assert tm["skipped"] and len(calls) == 1
+    assert dets[0].appearance is first[0].appearance
+    clk.t += 2
+    proc.process(frame(), cfg)
+    assert len(calls) == (2 if pose_enabled else 1)
+    cfg.crop_margin += 0.01
+    proc.process(frame(), cfg)
+    assert len(calls) == (3 if pose_enabled else 2)
+
+
+def test_gated_appearance_matches_face_bbox_after_cache_reordering(monkeypatch):
+    calls = []
+
+    def describe(img, box):
+        calls.append(box)
+        return np.array([len(calls)], np.float32)
+
+    monkeypatch.setattr("presence_demo.optimizer.descriptor", describe)
+    proc, fake, clk = pose_setup()
+    cfg = Config(tracker_mode="kalman", roi_crop=False, max_width=1920)
+    original_detect = proc.pipe.detector.detect
+
+    def two_faces(img):
+        rows = original_detect(img)
+        extra = rows[0][0].copy()
+        extra[0] = 30
+        return [*rows, (extra, 0.9)]
+
+    proc.pipe.detector.detect = two_faces
+    initial, _ = proc.process(frame(), cfg)
+    expected = {d.face_bbox: d.appearance for d in initial}
+    proc.last_dets.reverse()
+    clk.t += 0.1
+    dets, tm = proc.process(frame(), cfg)
+    assert tm["skipped"] and len(calls) == 2
+    assert all(d.appearance is expected[d.face_bbox] for d in dets)
+
+
+def test_switch_to_kalman_computes_appearance(monkeypatch):
+    calls = []
+    monkeypatch.setattr("presence_demo.optimizer.descriptor", lambda img, box: calls.append(box))
+    proc, fake, clk = pose_setup()
+    cfg = Config(tracker_mode="legacy")
+    proc.process(frame(), cfg)
+    cfg.tracker_mode = "kalman"
+    clk.t += 0.1
+    proc.process(frame(), cfg)
+    assert len(calls) == 1
+
+
+def test_strong_motion_new_body_only_is_detected_immediately():
+    proc, fake, clk = pose_setup()
+    cfg = Config(pose_enabled=True)
+    initial, _ = proc.process(frame(), cfg)
+    assert len(initial) == 1
+    fake.extra_body = True
+    changed = frame()
+    changed[np.all(changed == 40, axis=2)] = 100
+    clk.t += 0.25
+    dets, tm = proc.process(changed, cfg)
+    assert tm["diff"] >= cfg.motion_threshold and not tm["skipped"]
+    assert not tm["pose_reused"] and fake.calls == 2
+    assert len(dets) == 2 and sum(d.face_bbox is None for d in dets) == 1

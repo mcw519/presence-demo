@@ -114,6 +114,101 @@ VIRTUAL_ENV=/tmp/.venv-sface-export uv pip install onnx2tf tensorflow tf-keras o
 PureSound 管線在一顆核心上每 20 ms 一塊約 5 ms（即時率約 0.25），比 1–2 fps 的影像貴得多。請先在目標裝置上量測。
 見[音訊](audio.md#效能)。
 
+## 即時監控與第一輪量測
+
+自適應 FPS 建議現在同時放在每則 `state` 與 `stats.conn.optim.recommended_fps`。
+前端接受兩者，只有實際送幀頻率改變才重建 timer。原本前端只讀 `state`，server 卻只在
+`stats` 傳送建議，實際會一直使用固定 FPS。
+
+資源面板新增影像佇列等待（收到資料至 worker 開始）、executor 等待（提交至執行緒開始）、
+推論鎖等待與 appearance 階段。佇列等待發生在既有 `total` 計時開始之前，不能將兩者混為一談。
+音訊保留累積 `rtf`，另加近 5 秒實際時間窗內、依音訊長度加權的 `rtf_recent`、完整 block
+處理 p95，以及收到資料至真正開始處理的等待平均／p95。RTF 是經過處理的時間除以音訊長度，
+不是 CPU 使用率。
+
+前端擷取、JPEG 編碼、狀態／音訊／統計繪製各保留最多 200 筆時間樣本，另顯示 DOM／canvas
+工作量與 WebSocket 待送 bytes。繪製時間只涵蓋同步 callback，不包含之後的排版或合成。
+音訊面板最多每秒重繪 5 次，但錄製與時間軸仍逐筆接收資料。Canvas 只在尺寸變動時重設；
+畫面外的圖表跳過繪製，頻譜捲動改用 `drawImage()`，避免像素讀回。
+
+2026-10-22 的[原始量測](../benchmarks/20261022-round1.json)：
+
+| 相同輸入工作量 | 修改前 | 修改後 |
+|---|---:|---:|
+| 10 秒、100 則 metadata 的音訊面板繪製次數 | 100 | 51 |
+| 同次回播的 DOM `innerHTML` 寫入 | 190 | 66 |
+| Canvas width／height 指派 | 658 | 4 |
+| 頻譜像素讀回 | 206 | 0 |
+| 同步繪圖工作總時間，包含延後執行的音訊繪製 | 222.3 ms | 92.1 ms |
+| 16 秒穩定空場影像＋PCM 串流的送幀張數 | 16 | 9 |
+
+瀏覽器回播使用穩定狀態、持續變化的音訊電平與各版本實際訊息格式；不開啟鏡頭／麥克風，
+不呼叫雲端。次數包含最後 250 ms 等待。Server 測試兩邊都使用同一版 SDK／ORT 1.31.0，
+開啟 pose、關閉雲端服務。三次 server 測試的音訊丟棄皆為 0；RTF 修改前 0.213，修改後兩次
+為 0.218／0.353，程序 CPU 也有波動。這些共用主機上的短測試，**不能證明 RTF、CPU 或單張延遲改善**。
+
+在專案環境重現（同步環境時需加 `--extra puresound`）：
+
+```bash
+python scripts/benchmark_frontend.py --before-ref b093837aa5b53fcfc35706e1cf088556b9c69ebb --output /tmp/frontend.json
+# 開啟印出的網址，按 Run before / after，保持頁面在前景直到完成。
+python scripts/benchmark_realtime.py --output /tmp/realtime.json
+```
+
+## 第二輪：pose 獨立節流與 binary JPEG
+
+`pose_interval` 預設 2 秒，範圍 0–2；0 關閉節流。穩定的人臉可重用對應的身體結果，
+到期時可獨立於 face detection 更新。顯著影像變動、人臉改變／消失、body-only、
+不穩定狀態或設定變更會強制重算。Body cache 與人臉 anchor 一對一匹配，
+不會用 unmatched 舊 body 製造新的在場證據。預設 2 秒與 `force_detect_seconds` 對齊，
+已被 motion gate 跳過的靜止場景維持原本頻率，不會再有同等幅度的節省。
+穩定畫面的姿態與距離資訊可能沿用至多這段間隔。
+
+瀏覽器改用非同步 `toBlob()`，以 binary `0x04` 的 10-byte header 加 JPEG bytes 傳送，
+保留舊 base64 JSON 相容。一次只允許一筆編碼；停止、重連或排程變更後的過期 callback
+不送出。Socket 待送量超過 256 KiB 時會在編碼前與送出前跳過影像，音訊格式不變。
+面板新增編碼／送出／跳過／背壓計數；JPEG 編碼時間現在是非同步完成的 wall time，
+不是同步 CPU 時間或主執行緒阻塞時間。
+
+`frame_bytes_avg` 與頻寬改計完整 application message：JSON UTF-8 bytes 或 binary header＋JPEG，
+不含 WebSocket／TCP／TLS overhead，比原本只計 data URI 更完整。
+
+2026-10-22 與保存的**第一輪工作目錄**對比，兩邊皆使用同一版 SDK／ORT 1.31.0：
+
+| 控制工作量 | 第一輪 | 第二輪 |
+|---|---:|---:|
+| Browser 每張封包 bytes，JPEG 同為 48,309 bytes | 64,495 | 48,319 |
+| Browser 擷取 callback 平均／p95 | 7.20／9.30 ms | 2.37／3.30 ms |
+| 真模型、穩定臉、40 張 @ 5 fps，pose 次數 | 40 | 4 |
+| 同上，總 CPU 時間的三次中位數 | 1,019.1 ms | 628.7 ms |
+| 同上，單張 p50 的三次中位數 | 7.86 ms | 4.26 ms |
+| 預設靜態 gate、40 張 @ 2 fps，pose 次數 | 10 | 10 |
+| 不穩定／無臉，40 張，pose 次數 | 40 | 40 |
+| 即時回播 16 秒、80 張＋PCM，pose 次數 | 80 | 8 |
+| 即時回播影像平均延遲 | 15.03 ms | 9.86 ms |
+| 即時回播音訊丟棄 | 0 | 0 |
+
+5 fps 的模型與即時回播刻意關閉 face motion gate，以分離 pose 節流效益，不能外推至所有預設
+攝影機場景。模型 benchmark 兩邊各用 2 個 OpenCV threads，未改動 server 的 thread 設定。
+Browser 使用合成像素與記憶體中的假 socket，callback 計時排除觀測封包的額外成本，
+並等待最後一次編碼完成再統計。兩邊 30 張 JPEG 的 SHA-256 完全相同，皆未丟幀。
+這測的是阻塞與封包成本，不是網路延遲或實體相機成本。這次 JPEG 完成平均時間為
+7.05 → 6.44 ms；非同步編碼主要釋放主執行緒，不能據此宣稱 encoder 本身變快。
+
+單次共用主機的即時測量中，程序 CPU 為 46.1% → 40.0%，但影像 p95 為 17.37 → 17.62 ms，
+音訊 RTF 為 0.195 → 0.203，不能證明 RTF 或尾端延遲改善。真實多人影片仍待評估；
+確定性測試已涵蓋有 motion 時新的 body-only 入場、人臉消失、身份／排序變更、cache 到期，
+以及停止／重連的非同步競態。[原始數據](../benchmarks/20261022-round2.json)保留所有情境與限制。
+
+保存舊版專案目錄（含模型存取）後可重現：
+
+```bash
+python scripts/benchmark_round2.py --source /path/to/round-one --output /tmp/pose-before.json
+python scripts/benchmark_round2.py --output /tmp/pose-after.json
+python scripts/benchmark_frontend.py --before-dir /path/to/round-one/presence_demo/static --mode capture --seconds 6 --output /tmp/capture.json
+python scripts/benchmark_realtime.py --scene face --fps 5 --full-vision --transport binary --output /tmp/live.json
+```
+
 ## 移植到嵌入式裝置的想法
 
 - 偵測和 embedding 放在 NPU，閘門、追蹤器、狀態機留在 CPU。

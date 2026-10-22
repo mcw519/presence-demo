@@ -4,7 +4,6 @@ the watchdog and re-ID driver, and streams state back through the :class:`Outbox
 from __future__ import annotations
 
 import asyncio
-import base64
 import contextlib
 import json
 import os
@@ -18,11 +17,12 @@ from fastapi import WebSocket, WebSocketDisconnect
 from .. import asr as asrmod
 from .. import diag
 from .. import reid as reidmod
-from ..audio import AudioStream, puresound_available
+from ..audio import SR, AudioStream, puresound_available
 from ..optimizer import FrameProcessor, recommend_fps
-from ..stats import ConnStats, build_stats
+from ..stats import AudioStats, ConnStats, build_stats
 from ..tracker import Config, PresenceTracker
 from .outbox import Outbox
+from .protocol import VIDEO_TAG, binary_frame, legacy_frame
 from .runtime import AUDIO_POOL, TOKEN, VISION_LOCK, _pose_cache, _vision_job, calibrate, pipeline, pose_detector
 
 WARN_FRAME_MS = float(os.environ.get("PRESENCE_WARN_FRAME_MS", "500"))
@@ -43,6 +43,7 @@ async def ws(sock: WebSocket):
     pipe = await asyncio.to_thread(pipeline)
     st = {"tr": PresenceTracker(Config()), "running": False}
     stats = ConnStats()
+    audio_stats = AudioStats()
     proc = FrameProcessor(pipe, pose_loader=pose_detector)
     stats.counts = proc.counts
     fpsstate = {"sig": (), "changed_at": 0.0, "rec": 0.0}
@@ -188,6 +189,13 @@ async def ws(sock: WebSocket):
 
     def send(snap, extra=None, droppable=True):
         track_state(snap)
+        now = time.monotonic()
+        sig = tuple(sorted((t["id"], t["participant"], t["visible"]) for t in snap["tracks"]))
+        if sig != fpsstate["sig"]:
+            fpsstate["sig"], fpsstate["changed_at"] = sig, now
+        fpsstate["rec"] = recommend_fps(snap, st["tr"].cfg, now - fpsstate["changed_at"] < 3.0)
+        stats.recommended_fps = fpsstate["rec"]
+        snap["recommended_fps"] = fpsstate["rec"]
         snap.update({"type": "state", "running": st["running"], "pipeline": pipe.name})
         if extra:
             snap.update(extra)
@@ -239,13 +247,23 @@ async def ws(sock: WebSocket):
             if msg is None or not st["running"]:
                 continue
             t0 = time.perf_counter()
-            data = base64.b64decode(msg["data"].split(",")[-1])
+            data = msg["data"]
             stable = st["tr"].state.value not in ("MAYBE_AWAY", "AWAY")
-            r = await asyncio.to_thread(_vision_job, proc, data, st["tr"].cfg, stable, cid)
+            submitted = time.monotonic()
+
+            def vision_job(data=data, cfg=st["tr"].cfg, stable=stable, submitted=submitted):
+                started = time.monotonic()
+                result = _vision_job(proc, data, cfg, stable, cid)
+                if result is not None:
+                    result[1]["executor_wait"] = (started - submitted) * 1000
+                return result
+
+            r = await asyncio.to_thread(vision_job)
             if r is None:
                 del data
                 continue
             dets, tm = r
+            tm["queue_wait"] = max(0.0, (t0 - msg["_received_perf"]) * 1000)
             reqs: list = []
             async with lock:
                 if not st["running"]:
@@ -273,13 +291,8 @@ async def ws(sock: WebSocket):
                 aud["vis_t"] = time.monotonic()
                 aud["vis_tc"] = msg.get("t")
                 tm["total"] = (time.perf_counter() - t0) * 1000
-                sig = tuple(sorted((t["id"], t["participant"], t["visible"]) for t in snap["tracks"]))
                 now = time.monotonic()
-                if sig != fpsstate["sig"]:
-                    fpsstate["sig"], fpsstate["changed_at"] = sig, now
-                fpsstate["rec"] = recommend_fps(snap, tr.cfg, now - fpsstate["changed_at"] < 3.0)
                 stats.on_processed(tm)
-                stats.recommended_fps = fpsstate["rec"]
                 mon["frame_done_t"] = now
                 mon["frames_done"] += 1
                 if tm["total"] > WARN_FRAME_MS:
@@ -397,9 +410,11 @@ async def ws(sock: WebSocket):
                 if snap is not None:
                     a.on_vision(snap, now)
                 res = []
-                for _, pcm in batch:
+                for _, pcm, received in batch:
+                    started = time.monotonic()
                     o, sp = a.process(pcm, snap, now, vis_age)
-                    res.append((o, sp, a.recording_tracks() if rec else None))
+                    done = time.monotonic()
+                    res.append((o, sp, a.recording_tracks() if rec else None, done, done - started, started - received))
                 return res
 
             t0 = time.perf_counter()
@@ -408,7 +423,8 @@ async def ws(sock: WebSocket):
             aud["last_rx"] = time.monotonic()
             aud["processed"] += len(batch)
             mon["audio_done_t"] = time.monotonic()
-            for (t_client, pcm), (o, speech, tracks) in zip(batch, res, strict=True):
+            for (t_client, pcm, _), (o, speech, tracks, done, elapsed, wait) in zip(batch, res, strict=True):
+                audio_stats.record(done, elapsed, len(pcm) / (2 * SR), wait)
                 if o:
                     out.post(b"\x02" + struct.pack("<d", t_client) + o, audio=True)
                 if o and tracks is not None:  # 0x03: t, n, out, vi, raw (same n samples each, aligned)
@@ -430,6 +446,7 @@ async def ws(sock: WebSocket):
                         "type": "audio",
                         "available": True,
                         **meta,
+                        **audio_stats.snapshot(),
                         "p_group": tr.snapshot().get("p_group"),
                         "state": tr.state.value,
                         "t_server": time.time(),
@@ -572,28 +589,49 @@ async def ws(sock: WebSocket):
             raw = await sock.receive()
             if raw.get("type") == "websocket.disconnect":
                 raise WebSocketDisconnect(raw.get("code", 1000))
+            frame = None
             if raw.get("bytes") is not None:
-                # PRIVACY: PCM audio lives in memory only (queue -> isolation -> socket), never logged/written.
+                # PRIVACY: audio/video payloads stay in memory, never logged/written.
                 b = raw["bytes"]
-                if len(b) > 9 and b[0] == 1 and st["tr"].cfg.audio_pipeline == "puresound":
-                    aud["recv"] += 1
-                    mon["audio_rx_t"] = time.monotonic()
-                    if aud["q"].full():
-                        aud["q"].get_nowait()
-                        aud["dropped"] += 1
-                    aud["q"].put_nowait((struct.unpack("<d", b[1:9])[0], b[9:]))
-                continue
-            msg = json.loads(raw.get("text") or "{}")
-            kind = msg.get("type")
-            if kind == "frame":
-                # PRIVACY: the frame (base64 JPEG) is kept in memory only, never logged or written to disk.
-                if not st["running"]:
+                if b and b[0] == VIDEO_TAG:
+                    if not st["running"]:
+                        continue
+                    try:
+                        frame = binary_frame(b)
+                    except ValueError:
+                        continue
+                    wire_bytes = len(b)
+                else:
+                    if len(b) > 9 and b[0] == 1 and st["tr"].cfg.audio_pipeline == "puresound":
+                        aud["recv"] += 1
+                        mon["audio_rx_t"] = time.monotonic()
+                        if aud["q"].full():
+                            aud["q"].get_nowait()
+                            aud["dropped"] += 1
+                        aud["q"].put_nowait((struct.unpack("<d", b[1:9])[0], b[9:], mon["audio_rx_t"]))
                     continue
-                stats.on_received(len(msg.get("data", "")))
+                msg = {}
+                kind = "frame"
+            else:
+                text = raw.get("text") or "{}"
+                msg = json.loads(text)
+                kind = msg.get("type")
+                if kind == "frame":
+                    if not st["running"]:
+                        continue
+                    try:
+                        frame = legacy_frame(msg)
+                    except ValueError:
+                        continue
+                    wire_bytes = len(text.encode("utf-8"))
+            if frame is not None:
+                # Application wire bytes: complete JSON UTF-8 or binary header + JPEG.
+                stats.on_received(wire_bytes)
                 mon["frame_rx_t"] = time.monotonic()
                 if slot["frame"] is not None:
                     stats.dropped += 1
-                slot["frame"] = msg
+                frame["_received_perf"] = time.perf_counter()
+                slot["frame"] = frame
                 wake.set()
                 continue
             async with lock:

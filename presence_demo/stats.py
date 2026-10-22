@@ -17,12 +17,30 @@ def _pct(vals, q):
 
 
 class ConnStats:
-    """Per-connection rolling statistics (window of last N frames / seconds)."""
+    """Per-connection rolling statistics (last N samples per timing stage).
+
+    Vision queue_wait is server receipt -> async worker start; executor_wait is
+    submission -> thread start; lock_wait is shared vision lock acquisition.
+    total spans async worker start -> tracker completion and excludes queue_wait.
+    """
 
     def __init__(self, window: int = 60, clock=time.monotonic):
         self.clock = clock
         self.lat = {
-            k: deque(maxlen=window) for k in ("decode", "motion", "detect", "embed", "pose", "tracker", "total")
+            k: deque(maxlen=window)
+            for k in (
+                "queue_wait",
+                "executor_wait",
+                "lock_wait",
+                "decode",
+                "motion",
+                "detect",
+                "embed",
+                "appearance",
+                "pose",
+                "tracker",
+                "total",
+            )
         }
         self.frame_times = deque(maxlen=window)
         self.bytes = deque(maxlen=window)  # (t, nbytes)
@@ -67,6 +85,10 @@ class ConnStats:
             "embed_reused_pct": round(100 * c.get("embed_reused", 0) / emb, 1) if emb else 0.0,
             "recommended_fps": self.recommended_fps,
             "pose_calls": c.get("pose_calls", 0),
+            "pose_reused": c.get("pose_reused", 0),
+            "pose_reused_pct": round(
+                100 * c.get("pose_reused", 0) / max(1, c.get("pose_calls", 0) + c.get("pose_reused", 0)), 1
+            ),
             "detect_hits": c.get("detect_hits", 0),
         }
 
@@ -88,6 +110,36 @@ class ConnStats:
             "frame_size": list(self.last_size),
             "optim": self._optim(),
             "rtt_ms": round(sum(self.rtt) / len(self.rtt), 1) if self.rtt else None,
+        }
+
+
+class AudioStats:
+    """Last five wall-clock seconds of block timings, bounded even for tiny PCM chunks.
+
+    Processing covers the complete AudioStream.process call. Queue wait covers server
+    receipt through that block's processing start, including executor and batch waiting.
+    RTF is sum(processing seconds) / sum(input audio seconds).
+    """
+
+    def __init__(self, horizon=5.0, clock=time.monotonic, limit=2000):
+        self.horizon, self.clock = horizon, clock
+        self.samples = deque(maxlen=limit)
+
+    def record(self, done, process_s, audio_s, queue_wait_s):
+        self.samples.append((done, process_s, audio_s, queue_wait_s))
+
+    def snapshot(self):
+        cutoff = self.clock() - self.horizon
+        while self.samples and self.samples[0][0] < cutoff:
+            self.samples.popleft()
+        audio_s = sum(s[2] for s in self.samples)
+        proc = [s[1] * 1000 for s in self.samples]
+        waits = [s[3] * 1000 for s in self.samples]
+        return {
+            "rtf_recent": round(sum(s[1] for s in self.samples) / audio_s, 3) if audio_s else None,
+            "proc_p95_ms": round(_pct(proc, 0.95), 2) if proc else None,
+            "queue_wait_ms_avg": round(sum(waits) / len(waits), 2) if waits else None,
+            "queue_wait_ms_p95": round(_pct(waits, 0.95), 2) if waits else None,
         }
 
 
