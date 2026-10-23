@@ -24,6 +24,22 @@ presence-demo is a demo and research tool. When you run it:
 - The optional cloud features (speech recognition, re-ID) send audio or face crops to third parties; see
   [docs/privacy.md](docs/privacy.md).
 
+## Dependency and TLS trust baseline
+
+Use uv **0.13.4 or newer** and synchronize with `uv sync --locked --extra puresound`. The project enforces
+the uv minimum and constrains certifi to **2026.10.19 or newer** because of the compromised emSign CA
+incident ([uv advisory](https://github.com/astral-sh/uv/security/advisories/GHSA-hq85-5cpj-mr62),
+[certifi advisory](https://github.com/advisories/GHSA-6q48-6c7w-9gw2)). Updating certifi alone does not
+update Python/OpenSSL's separate default CA bundle; maintain that bundle through its package manager
+and restart long-running clients after trust-store updates. Keep TLS verification enabled.
+
+LiteRT 2.3.0 declares `backports.strenum` unconditionally. On Python 3.11 and newer, the project constrains
+this transitive dependency to the official **1.2.8** release, whose `Requires-Python` range is
+`>=3.8.6,<4.0.0`; 1.3.1 excludes Python 3.11 and newer. This keeps the original wheel metadata intact
+and satisfies LiteRT without ignoring compatibility warnings. Revisit this constraint when upstream
+corrects its dependency marker. Verify both `uv pip check` and installed `Requires-Python` ranges;
+an audit without known vulnerabilities does not establish runtime compatibility.
+
 Issues we consider security bugs include: a way to read camera frames, audio, face crops, keys or the token
 without authorisation; anything that writes images or audio to the server's disk; secrets appearing in logs or
 responses; and ways to run code through the WebSocket or HTTP API.
