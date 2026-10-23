@@ -23,6 +23,8 @@ These pages explain how it works, how to run it and how to tune it. Start with *
 | [State machine](state-machine.md) | 5 · decision | ACTIVE / IDLE / MAYBE_AWAY / AWAY / ENDED, timeouts, NEW_GROUP |
 | [Audio](audio.md) | cross-check | PureSound voice isolation checked against vision |
 | [Re-ID](reid.md) | optional | Is the new session the same user as last time? |
+| [PoC acceptance](acceptance.md) | validation | What synthetic, pipeline and real-device acceptance means |
+| [Real-device and Jev runbook](real-acceptance.md) | operations | M4 + Chrome device checks, consent gate, Jev matrix, and cleanup |
 | [Speech recognition](asr.md) | optional | Streaming ASR of the cleaned audio |
 
 ## Using and tuning
@@ -39,6 +41,8 @@ These pages explain how it works, how to run it and how to tune it. Start with *
 | Page | Content |
 |---|---|
 | [Architecture](architecture.md) | Code layout, threads, WebSocket protocol |
+| [PoC acceptance](acceptance.md) | Target profile, thresholds, runner commands, and pending real tests |
+| [Real-device and Jev runbook](real-acceptance.md) | Operator procedure for physical camera/microphone and consented Jev checks |
 | [Privacy](privacy.md) | What is processed, what is kept in memory, what can leave the device |
 | [Logging](logging.md) | Structured events, `/debug/events`, debugging a hang |
 | [Licenses](licenses.md) | Third-party models, packages and data |

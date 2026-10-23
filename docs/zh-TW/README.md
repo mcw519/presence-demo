@@ -23,6 +23,8 @@ presence-demo 替對話裝置回答一個問題：**正在跟我說話的人（�
 | [狀態機](state-machine.md) | 5 · 決策 | ACTIVE / IDLE / MAYBE_AWAY / AWAY / ENDED、逾時、NEW_GROUP |
 | [音訊](audio.md) | 交叉確認 | PureSound 人聲分離，再用影像確認 |
 | [Re-ID](reid.md) | 選用 | 新的 session 是不是上一位使用者？ |
+| [PoC 驗收](acceptance.md) | 驗證 | 合成測試、管線量測與實體裝置驗收代表什麼 |
+| [真實裝置與 Jev 驗收流程](real-acceptance.md) | 操作 | M4＋Chrome 實體裝置檢查、同意門檻、Jev 案例矩陣與清理 |
 | [語音辨識](asr.md) | 選用 | 乾淨音軌的串流語音辨識 |
 
 ## 使用與調整
@@ -39,6 +41,8 @@ presence-demo 替對話裝置回答一個問題：**正在跟我說話的人（�
 | 頁面 | 內容 |
 |---|---|
 | [架構](architecture.md) | 程式結構、執行緒、WebSocket 協定 |
+| [PoC 驗收](acceptance.md) | 目標環境、門檻、runner 指令與待實測項目 |
+| [真實裝置與 Jev 驗收流程](real-acceptance.md) | 實體鏡頭／麥克風及取得同意後 Jev 驗收的操作程序 |
 | [隱私](privacy.md) | 處理什麼、記憶體裡保存什麼、什麼可能離開裝置 |
 | [日誌](logging.md) | 結構化事件、`/debug/events`、排查卡住 |
 | [授權](licenses.md) | 第三方模型、套件和資料 |

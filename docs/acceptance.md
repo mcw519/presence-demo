@@ -59,6 +59,7 @@ The pipeline adapter uses a local synthetic audio signal and a blank or repeated
 
 ## Current case coverage
 
+For the operator procedure for physical M4/Chrome camera and microphone checks, performance evidence, consent, Jev acceptance, and cleanup, see the [real-device and Jev runbook](real-acceptance.md).
 
 When Chrome and offline model prerequisites are available, the `browser-reid` suite currently returns these nine cases: `consent_required`, `provisional_conversation`, `same_page_handoff`, `nonblocking_comparison`, `consent_revocation`, `late_result_discarded`, `nonblocking_media`, `cleanup`, and `server_errors`. It verifies that the initial provisional conversation differs from the prior conversation, then checks the resumed handoff against the original session and conversation. A deliberately cancellation-resistant mock comparison must complete after cancellation (`completed_after_cancel` increases and the mock returns `.99`) before `late_result_discarded` is evaluated; the assertion checks that handoff and resume counts did not increase and the cleared UI stayed clear. The report remains the source for actual statuses; do not hard-code a pass total.
 

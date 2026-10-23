@@ -59,6 +59,7 @@ pipeline adapter 使用本機合成音訊，以及空白畫面或重複的本機
 
 ## 目前案例涵蓋範圍
 
+實體 M4／Chrome 鏡頭與麥克風檢查、效能證據、同意流程、Jev 驗收矩陣及清理步驟，請見[真實裝置與 Jev 驗收流程](real-acceptance.md)。
 
 Chrome 與離線模型可用時，`browser-reid` 目前回報九個案例：`consent_required`、`provisional_conversation`、`same_page_handoff`、`nonblocking_comparison`、`consent_revocation`、`late_result_discarded`、`nonblocking_media`、`cleanup`、`server_errors`。它會確認初始 provisional conversation 不同於舊 conversation，並在恢復時精確核對原 session 與 conversation。撤銷同意後，具抗取消行為的 mock 比對必須在取消後完成（`completed_after_cancel` 增加，且 mock 回傳 `.99`），才檢查 `late_result_discarded`；案例會確認 handoff／resume 計數沒有增加，且 UI 維持清空。各項實際狀態以報告為準，不固定通過數。
 
