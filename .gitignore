@@ -9,3 +9,4 @@ __pycache__/
 token.txt
 .env
 *.zip
+artifacts/
