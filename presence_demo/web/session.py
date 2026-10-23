@@ -21,6 +21,7 @@ from ..audio import SR, AudioStream, puresound_available
 from ..optimizer import FrameProcessor, recommend_fps
 from ..stats import AudioStats, ConnStats, build_stats
 from ..tracker import Config, PresenceTracker
+from .alignment import VisionTiming, client_timestamp, decision_timing
 from .continuity import PAGE_TOKEN, PAGES, ObservationClock
 from .outbox import Outbox
 from .protocol import VIDEO_TAG, binary_frame, legacy_frame
@@ -88,9 +89,8 @@ async def ws(sock: WebSocket):
         "err": None,
         "dropped": 0,
         "lat": None,
-        "vis_t": -1e9,  # monotonic time of the last processed frame (vision freshness for the cross-check)
+        "vision": None,  # immutable capture/receive/processing provenance of the last decision frame
         "calibrated": False,
-        "vis_tc": None,  # browser performance.now() of the last processed frame (shared audio/video timebase)
         "asr": None,  # AssemblyAIStream while a session is active (asr_provider=assemblyai)
         "asr_sess": None,
         "sess": None,
@@ -339,8 +339,9 @@ async def ws(sock: WebSocket):
                         t.get("participant") and t.get("visible_kind") == "predicted" for t in snap["tracks"]
                     )
                 tm["tracker"] = (time.perf_counter() - t1) * 1000
-                aud["vis_t"] = time.monotonic()
-                aud["vis_tc"] = msg.get("t")
+                aud["vision"] = VisionTiming(
+                    client_timestamp(msg.get("t")), msg["_received_mono"], submitted, time.monotonic()
+                )
                 tm["total"] = (time.perf_counter() - t0) * 1000
                 now = time.monotonic()
                 stats.on_processed(tm)
@@ -453,19 +454,25 @@ async def ws(sock: WebSocket):
             now = time.monotonic()
             snap = tr.snapshot() if st["running"] else None  # None -> acoustic_only (no vision)
             a.calibrated = aud["calibrated"]
-            vis_age = now - aud["vis_t"]
+            # No await between snapshot and provenance: later vision completions must not
+            # relabel an older decision while this batch runs in the audio executor.
+            vision = aud["vision"] if snap is not None else None
+            stale_after = a.cfg.xcheck_stale
 
             rec = aud["rec"]
 
-            def job(a=a, snap=snap, now=now, vis_age=vis_age, batch=batch, rec=rec):
+            def job(a=a, snap=snap, now=now, vision=vision, batch=batch, rec=rec, stale_after=stale_after):
                 if snap is not None:
                     a.on_vision(snap, now)
                 res = []
-                for _, pcm, received in batch:
+                for audio_client, pcm, received in batch:
                     started = time.monotonic()
-                    o, sp = a.process(pcm, snap, now, vis_age)
+                    vis_age, timing = decision_timing(vision, audio_client, started, stale_after)
+                    o, sp = a.process(pcm, snap, started, vis_age)
                     done = time.monotonic()
-                    res.append((o, sp, a.recording_tracks() if rec else None, done, done - started, started - received))
+                    res.append(
+                        (o, sp, a.recording_tracks() if rec else None, done, done - started, started - received, timing)
+                    )
                 return res
 
             t0 = time.perf_counter()
@@ -474,7 +481,7 @@ async def ws(sock: WebSocket):
             aud["last_rx"] = time.monotonic()
             aud["processed"] += len(batch)
             mon["audio_done_t"] = time.monotonic()
-            for (t_client, pcm, _), (o, speech, tracks, done, elapsed, wait) in zip(batch, res, strict=True):
+            for (t_client, pcm, _), (o, speech, tracks, done, elapsed, wait, _timing) in zip(batch, res, strict=True):
                 audio_stats.record(done, elapsed, len(pcm) / (2 * SR), wait)
                 if o:
                     out.post(b"\x02" + struct.pack("<d", t_client) + o, audio=True)
@@ -498,12 +505,13 @@ async def ws(sock: WebSocket):
                         "available": True,
                         **meta,
                         **audio_stats.snapshot(),
-                        "p_group": tr.snapshot().get("p_group"),
-                        "state": tr.state.value,
+                        "p_group": snap.get("p_group") if snap is not None else None,
+                        "state": snap.get("state") if snap is not None else tr.state.value,
                         "t_server": time.time(),
                         "t_client": t_client,
                         "proc_ms": round(proc_ms, 2),
-                        "t_vision_client": aud["vis_tc"],
+                        "t_vision_client": vision.client_ms if vision is not None else None,
+                        "vision_timing": _timing,
                         "asr": {
                             "provider": tr.cfg.asr_provider,
                             "key_set": asrmod.key_status()["set"],
@@ -684,6 +692,7 @@ async def ws(sock: WebSocket):
                 if slot["frame"] is not None:
                     stats.dropped += 1
                 frame["_received_perf"] = time.perf_counter()
+                frame["_received_mono"] = mon["frame_rx_t"]
                 slot["frame"] = frame
                 wake.set()
                 continue
@@ -757,6 +766,7 @@ async def ws(sock: WebSocket):
                     if kind == "reset":
                         rd.wipe("reset")
                     slot["frame"] = None
+                    aud["vision"] = None
                     send(st["tr"].snapshot(), {"detections": []}, False)
     except WebSocketDisconnect as e:
         reason = f"disconnect code={e.code}"

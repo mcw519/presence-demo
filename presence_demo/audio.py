@@ -267,6 +267,9 @@ class AudioStream:
         self.gain = 1.0
         self.mix = self.iso.base_mix
         self.counts = {k: 0 for k in LABELS}  # number of entries into each label
+        # Input sample counts, not wall time or label entries. Include quiet / vision-unavailable
+        # audio so each duration and ratio has the same, explicit denominator.
+        self._classified_samples = {k: 0 for k in LABELS}
         self.calibrated = False
         self._pending = np.zeros(0, np.float32)
         self._raw_pending = np.zeros(0, np.float32)
@@ -337,6 +340,7 @@ class AudioStream:
         self.clean_db = self._db(y)
         self.compute_s += time.perf_counter() - t0
         self.audio_s += x.size / SR
+        self._classified_samples[adj.label] += x.size
         return (np.clip(y, -1, 1) * 32767).astype("<i2").tobytes(), adj.speech
 
     def recording_tracks(self) -> tuple[bytes, bytes]:
@@ -350,10 +354,18 @@ class AudioStream:
 
     def meta(self) -> dict:
         a = self.adj
+        classified_samples = sum(self._classified_samples.values())
         return {
             "decision": a.label,
             "why": a.why,
             "counts": dict(self.counts),
+            # Lifetime of this AudioStream (model resets do not clear counts or durations).
+            # Classifications describe decisions, not ground-truth recognition accuracy.
+            "decision_duration_s": {k: n / SR for k, n in self._classified_samples.items()},
+            "decision_ratio": {
+                k: n / classified_samples if classified_samples else 0.0 for k, n in self._classified_samples.items()
+            },
+            "classified_audio_s": classified_samples / SR,
             "speech": a.speech,
             "clean_vad": self.vad.speech,
             "raw_vad": self.raw_vad.speech,

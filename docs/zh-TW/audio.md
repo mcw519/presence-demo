@@ -70,10 +70,22 @@ uv run python scripts/fetch_puresound_model.py --clone     # 或 --from /path/to
 | 其他 | | | `silence` 安靜 | 不變 | 否 |
 | 任何 | | 影像不確定 | `acoustic_only` 只看聲音 | PureSound 原樣輸出 | = 乾淨 VAD |
 
-- **影像不確定**：還沒開始、超過 `xcheck_stale`（2 s）沒有處理過的畫面、只有低信心偵測，或關閉交叉確認。
+- **影像不確定**：還沒開始、決策用影像年齡超過 `xcheck_stale`（2 s）、只有低信心偵測，或關閉交叉確認。
 - **距離**只在開啟距離估計時使用。沒開時「近距離」就是「在 ROI 內」，不會出現 `false_accept`。
   `xcheck_require_calib` 還要求先做距離校正。
 - 增益變化淡入 10 ms（`xcheck_attack`）、淡出 50 ms（`xcheck_release`），避免爆音。
+
+音訊面板保留「狀態進入次數」，另顯示每種判斷的持續秒數與占全部已處理 PCM 音訊的比例，包含
+`silence` 與 `acoustic_only`。這些是判斷統計，不是辨識正確率。`decision_duration_s`、`decision_ratio`、
+`classified_audio_s` 在同一個 `AudioStream` 內累積；模型 reset 不清除，新串流則從零開始。丟棄的輸入與沒有
+音訊時的牆鐘等待不計入分母。
+
+穩定狀態為 0.5 FPS 時，每兩秒才取一張圖，最近影像比音訊早接近兩秒可能單純來自取樣間隔。影像對齊欄因此
+同時顯示目前取樣間隔、畫面完成後經過多久、server 接收到完成的耗時及其中的佇列等待。`vision_timing` 數值單位為
+毫秒；抓取時間差使用共同的瀏覽器時鐘，server 耗時使用 server monotonic 時鐘，兩者不直接相減。過期判斷取
+「server 收到影像後的年齡」與「非負的音訊／影像抓取時間差」較大者，避免慢畫面剛處理完就被當成新鮮。
+缺少 client 時間戳時，server 收到後的年齡只是下界；JPEG 編碼與網路延遲尚未獨立量測。每批音訊固定使用實際
+決策的影像時間戳與上下文，不受處理途中完成的新影像影響。
 
 例子：電視開著，裝置前沒有人。PureSound 讓一部分電視人聲通過（聽起來夠近）。乾淨 VAD 說「有說話」，影像說「ROI 內沒人」
 → `leak`：這一塊被壓低 40 dB，不算說話，session 不會開始。

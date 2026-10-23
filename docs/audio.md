@@ -75,11 +75,25 @@ person was seen during that time, which protects the first syllable of a near sp
 | otherwise | | | `silence` | unchanged | no |
 | any | | vision uncertain | `acoustic_only` | PureSound output as is | = clean VAD |
 
-- **Vision uncertain** means: not started, no processed frame for `xcheck_stale` (2 s), only low-confidence
+- **Vision uncertain** means: not started, decision frame age exceeds `xcheck_stale` (2 s), only low-confidence
   detections, or the cross-check is off.
 - **Distance** is used only when distance estimation is on. Without it, "near" means "in the ROI", and
   `false_accept` cannot happen. `xcheck_require_calib` also demands a distance calibration first.
 - Gain changes ramp in 10 ms (`xcheck_attack`) and out in 50 ms (`xcheck_release`) to avoid clicks.
+
+The audio panel retains state-entry counts and also shows each decision's duration and share of all processed
+PCM time, including `silence` and `acoustic_only`. These are decision statistics, not recognition accuracy.
+`decision_duration_s`, `decision_ratio`, and `classified_audio_s` accumulate within an `AudioStream`; model
+resets preserve them, while a new stream starts from zero. Dropped input and idle wall time are excluded.
+
+At stable 0.5 FPS, the latest frame can be almost 2 seconds older than audio simply because of sampling.
+The alignment row therefore shows the current sampling interval, time since frame completion, server
+receive-to-completion time and its queue component. The `vision_timing` fields use milliseconds. The signed
+capture gap uses the shared browser clock; server timings use the server monotonic clock. Cross-check
+freshness uses the greater of server time since frame receipt and the nonnegative audio/video capture gap,
+so finishing a slow frame no longer makes it fresh again. Without client timestamps, server residence time
+is a lower bound. JPEG encoding and network latency are not measured separately. Each audio batch keeps
+the timestamp and decision context it actually used, even if a new frame finishes during audio processing.
 
 Example: the TV is on and nobody is in front of the device. PureSound passes some of the TV voice (it sounds
 close enough). The clean VAD says "speech", vision says "nobody in the ROI" → `leak`: the chunk is attenuated by

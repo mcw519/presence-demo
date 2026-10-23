@@ -105,16 +105,33 @@ let audioRenderTimer=null,audioRenderAt=-Infinity,audioRenderPending=false;
 function flushAudioRender(){clearTimeout(audioRenderTimer);audioRenderTimer=null;if(!audioRenderPending||document.hidden)return;audioRenderPending=false;audioRenderAt=performance.now();measureRender(renderAudio)}
 function queueAudioRender(){audioRenderPending=true;if(document.hidden||audioRenderTimer!==null)return;const delay=Math.max(0,200-(performance.now()-audioRenderAt));if(!delay)flushAudioRender();else audioRenderTimer=setTimeout(flushAudioRender,delay)}
 document.addEventListener('visibilitychange',()=>{if(document.hidden){clearTimeout(audioRenderTimer);audioRenderTimer=null}else if(audioRenderPending)queueAudioRender()});
+// Ratios use all processed PCM time, including silence/audio-only, never transition counts or wall time.
+function acousticDurations(a){const labels=['leak','false_reject','false_accept','agree','silence','acoustic_only'];
+ if(!Number.isFinite(a.classified_audio_s)||a.classified_audio_s<0)return'—';
+ if(labels.some(k=>!Number.isFinite(a.decision_duration_s?.[k])||a.decision_duration_s[k]<0||!Number.isFinite(a.decision_ratio?.[k])||a.decision_ratio[k]<0||a.decision_ratio[k]>1))return'—';
+ return labels.map(k=>t('akv.duration_v',{label:XC_LABEL[k],s:a.decision_duration_s[k].toFixed(2),p:(100*a.decision_ratio[k]).toFixed(1)})).join(' · ')}
+function visionAlignment(a){const v=a.vision_timing,gap=Number.isFinite(v?.capture_gap_ms)?v.capture_gap_ms:
+ Number.isFinite(a.t_client)&&Number.isFinite(a.t_vision_client)?a.t_client-a.t_vision_client:null;
+ if(gap===null)return'—';
+ const text=t(gap>=0?'akv.align_v':'akv.align_future_v',{s:(Math.abs(gap)/1000).toFixed(2)}),parts=[text],fps=typeof curFps==='function'?curFps():null;
+ if(Number.isFinite(fps)&&fps>0)parts.push(t('akv.align_sampling_v',{fps,interval:(1/fps).toFixed(2)}));
+ if(v&&['processed_age_ms','receive_to_processed_ms','queue_wait_ms','effective_age_ms'].every(k=>Number.isFinite(v[k])&&v[k]>=0)){
+  parts.push(t('akv.align_timing_v',{phase:(v.processed_age_ms/1000).toFixed(2),server:v.receive_to_processed_ms.toFixed(1),queue:v.queue_wait_ms.toFixed(1),age:(v.effective_age_ms/1000).toFixed(2)}));
+  parts.push(t(v.stale?'akv.align_stale':'akv.align_fresh'))}
+ return parts.join(' · ')}
 function renderAudio(){const a=aMeta;if(!a)return;
  if(a.available===false){$('aSt').textContent=t('a.unavailable');writeHTML('aKv',`<span>${t('a.reason')}</span><span>${a.error}</span>`);return}
  const LB=XC_LABEL;
  $('aSt').textContent=(LB[a.decision]||a.decision)+(a.speech?t('a.speech'):'');
  const kv={[t('akv.decision')]:`${LB[a.decision]||a.decision}${a.why?' ('+a.why+')':''}`,
-  [t('akv.counts')]:t('akv.counts_v',{l:a.counts.leak,fr:a.counts.false_reject,fa:a.counts.false_accept,a:a.counts.agree}),[t('akv.vad')]:`${a.clean_vad?t('akv.speaking'):'—'} / ${a.raw_vad?t('akv.speaking'):'—'}${t('akv.onsets',{n:a.onsets})}${a.vad_source==='energy_on_enhanced'?t('akv.vad_energy'):t('akv.vad_model')}`,
+  [t('akv.counts')]:t('akv.counts_v',{l:a.counts.leak,fr:a.counts.false_reject,fa:a.counts.false_accept,a:a.counts.agree}),
+  [t('akv.duration')]:acousticDurations(a),
+  [t('akv.duration_total')]:Number.isFinite(a.classified_audio_s)&&a.classified_audio_s>=0?t('akv.duration_total_v',{s:a.classified_audio_s.toFixed(2)}):'—',
+  [t('akv.vad')]:`${a.clean_vad?t('akv.speaking'):'—'} / ${a.raw_vad?t('akv.speaking'):'—'}${t('akv.onsets',{n:a.onsets})}${a.vad_source==='energy_on_enhanced'?t('akv.vad_energy'):t('akv.vad_model')}`,
   [t('akv.level')]:t('akv.level_v',{r:a.raw_db,c:a.clean_db,wr:db(WR),wc:db(WC)}),
   [t('akv.gate')]:a.gain<0.5?t('akv.gate_down',{db:(20*Math.log10(Math.max(a.gain,1e-4))).toFixed(0)}):t('akv.gate_pass'),
   [t('akv.mix')]:t('akv.mix_v',{e:(a.mix*100).toFixed(0),o:(100-a.mix*100).toFixed(0),g:a.gain}),
-  [t('akv.align')]:a.t_vision_client!=null?t('akv.align_v',{s:((a.t_client-a.t_vision_client)/1000).toFixed(2)}):'—',
+  [t('akv.align')]:visionAlignment(a),
   [t('akv.asr')]:a.asr?t('akv.asr_v',{p:a.asr.provider==='none'?t('akv.asr_off'):a.asr.provider,k:a.asr.key_set?t('key.set'):t('key.unset'),c:a.asr.connected?t('akv.connected'):t('akv.disconnected'),s:a.asr.sent_s}):'—',
   [t('akv.target')]:a.target_track!=null?`#${a.target_track}${a.distance!=null?' · '+a.distance+' m':''}`:'—','P(group)':a.p_group??'—',
   [t('akv.rtf')]:t('akv.rtf_v',{all:a.rtf??'—',recent:a.rtf_recent??'—'}),[t('akv.proc_p95')]:t('akv.proc_p95_v',{p:a.proc_p95_ms??'—',a:a.queue_wait_ms_avg??'—',q:a.queue_wait_ms_p95??'—'}),[t('akv.proc')]:t('akv.proc_v',{ms:a.proc_ms,q:a.queue,d:a.dropped,r:a.resets}),

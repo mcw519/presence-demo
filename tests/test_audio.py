@@ -179,6 +179,63 @@ def test_stream_attenuates_leak_and_counts():
     assert speech and s.adj.label == "agree"
 
 
+def test_decision_durations_use_audio_samples_and_preserve_entry_counts():
+    class SelectedAdjuster(CrossCheckAdjuster):
+        label = "acoustic_only"
+
+        def decide(self, view, clean, raw, cfg, base_mix):
+            return audio.Adjust(base_mix, label=self.label)
+
+    adjuster = SelectedAdjuster()
+    s = AudioStream(Config(), isolator_factory=FakeIso, adjuster=adjuster)
+    # Irregular chunks and wall-clock gaps must not bias duration toward frequent decisions,
+    # include time without input audio, or exclude the initial acoustic_only label.
+    chunks = [("acoustic_only", 17), ("silence", 160), ("silence", 320), ("false_reject", 73)]
+    chunks += [(label, 53 + i) for i, label in enumerate(audio.LABELS)]
+    expected = dict.fromkeys(audio.LABELS, 0)
+    expected_counts = dict.fromkeys(audio.LABELS, 0)
+    previous = "acoustic_only"
+    for i, (label, size) in enumerate(chunks):
+        adjuster.label = label
+        s.process(np.zeros(size, "<i2").tobytes(), None, now=i * 1000)
+        expected[label] += size
+        if previous != label:
+            expected_counts[label] += 1
+        previous = label
+    meta = s.meta()
+    total = sum(expected.values())
+    assert meta["counts"] == expected_counts
+    assert meta["decision_duration_s"] == pytest.approx({k: n / SR for k, n in expected.items()})
+    assert meta["decision_ratio"] == pytest.approx({k: n / total for k, n in expected.items()})
+    assert meta["classified_audio_s"] == pytest.approx(total / SR)
+    assert sum(meta["decision_duration_s"].values()) == pytest.approx(meta["classified_audio_s"])
+    assert sum(meta["decision_ratio"].values()) == pytest.approx(1)
+    # Callers may hold or mutate a metadata snapshot without changing stream statistics.
+    meta["decision_duration_s"]["silence"] = -1
+    assert s.meta()["decision_duration_s"]["silence"] == pytest.approx(expected["silence"] / SR)
+
+
+def test_decision_duration_zero_audio_and_model_reset():
+    s = AudioStream(Config(), isolator_factory=FakeIso)
+    meta = s.meta()
+    assert meta["classified_audio_s"] == 0
+    assert meta["decision_duration_s"] == dict.fromkeys(audio.LABELS, 0)
+    assert meta["decision_ratio"] == dict.fromkeys(audio.LABELS, 0)
+    s.process(b"", None, now=0)
+    assert s.meta()["classified_audio_s"] == 0
+    assert sum(s.meta()["decision_ratio"].values()) == 0
+    s.process(np.zeros(320, "<i2").tobytes(), None, now=1)
+    before = s.meta()
+    assert before["decision_duration_s"]["acoustic_only"] == 0.02
+    assert before["decision_ratio"]["acoustic_only"] == 1
+    s.on_vision(snap(1, [1]), now=2)
+    assert s.on_vision(snap(2, [2]), now=3)
+    after = s.meta()
+    for field in ("counts", "decision_duration_s", "decision_ratio", "classified_audio_s"):
+        assert after[field] == before[field]
+    assert after["resets"] == 1
+
+
 def test_clean_vad_onset_and_hangover():
     v = CleanVAD()
     quiet = np.full(160, 1e-4, np.float32)
