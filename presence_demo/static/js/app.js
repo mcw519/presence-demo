@@ -2,14 +2,19 @@
 // Classic script; all files share one global scope and load in order from index.html.
 // ---------- websocket ----------
 let ws,last=null,aMeta=null;
+// Page-scoped capability: retained across transport retries, never persisted across reloads.
+const PAGE_CAPABILITY=Array.from(crypto.getRandomValues(new Uint8Array(16)),x=>x.toString(16).padStart(2,'0')).join('');
+addEventListener('pagehide',()=>navigator.sendBeacon('/api/reid_page_close'+location.search,
+ new Blob([JSON.stringify({page_token:PAGE_CAPABILITY})],{type:'application/json'})));
 // Browser-side reports (server log: event=client) + liveness check: a half-open socket (e.g. after host sleep) is closed and reconnected
 let wsTries=0,wsDownAt=0,lastRx=performance.now(),REPQ=[];
 function report(what,info={}){const m={type:'client',what,...info};if(ws&&ws.readyState===1)ws.send(JSON.stringify(m));else if(REPQ.length<20)REPQ.push(m)}
 setInterval(()=>{if(ws&&ws.readyState===1&&performance.now()-lastRx>8000){REPQ.push({type:'client',what:'stale_socket',silent_s:Math.round((performance.now()-lastRx)/1000)});lastRx=performance.now();try{ws.close()}catch(e){}}},2000);
 let wallPrev=Date.now();setInterval(()=>{const n=Date.now(),gap=(n-wallPrev)/1000;wallPrev=n;if(gap>5)report('client_suspend',{gap_s:Math.round(gap)})},1000);
-function connect(){invalidateFrames();ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws'+location.search);ws.binaryType='arraybuffer';
+function connect(){invalidateFrames();clearReidDisplay(null);const query=new URLSearchParams(location.search);
+ ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws?'+query,['presence-v1','page-'+PAGE_CAPABILITY]);ws.binaryType='arraybuffer';
  ws.onopen=()=>{lastRx=performance.now();if(wsTries)report('reconnect',{tries:wsTries,down_s:Math.round((performance.now()-wsDownAt)/1000),running});wsTries=0;REPQ.splice(0).forEach(m=>ws.send(JSON.stringify(m)));if(rec)setTimeout(()=>wsSend({type:'record',on:true}),0);$('conn').classList.add('is-ok');$('conn').classList.remove('is-err');$('connTxt').textContent=t('conn.ok');sendCfg();if(running)ws.send(JSON.stringify({type:'start'}))};
- ws.onclose=()=>{if(!wsTries)wsDownAt=performance.now();wsTries++;$('conn').classList.remove('is-ok');$('conn').classList.add('is-err');$('connTxt').textContent=t('conn.retry');setTimeout(connect,1500)};
+ ws.onclose=()=>{clearReidDisplay();if(!wsTries)wsDownAt=performance.now();wsTries++;$('conn').classList.remove('is-ok');$('conn').classList.add('is-err');$('connTxt').textContent=t('conn.retry');setTimeout(connect,1500)};
  ws.onmessage=e=>{lastRx=performance.now();if(typeof e.data!=='string')return onClean(e.data);const s=JSON.parse(e.data);
   if(s.type==='event')return addEv(s);
   if(s.type==='error'){addEv(Object.assign({level:'error'},s));return showErr((s.where?s.where+': ':'')+(s.error||s.message||'error'))}
@@ -20,7 +25,7 @@ function connect(){invalidateFrames();ws=new WebSocket((location.protocol==='htt
   if(s.type==='audio'){aMeta=s;if(s.available!==false)TLH.push({t:performance.now(),raw:s.raw_vad,clean:s.clean_vad,sp:s.speech,dec:s.decision,st:s.state,p:s.p_group});while(TLH.length&&performance.now()-TLH[0].t>31000)TLH.shift();return queueAudioRender()}
   if(s.type==='stats'){updateRecommendedFps(s.conn?.optim?.recommended_fps);return measureRender(()=>renderStats(s))}
   if(s.type==='pong'){lastRtt=performance.now()-s.t;return}
-  if(s.type==='state')updateRecommendedFps(s.recommended_fps);
+  if(s.type==='state'){onReidSession(s.session);updateRecommendedFps(s.recommended_fps);$('cam').textContent=s.sensor_status==='interrupted'?t('cam.interrupted'):running?t('cam.on'):t('cam.off')}
   if(s.config_ack&&s.config){let ch=false;for(const k in s.config){if(!(k in DEF))continue;const v=BOXES.includes(k)?s.config[k].map(x=>+(+x).toFixed(4)):s.config[k];
     if(JSON.stringify(v)!==JSON.stringify(cfg[k])){cfg[k]=v;ch=true}}if(ch){save();syncUI();restartFrames()}
    if(s.warnings&&s.warnings.length)toast(t('toast.server_adjusted',{w:s.warnings.join('; ')}))}

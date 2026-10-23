@@ -1,105 +1,46 @@
 **English** · [繁體中文](zh-TW/reid.md)
 
-# Re-ID: is this the same user as last time? (optional)
+# Cross-session re-identification
 
-> **Off by default.** When enabled, face crops **leave the device** and are sent to a third-party cloud service,
-> and the server keeps the last users' face crops **in memory** for a short time. Read the privacy section first.
+Re-ID can associate a newly started session with one recent conversation. It is optional and requires both `reid_enabled` and explicit `reid_consent`. The current PoC profile targets one local M4 + Chrome connection and up to three participants. The Jev service compares face crops; these biometric images leave the device when a real backend call occurs.
 
-## What it is for
+## Session and handoff behavior
 
-When the presence tracker opens a **new session**, a downstream dialogue system often wants to know whether the
-previous user just came back (continue the conversation) or someone new arrived (start over). Re-ID makes that
-guess and outputs a `conversation_id`:
+Every new tracker session immediately receives a provisional, random `conversation_id` and continues normal presence/audio processing. Re-ID runs in the background. A successful, unambiguous match emits a `handoff` with the previous provisional conversation ID and the selected historical conversation ID. Session IDs and their event history are preserved. A failed, uncertain, ambiguous, expired, or unavailable comparison leaves the provisional conversation unlinked and never blocks the session.
 
-- **same person** → the previous `conversation_id` is reused (`decision: resume`);
-- **different, unsure, or any failure** → a new `conversation_id` (`decision: new`).
+The driver stores the best available face crop for up to three joined participant tracks in a session. On a normal `ENDED`, those participant references are committed to the ended conversation. On a later session, each usable current participant face is checked against every eligible historical reference. A conversation is eligible for handoff only when matches identify exactly one historical conversation. If qualifying matches point to multiple conversations, the result is ambiguous and no handoff is made. A clear match to one participant can continue a group conversation; no cross-session face match is a claim that every current participant is known.
 
-presence-demo has no conversation memory itself. "Resume" only means "same id"; the downstream system decides what
-to do with it. The service is never called during a session, and never when there is no stored reference face.
+The comparison decision has a **10-second wall-clock deadline** from the new session start. Presence states such as `AWAY` do not pause it. The first clear participant face may be awaited for up to `reid_face_wait`; uncertain scores can request one fresh-frame retry, subject to the same overall deadline. Timeouts, missing faces, uncertain scores, request caps, missing credentials, circuit-breaker state, and service errors leave the new conversation unlinked. Jev quality and latency still require separate tests with consented subjects; mock results validate only application control flow.
 
-## How a decision is made
+The server sends `handoff` with `session`, `conversation_id`, `previous_conversation_id`, `decision`, `resumed_from_session`, `score`, `reason`, and `calls`. The `conversation_id` remains an opaque random identifier; this application does not store dialogue content.
 
-```mermaid
-sequenceDiagram
-  participant T as Tracker
-  participant R as Re-ID (memory)
-  participant C as Cloud compare
-  participant B as Browser
-  T->>R: session N starts
-  alt no reference / cooldown
-    R-->>B: new conversation, no call
-  else references exist
-    R->>R: wait for a clear face (≤ 3 s)
-    R->>C: compare(reference, current)
-    C-->>R: score 0..1
-    alt score ≥ 0.9
-      R-->>B: resume
-    else 0.4 ≤ score < 0.9
-      R->>C: one retry with a fresh frame
-      R-->>B: resume if ≥ 0.9, else new
-    else low / error / timeout
-      R-->>B: new conversation
-    end
-  end
-```
+## Page continuity and expiry
 
-![Re-ID sequence](img/reid_sequence.png)
+The browser creates a cryptographically random 128-bit page capability in JavaScript memory. It offers it as the WebSocket subprotocol `page-<32 lowercase hex>` alongside `presence-v1`, and reuses it for reconnects in the same loaded page. The capability is not placed in the URL or browser persistent storage. Diagnostic redaction masks the capability if it appears in a WebSocket `Sec-WebSocket-Protocol` debug header. On `pagehide`, the browser sends the capability in the JSON body of a best-effort `sendBeacon` clear request. A page reload creates a new capability and cannot recover the previous page's references.
 
-1. **Wait for a usable face.** The first participant must show a clear face (frontal or slight side view, width
-   ≥ `reid_min_face`, 6% of the frame). If none appears within `reid_face_wait` (3 s) after the participant
-   appears, the result is `new` (`no_face_timeout`). The whole wait is capped by `reid_decision_timeout` (10 s);
-   the clock pauses while the state is MAYBE_AWAY or AWAY.
-2. **Compare** with the stored references, newest first, at most `reid_max_refs` (3).
-3. **Decide**:
-   - score ≥ `reid_threshold` (0.9) → `resume` (`match`);
-   - `reid_uncertain_low` (0.4) ≤ score < 0.9 → one more comparison with a fresh frame, then `resume` or `new`
-     (`uncertain`);
-   - below 0.4 → `new` (`below_threshold`);
-   - timeout, HTTP error, no key, rate cap, open circuit breaker → `new` (`error`, `no_key`, `cap`, `breaker`).
-4. During the session the server keeps the **best** face crop of this user. When the session ends it becomes a
-   reference for next time.
+The server keeps page state and face crops in process memory only. A normal `ENDED` starts the historical conversation's **600-second TTL**. Reconnects and unsuccessful comparisons do not refresh that history TTL; if a resumed conversation is interrupted again, its original normal-`ENDED` expiry remains in force. A conversation that has never reached normal `ENDED` receives one 600-second active-reference lease at its first interruption; repeated reconnects and interruptions do not renew it. `pagehide` sends a best-effort clear request. An app-owned cleanup task prunes page and reference leases every second, including after the last WebSocket has disconnected, and shutdown wipes all page stores. Consent withdrawal and explicit reset also clear references.
 
-The decision runs in the background. It never delays the session start, video or audio. Rapid re-opens within
-`reid_cooldown` (5 s) are `new` without a call. Calls are capped per hour (`reid_cap_per_hour`) and per connection
-(`reid_cap_total`).
+Each acquired WebSocket gets a page generation. Replacing a transport invalidates older work before handing over the shared page store; old-generation workers and callbacks cannot mutate the new connection's state. Re-ID tasks also carry store-generation and session guards, and a candidate that expires before the final handoff is rejected. A transport interruption is not a normal `ENDED`: it preserves eligible active references for same-page reconnect under the bounded lease.
 
-Why 0.9? On 100 random LFW pairs the bundled service reached AUC 0.992. At 0.9 there were **no false accepts**
-and 14% false rejects. A false "resume" (mixing two users' conversations) is worse than a false "new", so the
-threshold is strict.
+When camera input stops, presence observation time pauses at **three seconds after the last completed frame**, rather than at the time a delayed ticker happens to wake. This prevents a host sleep/resume gap from counting as elapsed-away time. The clock resumes when a frame is processed and remains monotonic.
 
-## Output
+At most three inactive historical conversations are retained in the PoC profile; each can contain up to three participant crops. When history exceeds capacity, the least recently ended inactive conversation is evicted. The active conversation is not evicted to satisfy the history cap. The server's page registry has a separate bounded page capacity; expired detached pages are eligible for cleanup.
 
-```json
-{"type": "handoff", "session": 12, "conversation_id": "3f…", "decision": "resume",
- "resumed_from_session": 11, "score": 0.94, "reason": "match", "calls": 3}
-```
+## Privacy and service calls
 
-`conversation_id` is a random UUID with no link to identity. A once-per-second `{"type": "reid"}` status (phase,
-number of references, time left, calls, tokens, cost estimate) contains no images.
-
-## Privacy: the in-memory exception
-
-The server's rule is that it never stores images. Re-ID needs to remember a face, so there is one written
-exception:
-
-| Item | Rule |
+| Data | Handling |
 |---|---|
-| What | One face crop per user (320 × 320 JPEG). Never whole frames. |
-| Where | Server process memory, bound to that WebSocket connection. Never disk, temp files, logs or `/debug`. |
-| How long | `reid_ttl`, default and maximum **600 s (10 minutes)**; at most `reid_max_refs` users. |
-| Cleared on | Expiry, turning the feature off, *Clear references* in Settings, `reset`, `POST /api/reid_reset`, disconnect, shutdown. |
-| Sent to | The selected cloud service, two crops per comparison. |
-| Enabled by | `reid_enabled` **and** `reid_consent` (both off by default). |
-| Display thumbnails | With `reid_show_crops` (*Show comparison photos*), each decision sends 112 × 112 thumbnails of the compared faces to **this browser only** for the comparison card (last 4, browser memory). They are never written to disk, logs, diagnostics, `/debug` or recordings, and are wiped together with the references. |
+| Reference/probe | Face-only 320 × 320 JPEG crops in server memory; whole frames are not retained for comparison. |
+| Retention | Up to 600 seconds from normal `ENDED`; page detach also has a 600-second hard lease. No disk persistence. |
+| Provider | Typesafe Jev receives the two crops for comparison when configured and consented. No call is made by synthetic acceptance. |
+| Consent | Both the feature switch and consent flag must be true. Turning it off wipes stored references. |
+| API key | `TYPESAFE_API_KEY` or the Settings key field; held in memory and not logged or echoed. |
+| Browser thumbnails | Optional 112 px comparison previews are sent only to this page when `reid_show_crops` is enabled; they are not diagnostic event data. |
 
-Faces are biometric data and are specially regulated in many places (for example GDPR art. 9). If you deploy this,
-inform people on site, obtain consent, check the cloud provider's retention policy and consider a shorter
-`reid_ttl`.
+Before enabling the cloud backend, inform participants, obtain the required consent, and review the provider's image handling and retention terms. Do not use real face data in synthetic acceptance runs.
 
-## Backends
+## Acceptance status
 
-The interface is `presence_demo.reid.CloudReid.compare(reference_jpeg, query_jpeg) -> (score, meta)`; adding a
-provider means implementing that method. The bundled backend calls the Typesafe "Jev" visual comparison API.
-The API key comes from the environment variable `TYPESAFE_API_KEY` or the password field in Settings
-(`POST /api/reid_key`); it is kept in memory only and never logged or returned. `REID_JEV_URL` overrides the
-endpoint for tests or a proxy.
+When Chrome and offline model prerequisites are available, the `browser-reid` suite covers nine named cases: `consent_required`, `provisional_conversation`, `same_page_handoff`, `nonblocking_comparison`, `consent_revocation`, `late_result_discarded`, `nonblocking_media`, `cleanup`, and `server_errors`. The provisional ID is checked against the original conversation; a successful handoff is checked against the exact original session and conversation. After consent withdrawal, the cancellation-resistant mock must increment `completed_after_cancel` and return its `.99` result after cancellation, and the suite checks that handoff/resume counts do not increase and the UI remains cleared. The production `state` message carries `session`; the UI drops old handoff status and thumbnails on a new session or WebSocket reconnect, consent withdrawal, feature disablement, and reference wipe, and ignores re-ID messages from older sessions.
+
+The `functional` adapter uses opaque mock identity values and virtual time to exercise re-ID decision rules and continuity contracts. The browser adapter adds synthetic Chrome media, production configuration and crop callbacks, `CrossSessionReid`, and explicit handoff; its mock `CloudReid` is injected only into the isolated child server. Its consent setting is test scaffolding and does not represent consent by real participants. Crops and page capabilities remain in memory; reports do not retain identifiers or image data. No Jev request is made, so these checks cannot establish biometric accuracy or provider behavior. Consult the generated report for case statuses. See the full [PoC acceptance plan](acceptance.md) and [architecture](architecture.md).

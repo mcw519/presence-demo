@@ -6,6 +6,8 @@ let now=0,next=0,writes=0,clears=0,draws=0;const timers=new Map(),listeners={};
 const context2d=new Proxy({clearRect(){clears++},drawImage(){draws++},getImageData(){throw Error('GPU readback forbidden')}},{get:(o,k)=>o[k]||(()=>{})});
 const element={style:{},_html:'',get innerHTML(){return this._html},set innerHTML(x){writes++;this._html=x},width:10,height:10,getContext:()=>context2d,getBoundingClientRect:()=>({width:100,height:40,top:0,left:0,right:100,bottom:40}),classList:{add(){},remove(){}},textContent:''};
 const sandbox={console,Blob,ArrayBuffer,DataView,document:{hidden:false,documentElement:{},getElementById:()=>element,querySelectorAll:()=>[],addEventListener:(n,fn)=>{listeners[n]=fn}},localStorage:{getItem:()=>null},matchMedia:()=>({addEventListener(){}}),performance:{now:()=>now},setInterval:(fn,ms)=>{timers.set(++next,{fn,ms});return next},clearInterval:id=>timers.delete(id),setTimeout:(fn,ms)=>{timers.set(++next,{fn,ms});return next},clearTimeout:id=>timers.delete(id),devicePixelRatio:1,innerHeight:800,innerWidth:1000,location:{protocol:'http:',host:'test',search:''},getComputedStyle:()=>({getPropertyValue:()=>''})};
+sandbox.URLSearchParams=URLSearchParams;sandbox.crypto=require('node:crypto').webcrypto;
+sandbox.navigator={sendBeacon:()=>true};sandbox.addEventListener=(n,fn)=>{listeners[n]=fn};
 vm.createContext(sandbox);const run=s=>vm.runInContext(s,sandbox);
 run(read('core'));
 run("writeHTML('x','same');writeHTML('x','same')");assert.equal(writes,1);element.innerHTML='external';run("writeHTML('x','same')");assert.equal(writes,3);
@@ -13,6 +15,8 @@ run("for(let i=0;i<300;i++)FEPerf.record('render',i)");const stats=run('FEPerf.s
 run("resizeCanvas($('x'),100,40);resizeCanvas($('x'),100,40)");assert.equal(run('FEPerf.counts.canvas_resizes'),1);
 assert.equal(run("canvasVisible($('x'))"),true);sandbox.document.hidden=true;assert.equal(run("canvasVisible($('x'))"),false);sandbox.document.hidden=false;
 const app=read('app'),frames=app.slice(app.indexOf('// Only replace the timer'),app.indexOf('function setUI()'));
+run(app.slice(app.indexOf('const PAGE_CAPABILITY='),app.indexOf('// Browser-side reports')));
+assert.match(run('PAGE_CAPABILITY'),/^[0-9a-f]{32}$/);
 run("let cfg={adaptive_fps:true,fps:1,fps_low:.5,fps_high:2},running=true,frameTimer=null;let ws=null,v={videoWidth:0,videoHeight:480};let callbacks=[],sent=[];let off={width:0,height:0,toBlob:(cb,type,q)=>{callbacks.push(cb);if(type!=='image/jpeg'||q!==.7)throw Error('wrong JPEG options')}},og={drawImage(){}};");run(frames);
 run('restartFrames()');assert.equal([...timers.values()][0].ms,1000);
 run('updateRecommendedFps(2)');assert.equal(timers.size,1);assert.equal([...timers.values()][0].ms,500);
@@ -28,10 +32,11 @@ run('running=false;restartFrames();running=true;restartFrames()');const beforeSt
 run('stop()');assert.equal(timers.size,0);assert.equal(run('frameTimer'),null);assert.equal(run('frameRate'),0);assert.equal(run('recFps'),0);
 run('running=true;restartFrames()');assert.equal(timers.size,1);assert.ok(next>beforeStop);assert.equal([...timers.values()][0].ms,1000);
 // Extract only connect(), retaining its production routing and closures.
+sandbox.clearReidDisplay=()=>{};sandbox.onReidSession=()=>{};
 const connect=app.slice(app.indexOf('function connect()'),app.indexOf('// ---------- render ----------'));
-sandbox.WebSocket=class{constructor(){this.readyState=1;this.bufferedAmount=0}send(x){sandbox.sentForTest.push(x)}};sandbox.sentForTest=[];
-run("let wsTries=0,wsDownAt=0,lastRx=0,REPQ=[],DEF={},BOXES=[];");run(connect);run('connect();cfg.adaptive_fps=true;ws.onmessage({data:JSON.stringify({type:"stats",conn:{optim:{recommended_fps:.5}}})})');assert.equal(run('curFps()'),.5);
-run('ws.onmessage({data:JSON.stringify({type:"state",detections:[]})})');assert.equal(run('curFps()'),.5);
+sandbox.WebSocket=class{constructor(url,protocols){sandbox.wsUrl=url;sandbox.wsProtocols=protocols;this.readyState=1;this.bufferedAmount=0}send(x){sandbox.sentForTest.push(x)}};sandbox.sentForTest=[];
+run("let wsTries=0,wsDownAt=0,lastRx=0,REPQ=[],DEF={},BOXES=[];");run(connect);run('connect();cfg.adaptive_fps=true;ws.onmessage({data:JSON.stringify({type:"stats",conn:{optim:{recommended_fps:.5}}})})');assert.equal(run('curFps()'),.5);assert.ok(!sandbox.wsUrl.includes('page_token'));assert.equal(sandbox.wsProtocols[0],'presence-v1');assert.equal(sandbox.wsProtocols[1],'page-'+run('PAGE_CAPABILITY'));
+run('ws.onmessage({data:JSON.stringify({type:"state",detections:[]})})');assert.equal(run('curFps()'),.5);assert.ok(!sandbox.wsUrl.includes('page_token'));assert.equal(sandbox.wsProtocols[0],'presence-v1');assert.equal(sandbox.wsProtocols[1],'page-'+run('PAGE_CAPABILITY'));
 // Async JPEG encoding: raw camera pixels, one encode in flight and stale callback guards.
 run("v.videoWidth=640;speech=true;captureFrame();captureFrame()");assert.equal(run('callbacks.length'),1);
 assert.equal(run('FEPerf.counts.video_dropped'),1);

@@ -32,8 +32,10 @@ class Redact(logging.Filter):
 
     def filter(self, record: logging.LogRecord) -> bool:
         msg = record.getMessage()
-        if "=" in msg and _TOKEN_RE.search(msg):
-            record.msg, record.args = _TOKEN_RE.sub(r"\1***", msg), ()
+        masked = _TOKEN_RE.sub(r"\1***", msg)
+        masked = re.sub(r"page-[0-9a-f]{32}\b", "page-***", masked)
+        if masked != msg:
+            record.msg, record.args = masked, ()
         return True
 
 

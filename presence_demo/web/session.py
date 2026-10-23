@@ -21,6 +21,7 @@ from ..audio import SR, AudioStream, puresound_available
 from ..optimizer import FrameProcessor, recommend_fps
 from ..stats import AudioStats, ConnStats, build_stats
 from ..tracker import Config, PresenceTracker
+from .continuity import PAGE_TOKEN, PAGES, ObservationClock
 from .outbox import Outbox
 from .protocol import VIDEO_TAG, binary_frame, legacy_frame
 from .runtime import AUDIO_POOL, TOKEN, VISION_LOCK, _pose_cache, _vision_job, calibrate, pipeline, pose_detector
@@ -34,14 +35,41 @@ async def ws(sock: WebSocket):
     if TOKEN and not secrets.compare_digest(sock.query_params.get("token", ""), TOKEN):
         await sock.close(code=1008)
         return
-    await sock.accept()
+    protocols = [p.strip() for p in sock.headers.get("sec-websocket-protocol", "").split(",")]
+    capabilities = [p[5:] for p in protocols if p.startswith("page-")]
+    page_token = capabilities[0] if len(capabilities) == 1 else None
+    if capabilities and (len(capabilities) != 1 or not PAGE_TOKEN.fullmatch(page_token)):
+        await sock.close(code=1008)
+        return
+    if "presence-v1" in protocols:
+        await sock.accept(subprotocol="presence-v1")
+    else:
+        await sock.accept()
+    page, page_generation = None, None
+    if page_token:
+        try:
+            page, page_generation = PAGES.acquire(page_token)
+        except ValueError:
+            await sock.close(code=1008)
+            return
     cid = secrets.token_hex(3)
     peer = sock.client.host if sock.client else "?"
     diag.event("conn_open", conn=cid, peer=peer)
     t_open = time.monotonic()
     t = time.perf_counter()
-    pipe = await asyncio.to_thread(pipeline)
-    st = {"tr": PresenceTracker(Config()), "running": False}
+    try:
+        pipe = await asyncio.to_thread(pipeline)
+    except BaseException:
+        if page:
+            PAGES.release(page, page_generation)
+        raise
+    if page and page.generation != page_generation:
+        await sock.close(code=1000)
+        return
+    observation_clock = ObservationClock()
+    st = {"tr": PresenceTracker(Config(), clock=observation_clock), "running": False}
+    if page:
+        st["tr"].session = page.session
     stats = ConnStats()
     audio_stats = AudioStats()
     proc = FrameProcessor(pipe, pose_loader=pose_detector)
@@ -92,7 +120,11 @@ async def ws(sock: WebSocket):
         st["tr"].cfg,
         emit=lambda d: out.post(d),
         event=lambda name, level="info", **kv: diag.event(name, level, cid, **kv),
+        store=page.store if page else None,
     )
+    if page:
+        page.interrupt = rd.interrupt
+        page.disconnect = lambda: asyncio.create_task(sock.close(code=1000))
     diag.event("conn_ready", conn=cid, vision_ms=round((time.perf_counter() - t) * 1000, 1), pipeline=pipe.name)
 
     def warn(name: str, every: float = 30.0, level: str = "warning", **kv) -> None:  # rate-limited warnings
@@ -188,6 +220,10 @@ async def ws(sock: WebSocket):
                 diag.event("session_event", conn=cid, kind=name, session=sess)
 
     def send(snap, extra=None, droppable=True):
+        if page:
+            if page.generation != page_generation:
+                return
+            page.session = max(page.session, int(snap.get("session") or 0))
         track_state(snap)
         now = time.monotonic()
         sig = tuple(sorted((t["id"], t["participant"], t["visible"]) for t in snap["tracks"]))
@@ -196,7 +232,14 @@ async def ws(sock: WebSocket):
         fpsstate["rec"] = recommend_fps(snap, st["tr"].cfg, now - fpsstate["changed_at"] < 3.0)
         stats.recommended_fps = fpsstate["rec"]
         snap["recommended_fps"] = fpsstate["rec"]
-        snap.update({"type": "state", "running": st["running"], "pipeline": pipe.name})
+        snap.update(
+            {
+                "type": "state",
+                "running": st["running"],
+                "pipeline": pipe.name,
+                "sensor_status": "interrupted" if observation_clock.paused_at is not None else "available",
+            }
+        )
         if extra:
             snap.update(extra)
             if extra.get("config_ack"):
@@ -215,7 +258,12 @@ async def ws(sock: WebSocket):
                 warn("loop_lag", 10, lag_ms=round(lag))
             n += 1
             async with lock:
+                if page and page.generation != page_generation:
+                    return
                 tr = st["tr"]
+                if st["running"] and time.monotonic() - mon["frame_done_t"] > 3:
+                    observation_clock.pause(at=mon["frame_done_t"] + 3)
+                PAGES.prune()
                 snap_t = tr.tick() if st["running"] else tr.snapshot()
                 send(snap_t)
                 if st["running"]:
@@ -270,6 +318,9 @@ async def ws(sock: WebSocket):
                     continue
                 t1 = time.perf_counter()
                 tr = st["tr"]
+                if page and page.generation != page_generation:
+                    continue
+                observation_clock.observed()
                 tr.speech_source = "clean" if clean_active() else "browser"
                 snap = tr.update(dets, speaking=None if clean_active() else msg.get("speech"))
                 if not tm.get("skipped"):
@@ -434,7 +485,7 @@ async def ws(sock: WebSocket):
             async with lock:
                 tr = st["tr"]
                 tr.speech_source = "clean"
-                if st["running"] and (speech != tr.speaking):
+                if st["running"] and observation_clock.paused_at is None and (speech != tr.speaking):
                     send(tr.set_speech(speech), droppable=False)
             if now - aud["meta_t"] >= 0.1:
                 aud["meta_t"] = now
@@ -587,6 +638,8 @@ async def ws(sock: WebSocket):
     try:
         while True:
             raw = await sock.receive()
+            if page and page.generation != page_generation:
+                break
             if raw.get("type") == "websocket.disconnect":
                 raise WebSocketDisconnect(raw.get("code", 1000))
             frame = None
@@ -641,7 +694,7 @@ async def ws(sock: WebSocket):
                         stats.rtt.append(float(msg["rtt"]))
                     out.post({"type": "pong", "t": msg.get("t")})
                 elif kind == "vad":
-                    if st["running"] and not clean_active():  # puresound: the clean VAD drives speech
+                    if st["running"] and observation_clock.paused_at is None and not clean_active():
                         send(tr.set_speech(bool(msg.get("speech"))), droppable=False)
                 elif kind == "config":
                     new = msg.get("config", {})
@@ -649,6 +702,8 @@ async def ws(sock: WebSocket):
                     warns = tr.cfg.update(new)
                     after = asdict(tr.cfg)
                     changed = {k: after[k] for k in after if after[k] != before.get(k)}
+                    if not tr.cfg.reid_enabled or not tr.cfg.reid_consent:
+                        rd.wipe("disabled")
                     if changed:
                         diag.event("config", conn=cid, **changed)
                     if warns:
@@ -681,6 +736,8 @@ async def ws(sock: WebSocket):
                     diag.event("record_stream", conn=cid, on=aud["rec"])
                 elif kind == "start":
                     st["running"] = True
+                    mon["frame_done_t"] = time.monotonic()
+                    observation_clock.observed()
                     diag.event("start", conn=cid)
                     send(tr.snapshot(), droppable=False)
                 elif kind in ("stop", "reset"):
@@ -690,8 +747,13 @@ async def ws(sock: WebSocket):
                     if kind == "stop":
                         aud["rec"] = False
                     diag.event(kind, conn=cid)
-                    st["tr"] = PresenceTracker(tr.cfg)  # clears tracks + embeddings
-                    rd.session = 0  # the new tracker counts sessions from 1 again
+                    rd.interrupt()
+                    previous_session = tr.session
+                    observation_clock.resume()
+                    if st["running"]:
+                        observation_clock.observed()
+                    st["tr"] = PresenceTracker(tr.cfg, clock=observation_clock)
+                    st["tr"].session = previous_session
                     if kind == "reset":
                         rd.wipe("reset")
                     slot["frame"] = None
@@ -703,7 +765,12 @@ async def ws(sock: WebSocket):
         diag.log.exception("receive loop failed conn=%s", cid)
     finally:
         unsub()
-        rd.close()  # wipes this connection's reference faces
+        if page:
+            PAGES.release(page, page_generation)
+        else:
+            rd.close()
+        if st["running"] and st["tr"].state.value != "ENDED":
+            diag.event("session_interrupted", conn=cid, session=st["tr"].session, reason="transport_closed")
         for t in tasks.values():
             t.cancel()
         with contextlib.suppress(Exception):

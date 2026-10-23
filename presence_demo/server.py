@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import atexit
+import contextlib
 import faulthandler
 import logging
 import secrets
@@ -33,7 +35,33 @@ from .web.runtime import (  # noqa: F401  (re-exported for callers/tests)
 )
 
 STATIC = Path(__file__).parent / "static"
-app = FastAPI(title="Presence demo")
+
+
+async def _expire_pages():
+    # App-owned: still runs after the last WebSocket and its ticker have closed.
+    from .web.continuity import PAGES
+
+    while True:
+        PAGES.prune()
+        await asyncio.sleep(1)
+
+
+@contextlib.asynccontextmanager
+async def lifespan(app):
+    cleaner = asyncio.create_task(_expire_pages())
+    try:
+        yield
+    finally:
+        cleaner.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await cleaner
+        from .web.continuity import PAGES
+
+        for token in list(PAGES.pages):
+            PAGES.forget(token)
+
+
+app = FastAPI(title="Presence demo", lifespan=lifespan)
 PUBLIC_PREFIXES = ("/static/vendor/", "/static/js/", "/static/i18n/")
 
 
@@ -123,6 +151,21 @@ def reid_reset():
     n = reidmod.wipe_all()
     diag.event("reid_store", action="wipe", reason="api", count=n)
     return {"wiped": n}
+
+
+@app.post("/api/reid_page_close")
+async def reid_page_close(request: Request):
+    """Best-effort page unload wipe; requires the in-memory page capability, never logged."""
+    from .web.continuity import PAGE_TOKEN, PAGES
+
+    try:
+        body = await request.json()
+        capability = body.get("page_token") if isinstance(body, dict) else None
+    except ValueError:
+        capability = None
+    if isinstance(capability, str) and PAGE_TOKEN.fullmatch(capability):
+        PAGES.forget(capability)
+    return {"ok": True}  # do not reveal whether a page capability exists
 
 
 @app.get("/debug/events")

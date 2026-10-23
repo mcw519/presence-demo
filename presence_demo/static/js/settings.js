@@ -262,11 +262,11 @@ function syncUI(skip){if(cfg.asr_provider==='none')captionOff();
  if(typeof applyDeps==='function'&&$('flow').childElementCount)applyDeps();
 }
 let sendTimer;
-function setCfg(part,src,immediate){Object.assign(cfg,part);save();syncUI(src);
+function setCfg(part,src,immediate){Object.assign(cfg,part);if(!cfg.reid_enabled||!cfg.reid_consent)clearReidDisplay();save();syncUI(src);
  if(src&&src.type==='range'){clearTimeout(sendTimer);sendTimer=setTimeout(sendCfg,250)}else sendCfg();
  if(['fps','adaptive_fps','fps_low','fps_high'].some(k=>k in part))restartFrames();draw();}
 function serverCfg(){const o={};for(const k in DEF)if(!CLIENT.includes(k))o[k]=cfg[k];return o}
-function sendCfg(){if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'config',config:serverCfg()}))}
+function sendCfg(){if(!cfg.reid_enabled||!cfg.reid_consent)clearReidDisplay();if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'config',config:serverCfg()}))}
 document.querySelectorAll('#presets [data-p]').forEach(b=>b.onclick=()=>{const p=b.dataset.p;
  cfg=Object.assign(structuredClone(DEF),p==='reset'?{}:(PRESETS[p]||MOD_PRESETS[p]));save();syncUI();sendCfg();restartFrames();draw();toast(t('toast.preset',{p:b.textContent}))});
 $('exp').onclick=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(cfg,null,2)],{type:'application/json'}));a.download='presence-config.json';a.click()};

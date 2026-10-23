@@ -16,6 +16,10 @@ function onAsr(m){if(m.kind==='status'&&m.status==='terminated')captionOff();if(
  $('asrList').innerHTML=ASR.slice().reverse().map(x=>`<div style="padding:3px 0;border-bottom:1px solid var(--line);${x.kind==='partial'?'color:var(--mut)':''}"><small style="color:var(--mut)">#${x.session} · ${x.start_s!=null?x.start_s.toFixed(1)+'–'+(x.end_s??0).toFixed(1)+' s':''}${x.language?' · '+x.language:''}</small> ${x.text.replace(/[<&]/g,c=>c==='<'?'&lt;':'&amp;')}</div>`).join('')}
 // Cross-session re-ID: decision, calls and estimated cost; comparison thumbnails only with "show comparison photos" (memory only)
 let REID={};const RV=[];const RV_MAX=4;
+function clearReidDisplay(session=REID.session){REID={};if(Number.isInteger(session))REID.session=session;rvClear();$('reidSt').innerHTML='';$('reidSt').hidden=true}
+function onReidSession(session){if(!Number.isInteger(session)||session<0)return true;
+ if(Number.isInteger(REID.session)&&session<REID.session)return false;
+ if(REID.session!==session)clearReidDisplay(session);return true}
 const RVR=r=>{const k='reid.r.'+r,s=t(k);return s===k?r:s};
 function rvClear(){RV.length=0;renderRV()}
 function renderRV(){const card=$('reidCard');card.hidden=!(cfg.reid_enabled&&cfg.reid_show_crops);if(card.hidden){RV.length=0}
@@ -24,11 +28,13 @@ function renderRV(){const card=$('reidCard');card.hidden=!(cfg.reid_enabled&&cfg
   <div class="rv-info"><b class="${v.decision==='resume'?'ok':''}">${v.decision==='resume'?t('reid.resume',{n:v.resumed_from_session}):t('reid.new')}</b>
   <span>${t('rv.score',{s:`<code>${v.score!=null?v.score.toFixed(2):'—'}</code>`,t:`<code>${(+v.threshold).toFixed(2)}</code>`})}</span>
   <span>${RVR(v.reason)} · ${new Date(v.t*1000).toLocaleTimeString()}</span></div></div>`).join(''):`<p class="panel-help">${t('rv.empty')}</p>`}
-function onReidView(m){if(m.type==='reid_view_clear')return rvClear();if(!cfg.reid_show_crops)return;RV.unshift(m);RV.length=Math.min(RV.length,RV_MAX);renderRV()}
-function onReid(m){const el=$('reidSt');if(m.type==='handoff'){REID.handoff=m}else REID.st=m;
- const st=REID.st||{},h=REID.handoff;if(!cfg.reid_enabled&&!st.calls){el.hidden=true;return}el.hidden=false;
+function onReidView(m){if(m.type==='reid_view_clear')return clearReidDisplay();if(!cfg.reid_enabled||!cfg.reid_consent||!cfg.reid_show_crops||!onReidSession(m.session))return;RV.unshift(m);RV.length=Math.min(RV.length,RV_MAX);renderRV()}
+function onReid(m){const el=$('reidSt');if(!onReidSession(m.session))return;
+ if(!cfg.reid_enabled||!cfg.reid_consent||m.enabled===false){clearReidDisplay();return}
+ if(m.type==='handoff'){REID.handoff=m}else REID.st=m;
+ const st=REID.st||{},h=REID.handoff;el.hidden=false;
  const dec=st.phase==='await_query'||st.phase==='calling'||st.phase==='await_retry'?`<b>${t('reid.identifying')}</b>`:h?(h.decision==='resume'?`<b class="ok">${t('reid.resume',{n:h.resumed_from_session})}</b>${h.score!=null?' ('+h.score.toFixed(2)+')':''}`:`<b>${t('reid.new')}</b> <small>${RVR(h.reason)}</small>`):'—';
- el.innerHTML=`<span>${t('reid.line')}</span>${dec}${h?` <code>${h.conversation_id.slice(0,8)}</code>`:''}<span class="sp">${t('reid.stats',{c:st.calls||0,t:st.tokens||0,cost:st.cost_est?t('reid.cost',{c:st.cost_est}):'',r:st.refs||0,ttl:st.refs?t('reid.ttl',{m:Math.round((st.ttl_left||0)/60)}):''})}</span>`;
+ el.innerHTML=`<span>${t('reid.line')}</span>${dec}${h?` <code>${h.conversation_id.slice(0,8)}</code>`:''}<span class="sp">${t('reid.stats',{c:st.calls||0,t:st.tokens||0,cost:st.cost_est?t('reid.cost',{c:st.cost_est}):'',r:st.refs||0,ttl:st.refs&&Number.isFinite(st.ttl_left)?t('reid.ttl',{m:Math.round((st.ttl_left||0)/60)}):''})}</span>`;
  if(st.key_set!=null&&$('reidKeySt')&&$('reidKeySt').dataset.src!=='env')keyBadge('reidKey',{set:st.key_set});renderRV()}
 function keyRow(mod,id,label,tip,extra=''){const det=$('mod_'+mod);if(!det)return false;const host=det.querySelector('.mbody')||det;
  host.insertAdjacentHTML('beforeend',`<div class="row keyrow"><div class="top"><label for="${id}In">${label}</label><span id="${id}St" class="kbadge">—</span></div>

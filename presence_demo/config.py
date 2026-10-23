@@ -150,10 +150,10 @@ class Config:
     reid_model: str = "jev-latest"
     reid_threshold: float = 0.9  # >= -> same person -> resume the previous conversation
     reid_uncertain_low: float = 0.4  # [low, threshold): one more frame, else new conversation
-    reid_ttl: float = 600.0  # seconds a past user's reference crop is kept (memory only)
-    reid_max_refs: int = 3  # last N users compared (newest first)
+    reid_ttl: float = 600.0  # history retention since last normal ENDED (memory only)
+    reid_max_refs: int = 3  # ended conversations, up to three member references each
     reid_min_face: float = 0.06  # min face width (fraction of frame) to use as query/reference
-    reid_decision_timeout: float = 10.0  # overall cap on waiting for a usable face (paused in MAYBE_AWAY/AWAY)
+    reid_decision_timeout: float = 10.0  # wall-clock cap including crop collection and remote calls
     reid_face_wait: float = 3.0  # after the first participant appears, wait this long for a usable face
     reid_timeout: float = 2.0  # per HTTP call
     reid_cooldown: float = 5.0  # min seconds between decisions (rapid re-opens -> new, no call)

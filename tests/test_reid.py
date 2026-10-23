@@ -190,7 +190,7 @@ def test_uncertain_retries_once_then_new_or_resume(mock):
         await drive(r, snap(2), clk)
         assert out[-1]["decision"] == "new" and out[-1]["reason"] == "uncertain" and len(mock.reqs) == 2
         await end_session(r, clk, 3)
-        mock.scores = [0.6, 0.93]
+        mock.scores = [0.6, 0.0, 0.0, 0.93, 0.0, 0.0]
         await drive(r, snap(4), clk)
         await drive(r, snap(4), clk)
         assert out[-1]["decision"] == "resume"
@@ -277,17 +277,16 @@ def test_face_wait_starts_at_first_participant(mock):
     run(go())
 
 
-def test_wait_paused_while_away(mock):
+def test_wall_deadline_continues_while_away(mock):
     async def go():
         r, out, ev, clk = make(mock.url, reid_decision_timeout=3)
         await end_session(r, clk, 1)
         await drive(r, snap(2, tracks=[]), clk)
-        for _ in range(5):  # 5 s in AWAY do not count
+        for _ in range(5):  # AWAY does not suspend the overall deadline
             await drive(r, snap(2, "AWAY", []), clk)
-        assert r.phase == "await_query"
-        mock.scores = [0.95]
-        await drive(r, snap(2), clk)  # the person is back with a good face -> one call, resume
-        assert out[-1]["decision"] == "resume" and len(mock.reqs) == 1
+        assert r.phase == "idle" and out[-1]["reason"] == "decision_timeout"
+        await drive(r, snap(2), clk)
+        assert out[-1]["decision"] == "new" and len(mock.reqs) == 0
 
     run(go())
 

@@ -229,18 +229,18 @@ date. Labels and help texts are the same ones shown in Settings.
 
 | Key | Default | Range | Description |
 |---|---|---|---|
-| `reid_enabled` | off | on / off | **Cross-session re-ID** *(Mode / switch)* — When a new session starts, the first clear face is compared in the cloud with the reference face of the previous (recent) users: the same person resumes the previous conversation (same conversation_id); a different or uncertain person starts a new one. No calls during a session; with no stored reference (first use or expired) a new conversation starts without a call. ⚠ External cloud service: face crops leave this device. |
-| `reid_consent` | off | on / off | **Users are informed and agreed** — Required: reference faces (one face crop per user) are kept only in server memory, at most for the retention time, and are sent to a third-party cloud for comparison. Never written to disk or logs; small thumbnails reach this browser only with "Show comparison photos". |
+| `reid_enabled` | off | on / off | **Cross-session re-ID** *(Mode / switch)* — A new session starts immediately. Joined participants are compared with recent conversation members; only unique, unambiguous overlap resumes a conversation through handoff. Uncertain results stay unlinked. External cloud service: face crops leave this device. |
+| `reid_consent` | off | on / off | **Users are informed and agreed** — Required: up to three participant face crops per conversation are retained only in server memory and sent to a third-party cloud for comparison. Never written to disk or logs; optional thumbnails reach this browser. |
 | `reid_show_crops` | on | on / off | **Show comparison photos** — Show this session's face and the matched reference face (small thumbnails, about 112 px) in the "User comparison" card. Thumbnails go only to this browser over this connection and are never written to disk, logs, debug events or recordings; "Clear reference faces" or reset removes them. |
 | `reid_provider` | `jev` | `jev` | **Cloud service** *(advanced)* — Cloud backend used for comparison (pluggable). Currently Jev (Typesafe). |
 | `reid_model` | `jev-latest` | `jev-latest` / `jev-1.13.0` | **Model** — jev-latest follows service updates; pin jev-1.13.0 for reproducible results. |
 | `reid_threshold` | 0.9 | 0.5 – 0.99 | **Same-person threshold** — A score at least this high means the same person and resumes the conversation. Mistaking someone is costly, so the default is 0.9 (LFW evaluation: FAR 0%, FRR 14%). |
 | `reid_uncertain_low` | 0.4 | 0 – 0.95 | **Uncertain lower bound** *(advanced)* — Between this and the threshold, one more fresh frame is compared; still below the threshold means a new conversation. |
-| `reid_ttl` | 600 | 30 – 600 | **Reference retention** — How long the previous user's reference face stays in memory before it is deleted (at most 10 minutes). |
-| `reid_max_refs` | 3 | 1 – 5 | **Compare recent users** — How many recent users are kept and compared (newest first, stop on a match). Each comparison is one call. |
+| `reid_ttl` | 600 | 30 – 600 | **Reference retention** — Retention of ended conversation members in memory, measured from the last normal session END. Reconnects do not renew it; expiry deletes the references. |
+| `reid_max_refs` | 3 | 1 – 5 | **Recent conversations** — Maximum ended conversations retained, with up to three member references each. The active conversation is separate. All candidates are checked for ambiguity. |
 | `reid_min_face` | 0.06 | 0.02 – 0.5 | **Minimum face width** *(advanced)* — A face must be at least this fraction of the frame width to be compared. |
 | `reid_face_wait` | 3 | 0.5 – 15 | **Wait for a clear face** *(advanced)* — After the first participant appears, wait at most this long for a clear face; otherwise start a new conversation. |
-| `reid_decision_timeout` | 10 | 0.5 – 30 | **Maximum wait** *(advanced)* — Overall wait after a new session starts (paused during MAYBE_AWAY / AWAY); then a new conversation starts. |
+| `reid_decision_timeout` | 10 | 0.5 – 30 | **Maximum wait** *(advanced)* — Wall-clock deadline from session start, including crop collection and remote calls. Unresolved decisions stay unlinked; AWAY does not pause it. |
 | `reid_timeout` | 2 | 0.3 – 10 | **Call timeout** *(advanced)* — Give up on a cloud call after this long and start a new conversation. |
 | `reid_cooldown` | 5 | 0 – 120 | **Cooldown** *(advanced)* — Minimum time between decisions; a session that reopens quickly starts a new conversation without a call. |
 | `reid_cap_per_hour` | 30 | 1 – 600 | **Hourly cap** — Maximum calls per hour; after that, always a new conversation. |
